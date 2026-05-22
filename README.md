@@ -443,3 +443,98 @@ TimescaleDB, Qdrant, and Redis. Back up Postgres and research/vector data
 before treating the host as durable production. After a host reboot, verify
 Caddy, API health, Dagster schedules, volume persistence, and public HTTPS
 before considering Lens live again.
+
+### Production Backups And Restore
+
+The production backup script writes artifacts under an ignored host directory
+by default. Run it from the repo checkout on the Ubuntu host while the
+production stack is running:
+
+```bash
+./deploy/backup-prod.sh
+```
+
+Each backup folder contains:
+
+- `postgres.dump`: a custom-format `pg_dump` archive for the configured
+  production database.
+- A Qdrant collection snapshot for `QDRANT_COLLECTION` once that collection
+  exists.
+- `manifest.txt`: timestamp and artifact names for the backup set.
+
+Copy backup folders off the Ubuntu host after creation. A backup kept only on
+the same disk as Docker volumes does not protect against host or disk loss.
+This script backs up Postgres and the Qdrant research collection; decide
+separately whether `/app/data` needs file-level copies for manually staged
+research inputs or exported artifacts.
+
+Restore Postgres from a selected archive during a controlled maintenance
+window:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml stop \
+  api dagster-webserver dagster-daemon
+./deploy/restore-prod-postgres.sh backups/production/BACKUP_STAMP/postgres.dump
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d \
+  api dagster-webserver dagster-daemon
+```
+
+The Postgres restore helper recreates the configured database, enables the
+TimescaleDB extension, enters the TimescaleDB restore state, runs `pg_restore`,
+and exits the restore state. Treat it as destructive: take a fresh backup
+before a restore and keep the application writers stopped until restored data
+is validated.
+
+Restore the Qdrant research collection snapshot from the same backup set:
+
+```bash
+./deploy/restore-prod-qdrant.sh \
+  backups/production/BACKUP_STAMP/COLLECTION-SNAPSHOT.snapshot
+```
+
+The Qdrant helper uploads the collection snapshot through Qdrant's private REST
+API with snapshot priority. After any restore, run:
+
+```bash
+./deploy/check-prod.sh
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec api \
+  trade-research feed-health
+```
+
+### Production Monitoring
+
+Start with the bundled host-local health check:
+
+```bash
+./deploy/check-prod.sh
+```
+
+Use the health check output together with logs and container state:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 api
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 caddy
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 dagster-daemon
+```
+
+For host-level monitoring, alert on unreachable public HTTPS, failed Compose
+health/state, low disk space for Docker volumes and backup folders, repeated
+API `429` or provider failures, and missing Dagster ingestion activity.
+
+### Reboot Verification
+
+After an Ubuntu host reboot:
+
+1. Confirm Docker started the stack with `docker compose --env-file .env.prod
+   -f docker-compose.prod.yml ps`.
+2. Run `./deploy/check-prod.sh` and confirm Postgres, API, chat health, and
+   Qdrant collection inspection succeed.
+3. Open the public HTTPS Lens URL and confirm the Caddy login gate appears
+   before the UI.
+4. Use the SSH-forwarded Dagster admin port and confirm schedules/sensors are
+   present.
+5. Run a small Lens query and check citations, freshness, and Gemini failure
+   visibility in audit if answer rewriting is enabled.
+6. Confirm the most recent off-host backup folder exists before relying on the
+   host again.

@@ -8,6 +8,8 @@ services:
       DATA_DIR: /app/data
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-market_research_documents}
       CHAT_ENABLED: "true"
       CHAT_USE_LLM_ANSWER: "true"
       CHAT_STRICT_CITATION_REQUIRED: "true"
@@ -82,6 +84,8 @@ services:
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-market_research_documents}
       YFINANCE_BATCH_SIZE: 20
       YFINANCE_THROTTLE_SECONDS: 1
       YFINANCE_MAX_WORKERS: 2
@@ -121,6 +125,8 @@ services:
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-market_research_documents}
       YFINANCE_BATCH_SIZE: 20
       YFINANCE_THROTTLE_SECONDS: 1
       YFINANCE_MAX_WORKERS: 2

@@ -17,6 +17,7 @@ __pycache__/
 !.env.prod.example
 
 /data/
+/backups/
 
 node_modules/
 dist/
