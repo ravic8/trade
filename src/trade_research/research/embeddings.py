@@ -4,10 +4,15 @@ from openai import OpenAI
 
 
 class OpenAIEmbeddingClient:
-    def __init__(self, api_key: str | None, model: str = "text-embedding-3-small") -> None:
+    def __init__(
+        self,
+        api_key: str | None,
+        model: str = "text-embedding-3-small",
+        base_url: str | None = None,
+    ) -> None:
         if not api_key:
             raise ValueError("OPENAI_API_KEY is required to create embeddings")
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
 
     def embed_texts(self, texts: Sequence[str]) -> list[list[float]]:

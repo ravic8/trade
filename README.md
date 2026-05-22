@@ -69,8 +69,8 @@ Lens has a working V1 chat path and a strong data-pipeline base:
   citations, provenance, and a debug audit view.
 - Session summary, symbol time-series, data-quality, and research-retrieval
   tool surfaces exist.
-- LLM answer rewriting has been wired behind provider settings, with OpenAI
-  embeddings available for research document retrieval.
+- Direct Gemini answer rewriting has been wired behind bounded runtime settings,
+  with OpenAI embeddings available for research document retrieval.
 - Freshness evaluation now checks the latest exchange-aligned candle expected
   from the session calendar, so closed-market data is not incorrectly labeled
   stale just because wall-clock time advanced.
@@ -388,10 +388,9 @@ nano .env.prod
 ```
 
 At minimum set a strong `POSTGRES_PASSWORD`, keep `DATABASE_URL` in sync with
-that password, set `LENS_DOMAIN` to the real public hostname, and fill the API
-keys needed for the active Lens provider path. The later direct-Gemini branch
-will add the production Gemini runtime variables; until then V1 still uses the
-provider fields present in `.env.prod.example`.
+that password, set `LENS_DOMAIN` to the real public hostname, set
+`GEMINI_API_KEY` when Gemini-backed answer rewriting is enabled, and fill any
+OpenAI key needed for research embeddings.
 
 Build and start the public stack:
 

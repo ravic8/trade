@@ -86,7 +86,7 @@ def chat_health() -> dict[str, object]:
         "strictCitationRequired": settings.chat_strict_citation_required,
         "qdrantConfigured": bool(settings.qdrant_url),
         "embeddingConfigured": bool(settings.openai_api_key),
-        "llmProvider": settings.llm_provider,
+        "llmProvider": "gemini",
         "llmConfigured": bool(_llm_api_key_present(settings)),
         "llmAnswerEnabled": settings.chat_use_llm_answer,
         "checkedAt": datetime.now(UTC).isoformat(),
@@ -353,6 +353,7 @@ def _chat_orchestrator() -> ChatOrchestrator:
         OpenAIEmbeddingClient(
             api_key=settings.openai_api_key,
             model=settings.openai_embedding_model,
+            base_url=settings.openai_base_url,
         )
         if settings.openai_api_key
         else None
@@ -379,9 +380,7 @@ def _chat_orchestrator() -> ChatOrchestrator:
 
 
 def _llm_api_key_present(settings: Settings) -> bool:
-    if settings.llm_provider.lower() == "openrouter":
-        return bool(settings.openrouter_api_key)
-    return bool(settings.openai_api_key)
+    return bool(settings.gemini_api_key)
 
 
 def _iso(value: datetime | None) -> str | None:

@@ -254,14 +254,15 @@ class ChatOrchestrator:
             )
             warnings.append("No usable citations were available.")
         elif self.settings.chat_use_llm_answer and self.llm_client is not None:
-            rewritten = self.llm_client.generate_answer(
+            generation = self.llm_client.generate_answer(
                 question=request.message,
                 deterministic_answer=answer_text,
                 warnings=warnings,
                 citations=[f"{item.type}: {item.label}" for item in citations],
             )
-            if rewritten:
-                answer_text = rewritten
+            outputs["llm_answer"] = generation.telemetry
+            if generation.text:
+                answer_text = generation.text
 
         freshness = FreshnessInfo(
             market_data_as_of=market_freshness,

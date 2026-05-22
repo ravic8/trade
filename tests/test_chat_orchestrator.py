@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from trade_research.chat.llm import ChatLLMGeneration
 from trade_research.chat.orchestrator import ChatOrchestrator
 from trade_research.schemas import ChatQueryRequest
 
@@ -84,7 +85,15 @@ class _FakeToolsOk:
 
 class _FakeToolsNoCitations(_FakeToolsOk):
     def get_session_summary(self, exchange: str) -> dict:
-        return {"data": {"symbol_count": 0, "advancers": 0, "decliners": 0, "avg_return_pct": 0.0}, "provenance": {}}
+        return {
+            "data": {
+                "symbol_count": 0,
+                "advancers": 0,
+                "decliners": 0,
+                "avg_return_pct": 0.0,
+            },
+            "provenance": {},
+        }
 
     def get_data_quality(self, exchange: str) -> dict:
         return {
@@ -107,6 +116,14 @@ class _FakeToolsResearchDown(_FakeToolsOk):
 class _FakeToolsMarketDown(_FakeToolsOk):
     def get_data_quality(self, exchange: str) -> dict:
         raise RuntimeError("Timescale unavailable")
+
+
+class _FakeLLM:
+    def generate_answer(self, **_kwargs) -> ChatLLMGeneration:
+        return ChatLLMGeneration(
+            text="Gemini rewrite.",
+            telemetry={"provider": "gemini", "status": "ok", "attempts": 1},
+        )
 
 
 def _settings() -> SimpleNamespace:
@@ -147,7 +164,10 @@ def test_research_degraded_mode_still_returns_market_answer() -> None:
         )
     )
     assert "Latest session summary:" in response.answer.text
-    assert any("Research retrieval is temporarily unavailable" in item for item in response.answer.warnings)
+    assert any(
+        "Research retrieval is temporarily unavailable" in item
+        for item in response.answer.warnings
+    )
     assert any(citation.type == "timescale_query" for citation in response.citations)
 
 
@@ -167,6 +187,22 @@ def test_audit_record_is_persisted() -> None:
     audit = orchestrator.get_audit(response.response_id)
     assert audit["response"]["response_id"] == response.response_id
     assert audit["request"]["message"] == "How did NSE perform?"
+
+
+def test_llm_generation_telemetry_is_visible_in_audit() -> None:
+    settings = _settings()
+    settings.chat_use_llm_answer = True
+    orchestrator = ChatOrchestrator(settings=settings, tools=_FakeToolsOk(), llm_client=_FakeLLM())
+    response = orchestrator.handle_query(
+        ChatQueryRequest(message="How did NSE perform?", context={"exchange": "NSE"})
+    )
+    audit = orchestrator.get_audit(response.response_id)
+    assert response.answer.text == "Gemini rewrite."
+    assert audit["tool_outputs"]["llm_answer"] == {
+        "provider": "gemini",
+        "status": "ok",
+        "attempts": 1,
+    }
 
 
 def test_both_exchange_fanout_queries_nse_and_tsx() -> None:
