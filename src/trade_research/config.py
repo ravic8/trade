@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     chat_llm_retry_attempts: int = Field(default=3, ge=1, le=5)
     chat_llm_retry_base_seconds: float = Field(default=0.5, ge=0, le=10)
     chat_llm_thinking_budget: int = Field(default=0, ge=-1, le=24576)
+    api_cors_origins: str = "http://localhost:5173,http://localhost:8000"
+    chat_rate_limit_enabled: bool = True
+    chat_rate_limit_requests: int = Field(default=12, ge=1, le=1000)
+    chat_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    chat_rate_limit_trust_forwarded_for: bool = False
 
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
 

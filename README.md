@@ -375,9 +375,8 @@ Before public launch:
    behind a router, and make sure the ISP path is not blocked by CGNAT.
 3. Allow only SSH, HTTP, and HTTPS through the host firewall. Do not publish
    Postgres, Qdrant, Redis, API, Dagster, or DBeaver directly.
-4. Add an authentication/rate-limit layer before allowing untrusted internet
-   traffic to spend LLM tokens. This first Compose branch prepares the public
-   network boundary; it does not yet add user authentication.
+4. Keep the Caddy authentication gate and API chat rate limit enabled before
+   allowing untrusted internet traffic to spend LLM tokens.
 
 Prepare the Ubuntu host with Git, Docker Engine, and the Docker Compose plugin,
 then clone the repo and create the production secrets file:
@@ -390,7 +389,27 @@ nano .env.prod
 At minimum set a strong `POSTGRES_PASSWORD`, keep `DATABASE_URL` in sync with
 that password, set `LENS_DOMAIN` to the real public hostname, set
 `GEMINI_API_KEY` when Gemini-backed answer rewriting is enabled, and fill any
-OpenAI key needed for research embeddings.
+OpenAI key needed for research embeddings. Set `API_CORS_ORIGINS` to the
+public HTTPS origin for Lens, for example `https://lens.example.com`.
+
+The public stack places an HTTP Basic Authentication gate in Caddy before the
+web UI and `/api` proxy. Generate the password hash on the host and store only
+that hash in `.env.prod`:
+
+```bash
+docker run --rm caddy:2.10-alpine caddy hash-password --plaintext 'choose-a-long-password'
+```
+
+Set `LENS_BASIC_AUTH_USER` and `LENS_BASIC_AUTH_HASH` from that output. If the
+hash contains `$`, keep it quoted in `.env.prod` so Compose passes the literal
+hash through to Caddy. Do not put the plaintext password, production hash, API
+keys, or database password in the tracked example env files.
+
+The FastAPI layer also limits `POST /api/chat/query` per client IP. Production
+Compose trusts `X-Forwarded-For` only because the API stays behind the private
+nginx proxy there. Leave `CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR=false` if the API
+is exposed directly during local work. API request summaries log method, path,
+status, and duration only; chat text and secrets should stay out of logs.
 
 Build and start the public stack:
 

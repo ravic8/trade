@@ -1,11 +1,14 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from math import cos, sin
+from time import monotonic
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
+from trade_research.api.security import ChatRateLimitMiddleware, cors_origins
 from trade_research.chat import ChatLLMClient, ChatOrchestrator, ChatPolicy, ChatToolGateway
 from trade_research.config import Settings, get_settings
 from trade_research.research.embeddings import OpenAIEmbeddingClient
@@ -22,14 +25,31 @@ from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
 
 app = FastAPI(title="Trade Research API", version="0.1.0")
+logger = logging.getLogger(__name__)
+settings = get_settings()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins(settings.api_cors_origins),
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+app.add_middleware(ChatRateLimitMiddleware, settings_getter=get_settings)
+
+
+@app.middleware("http")
+async def log_request_summary(request: Request, call_next):
+    started_at = monotonic()
+    response = await call_next(request)
+    logger.info(
+        "api request method=%s path=%s status=%s duration_ms=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        max(int((monotonic() - started_at) * 1000), 0),
+    )
+    return response
 
 
 @app.get("/api/health")
