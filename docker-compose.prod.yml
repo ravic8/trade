@@ -17,6 +17,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: trade-research-api:prod
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -79,9 +80,8 @@ services:
     restart: unless-stopped
 
   dagster-webserver:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
+    image: trade-research-api:prod
+    pull_policy: never
     command:
       [
         "dagster-webserver",
@@ -120,7 +120,7 @@ services:
       FEED_HEALTH_MAX_BACKOFF_HOURS: ${FEED_HEALTH_MAX_BACKOFF_HOURS:-24}
       FEED_HEALTH_UNSUPPORTED_RETRY_DAYS: ${FEED_HEALTH_UNSUPPORTED_RETRY_DAYS:-7}
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${DAGSTER_HOST_BIND_IP:-127.0.0.1}:${DAGSTER_HOST_PORT:-3000}:3000"
     volumes:
       - app_data:/app/data
     depends_on:
@@ -131,9 +131,8 @@ services:
     restart: unless-stopped
 
   dagster-daemon:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
+    image: trade-research-api:prod
+    pull_policy: never
     command: ["dagster-daemon", "run", "-w", "/app/dagster_home/workspace.yaml"]
     environment: *dagster_environment
     volumes:

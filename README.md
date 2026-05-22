@@ -365,6 +365,8 @@ ssh -L 3000:127.0.0.1:3000 ubuntu@SERVER_IP
 Then open `http://localhost:3000` for Dagster from the admin workstation that
 owns the SSH session. Use containerized CLI tasks or an intentionally
 restricted admin path later if production database browsing becomes necessary.
+If port `3000` is already occupied on the Ubuntu host, change
+`DAGSTER_HOST_PORT` in `.env.prod` and forward that host-local port instead.
 
 Before public launch:
 
