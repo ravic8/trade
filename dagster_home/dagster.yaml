@@ -1,0 +1,24 @@
+local_artifact_storage:
+  module: dagster._core.storage.root
+  class: LocalArtifactStorage
+  config:
+    base_dir: /app/dagster_home/storage
+
+run_launcher:
+  module: dagster._core.launcher
+  class: DefaultRunLauncher
+
+run_coordinator:
+  module: dagster._core.run_coordinator
+  class: DefaultRunCoordinator
+
+schedules:
+  use_threads: true
+  num_workers: 4
+
+sensors:
+  use_threads: true
+  num_workers: 4
+
+telemetry:
+  enabled: false

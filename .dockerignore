@@ -1,0 +1,13 @@
+.git
+.venv
+.venv311
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+data
+apps/web/node_modules
+apps/web/dist
+apps/web/.vite
+NSE.ipynb
+TSX.ipynb

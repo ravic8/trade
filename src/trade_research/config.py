@@ -1,0 +1,63 @@
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    app_env: str = "local"
+    data_dir: Path = Path("data")
+
+    openai_api_key: str | None = None
+    openai_embedding_model: str = "text-embedding-3-small"
+
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str | None = None
+    qdrant_collection: str = "market_research_documents"
+    chat_enabled: bool = False
+    chat_strict_citation_required: bool = True
+    chat_default_exchange_scope: str = "BOTH"
+    chat_max_latency_ms: int = Field(default=8000, ge=500, le=30000)
+    chat_max_symbols_per_request: int = Field(default=200, ge=1, le=500)
+    chat_max_lookback_hours: int = Field(default=72, ge=1, le=720)
+    chat_max_research_top_k: int = Field(default=12, ge=1, le=50)
+    chat_quality_nse_complete_threshold: float = Field(default=0.95, ge=0, le=1)
+    chat_quality_tsx_complete_threshold: float = Field(default=0.90, ge=0, le=1)
+    chat_stale_intervals_threshold: int = Field(default=2, ge=1, le=24)
+    chat_planner_model: str = "gpt-5.4-mini"
+    chat_answer_model: str = "gpt-5.5"
+
+    database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
+
+    polygon_api_key: str | None = None
+
+    yfinance_batch_size: int = Field(default=20, ge=1, le=100)
+    yfinance_throttle_seconds: float = Field(default=1.0, ge=0)
+    yfinance_max_workers: int = Field(default=2, ge=1, le=8)
+    yfinance_retry_attempts: int = Field(default=3, ge=1, le=8)
+    yfinance_retry_base_seconds: float = Field(default=1.0, ge=0)
+    yfinance_jitter_seconds: float = Field(default=0.5, ge=0)
+    hourly_realtime_lookback_days: int = Field(default=1, ge=1, le=60)
+    hourly_history_lookback_days: int = Field(default=10, ge=1, le=60)
+    hourly_backlog_enabled: bool = True
+    hourly_backlog_scan_days: int = Field(default=10, ge=1, le=60)
+    hourly_backlog_coverage_threshold: float = Field(default=0.5, ge=0, le=1)
+    hourly_backlog_max_windows_per_tick: int = Field(default=1, ge=1, le=24)
+    hourly_backlog_max_attempts: int = Field(default=3, ge=1, le=20)
+    hourly_backlog_min_candle_lag_minutes: int = Field(default=20, ge=0, le=180)
+    hourly_backlog_stale_recovery_minutes: int = Field(default=30, ge=5, le=1440)
+    nse_ingest_limit: int | None = Field(default=None, ge=1)
+    tsx_ingest_limit: int | None = Field(default=None, ge=1)
+    universe_refresh_days: int = Field(default=7, ge=1, le=30)
+    calendar_refresh_days: int = Field(default=30, ge=1, le=90)
+    feed_health_failure_threshold: int = Field(default=5, ge=1, le=20)
+    feed_health_max_backoff_hours: int = Field(default=24, ge=1, le=168)
+    feed_health_unsupported_retry_days: int = Field(default=7, ge=1, le=90)
+    min_median_dollar_volume: float = Field(default=5_000_000, ge=0)
+    bypass_calendar: bool = False
+
+
+def get_settings() -> Settings:
+    return Settings()
