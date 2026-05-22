@@ -343,3 +343,83 @@ to it. Without the backend, the UI still loads with sample market research data.
 Yahoo Finance is included only as a development/fallback data source. For
 reliable production market data, add licensed providers behind the market data
 provider interface and keep source metadata, fetch time, and quality flags.
+
+## Public Ubuntu Deployment
+
+`docker-compose.yml` remains the local developer stack and publishes service
+ports that are convenient on one workstation. Public Ubuntu hosting uses the
+standalone `docker-compose.prod.yml` file instead. The production stack exposes
+only Caddy on ports `80` and `443`, proxies Lens through the `web` nginx
+container, keeps `api`, TimescaleDB, Redis, and Qdrant on the Docker network,
+and restarts services unless they are explicitly stopped.
+
+DBeaver/CloudBeaver remains in the local developer compose stack, but it is not
+started by the production compose file. Dagster is kept available for
+production administration on `127.0.0.1:3000` only. Use SSH port forwarding
+for admin access:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 ubuntu@SERVER_IP
+```
+
+Then open `http://localhost:3000` for Dagster from the admin workstation that
+owns the SSH session. Use containerized CLI tasks or an intentionally
+restricted admin path later if production database browsing becomes necessary.
+
+Before public launch:
+
+1. Point a DNS record such as `lens.example.com` at the Ubuntu host public IP.
+2. Forward inbound router ports `80` and `443` to the Ubuntu host if it sits
+   behind a router, and make sure the ISP path is not blocked by CGNAT.
+3. Allow only SSH, HTTP, and HTTPS through the host firewall. Do not publish
+   Postgres, Qdrant, Redis, API, Dagster, or DBeaver directly.
+4. Add an authentication/rate-limit layer before allowing untrusted internet
+   traffic to spend LLM tokens. This first Compose branch prepares the public
+   network boundary; it does not yet add user authentication.
+
+Prepare the Ubuntu host with Git, Docker Engine, and the Docker Compose plugin,
+then clone the repo and create the production secrets file:
+
+```bash
+cp .env.prod.example .env.prod
+nano .env.prod
+```
+
+At minimum set a strong `POSTGRES_PASSWORD`, keep `DATABASE_URL` in sync with
+that password, set `LENS_DOMAIN` to the real public hostname, and fill the API
+keys needed for the active Lens provider path. The later direct-Gemini branch
+will add the production Gemini runtime variables; until then V1 still uses the
+provider fields present in `.env.prod.example`.
+
+Build and start the public stack:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+```
+
+Caddy requests and renews HTTPS certificates when the configured
+`LENS_DOMAIN` resolves to the host and ports `80` and `443` are reachable.
+Inspect startup and certificate logs with:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f caddy
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f api
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f dagster-daemon
+```
+
+Initialize the database or run admin CLI tasks inside the production API
+container:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec api \
+  trade-research init-db
+docker compose --env-file .env.prod -f docker-compose.prod.yml exec api \
+  trade-research feed-health
+```
+
+Production data lives in Docker volumes for Caddy certificates, app data,
+TimescaleDB, Qdrant, and Redis. Back up Postgres and research/vector data
+before treating the host as durable production. After a host reboot, verify
+Caddy, API health, Dagster schedules, volume persistence, and public HTTPS
+before considering Lens live again.

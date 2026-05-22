@@ -1,0 +1,4 @@
+{$LENS_DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy web:80
+}
