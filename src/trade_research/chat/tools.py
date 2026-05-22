@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from qdrant_client.http import models
 
+from trade_research.backlog import expected_hourly_candle_windows
 from trade_research.config import Settings
+from trade_research.market_calendar import EXCHANGE_CONFIGS, ExchangeHolidays
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.schemas import ProvenanceQdrant, ProvenanceTimeRange, ProvenanceTimescale
 from trade_research.storage.timescale import TimescaleStore
@@ -124,6 +127,10 @@ class ChatToolGateway:
     def get_data_quality(self, exchange: str) -> dict:
         normalized_exchange = _normalize_single_exchange(exchange)
         payload = self.timescale_store.data_quality_snapshot(exchange=normalized_exchange)
+        if payload:
+            payload["latest_expected_candle_ts"] = self._latest_expected_candle_ts(
+                normalized_exchange
+            )
         return {
             "data": payload,
             "provenance": ProvenanceTimescale(
@@ -186,7 +193,11 @@ class ChatToolGateway:
                 break
         return unique_symbols
 
-    def _bound_time_range(self, start_time: datetime, end_time: datetime) -> tuple[datetime, datetime]:
+    def _bound_time_range(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> tuple[datetime, datetime]:
         if start_time > end_time:
             raise ValueError("start_time must be less than or equal to end_time")
         max_hours = self.settings.chat_max_lookback_hours
@@ -196,6 +207,45 @@ class ChatToolGateway:
         if (bounded_end - bounded_start).total_seconds() > max_span:
             bounded_start = bounded_end - timedelta(hours=max_hours)
         return bounded_start, bounded_end
+
+    def _latest_expected_candle_ts(self, exchange: str) -> datetime | None:
+        now = datetime.now(UTC)
+        holidays = self._quality_holidays(exchange, now)
+        windows = expected_hourly_candle_windows(
+            exchange=exchange,
+            holidays=holidays,
+            scan_days=min(self.settings.hourly_backlog_scan_days, 10),
+            min_candle_lag=timedelta(
+                minutes=self.settings.hourly_backlog_min_candle_lag_minutes
+            ),
+            at=now,
+        )
+        return windows[-1].window_start if windows else None
+
+    def _quality_holidays(self, exchange: str, now: datetime) -> ExchangeHolidays:
+        config = EXCHANGE_CONFIGS[exchange]
+        year = now.astimezone(ZoneInfo(config.timezone)).year
+        cached = self.timescale_store.exchange_holidays(
+            exchange,
+            year=year,
+            max_age_days=self.settings.calendar_refresh_days,
+        )
+        if not cached:
+            # Weekends and exchange hours are still useful when the holiday cache is cold.
+            return ExchangeHolidays(
+                closed_dates=frozenset(),
+                early_close_dates=frozenset(),
+                source_url="uncached",
+            )
+        return ExchangeHolidays(
+            closed_dates=frozenset(
+                datetime.fromisoformat(item).date() for item in cached["closed_dates"]
+            ),
+            early_close_dates=frozenset(
+                datetime.fromisoformat(item).date() for item in cached["early_close_dates"]
+            ),
+            source_url=cached["source_url"],
+        )
 
 
 def _normalize_single_exchange(exchange: str) -> str:

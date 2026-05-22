@@ -12,6 +12,7 @@ def evaluate_quality_badge(
     active_symbols: int,
     latest_candle_symbols: int,
     latest_candle_ts: datetime | None,
+    latest_expected_candle_ts: datetime | None = None,
 ) -> tuple[QualityBadge, list[str]]:
     warnings: list[str] = []
     ratio = 0.0
@@ -30,15 +31,28 @@ def evaluate_quality_badge(
             f"for {exchange.upper()} latest session."
         )
 
-    if _is_stale(settings, latest_candle_ts):
+    if _is_stale(settings, latest_candle_ts, latest_expected_candle_ts):
         badge = "stale"
         warnings.append("Latest candle appears stale relative to expected hourly cadence.")
     return badge, warnings
 
 
-def _is_stale(settings: Settings, latest_candle_ts: datetime | None) -> bool:
+def _is_stale(
+    settings: Settings,
+    latest_candle_ts: datetime | None,
+    latest_expected_candle_ts: datetime | None,
+) -> bool:
     if latest_candle_ts is None:
         return True
-    candle_ts = latest_candle_ts if latest_candle_ts.tzinfo else latest_candle_ts.replace(tzinfo=UTC)
-    stale_after = datetime.now(UTC) - timedelta(hours=settings.chat_stale_intervals_threshold)
+    candle_ts = (
+        latest_candle_ts if latest_candle_ts.tzinfo else latest_candle_ts.replace(tzinfo=UTC)
+    )
+    if latest_expected_candle_ts is None:
+        reference_ts = datetime.now(UTC)
+    elif latest_expected_candle_ts.tzinfo:
+        reference_ts = latest_expected_candle_ts.astimezone(UTC)
+    else:
+        reference_ts = latest_expected_candle_ts.replace(tzinfo=UTC)
+
+    stale_after = reference_ts - timedelta(hours=settings.chat_stale_intervals_threshold)
     return candle_ts < stale_after

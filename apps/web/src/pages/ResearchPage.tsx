@@ -74,6 +74,17 @@ export function ResearchPage() {
             {healthQuery.data?.strictCitationRequired ? "yes" : "no"}
           </span>
         </div>
+        <div className="chat-ask-guide">
+          <h3>What You Can Ask</h3>
+          <ul>
+            <li>How did NSE perform in the latest complete session?</li>
+            <li>Compare BOTH exchanges quality snapshot.</li>
+            <li>Show data quality for TSX (coverage, backlog, stale windows).</li>
+            <li>For RELIANCE.NS, show hourly move in the last 24 hours.</li>
+            <li>Why did NSE move today? (market + research context)</li>
+            <li>Find research notes about Indian banking momentum.</li>
+          </ul>
+        </div>
         <form className="chat-form" onSubmit={onSubmit}>
           <textarea
             value={message}

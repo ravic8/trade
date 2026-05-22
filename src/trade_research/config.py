@@ -11,7 +11,13 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
 
     openai_api_key: str | None = None
+    openai_base_url: str | None = None
     openai_embedding_model: str = "text-embedding-3-small"
+    llm_provider: str = "openai"
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_referer: str | None = None
+    openrouter_title: str = "trade-research"
 
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
@@ -28,6 +34,7 @@ class Settings(BaseSettings):
     chat_stale_intervals_threshold: int = Field(default=2, ge=1, le=24)
     chat_planner_model: str = "gpt-5.4-mini"
     chat_answer_model: str = "gpt-5.5"
+    chat_use_llm_answer: bool = False
 
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
 

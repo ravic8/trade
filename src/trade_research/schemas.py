@@ -50,6 +50,7 @@ QualityBadge = Literal["complete", "partial", "stale"]
 CitationType = Literal["timescale_query", "qdrant_chunk"]
 FeedbackRating = Literal["up", "down"]
 IntentType = Literal[
+    "smalltalk_or_identity",
     "price_lookup",
     "session_summary",
     "relative_performance",

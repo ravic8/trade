@@ -8,7 +8,12 @@ from trade_research.schemas import ChatQueryRequest
 
 
 class _FakeToolsOk:
+    def __init__(self) -> None:
+        self.session_summary_calls: list[str] = []
+        self.data_quality_calls: list[str] = []
+
     def get_session_summary(self, exchange: str) -> dict:
+        self.session_summary_calls.append(exchange)
         return {
             "data": {
                 "symbol_count": 10,
@@ -23,6 +28,7 @@ class _FakeToolsOk:
         }
 
     def get_data_quality(self, exchange: str) -> dict:
+        self.data_quality_calls.append(exchange)
         return {
             "data": {
                 "active_symbols": 10,
@@ -110,6 +116,7 @@ def _settings() -> SimpleNamespace:
         chat_stale_intervals_threshold=2,
         chat_max_lookback_hours=72,
         chat_strict_citation_required=True,
+        chat_use_llm_answer=False,
     )
 
 
@@ -160,3 +167,27 @@ def test_audit_record_is_persisted() -> None:
     audit = orchestrator.get_audit(response.response_id)
     assert audit["response"]["response_id"] == response.response_id
     assert audit["request"]["message"] == "How did NSE perform?"
+
+
+def test_both_exchange_fanout_queries_nse_and_tsx() -> None:
+    tools = _FakeToolsOk()
+    orchestrator = ChatOrchestrator(settings=_settings(), tools=tools)
+    response = orchestrator.handle_query(
+        ChatQueryRequest(message="How did both exchanges perform?", context={"exchange": "BOTH"})
+    )
+    assert "NSE:" in response.answer.text
+    assert "TSX:" in response.answer.text
+    assert tools.session_summary_calls == ["NSE", "TSX"]
+    assert tools.data_quality_calls == ["NSE", "TSX"]
+
+
+def test_identity_prompt_returns_lens_description() -> None:
+    tools = _FakeToolsOk()
+    orchestrator = ChatOrchestrator(settings=_settings(), tools=tools)
+    response = orchestrator.handle_query(
+        ChatQueryRequest(message="Who are you and what can you do?", context={"exchange": "NSE"})
+    )
+    assert "I am Lens" in response.answer.text
+    assert response.answer.quality_badge == "complete"
+    assert tools.session_summary_calls == []
+    assert tools.data_quality_calls == []

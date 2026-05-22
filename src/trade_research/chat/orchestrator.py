@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -26,10 +27,12 @@ class ChatOrchestrator:
         self,
         settings: Settings,
         tools: ChatToolGateway,
+        llm_client: object | None = None,
         policy: ChatPolicy | None = None,
     ) -> None:
         self.settings = settings
         self.tools = tools
+        self.llm_client = llm_client
         self.policy = policy or ChatPolicy()
         self._sources: dict[str, dict] = {}
         self._audit: dict[str, dict] = {}
@@ -64,12 +67,35 @@ class ChatOrchestrator:
         exchange = _resolve_exchange_scope(request.context.exchange)
         tool_calls: list[ToolCallSpec] = []
 
+        if any(
+            token in text
+            for token in (
+                "who are you",
+                "what are you",
+                "what can you do",
+                "help",
+                "capabilities",
+                "how should i ask",
+            )
+        ):
+            return PlannerPlan(
+                intent="smalltalk_or_identity",
+                requires_market_data=False,
+                requires_research=False,
+                tool_calls=[],
+            )
+
         if any(token in text for token in ("quality", "missing", "stale", "coverage")):
             return PlannerPlan(
                 intent="data_quality_check",
                 requires_market_data=True,
                 requires_research=False,
-                tool_calls=[ToolCallSpec(tool="market_data.get_data_quality", arguments={"exchange": exchange})],
+                tool_calls=[
+                    ToolCallSpec(
+                        tool="market_data.get_data_quality",
+                        arguments={"exchange": exchange},
+                    )
+                ],
             )
 
         if any(token in text for token in ("note", "research", "why", "memo", "filing", "news")):
@@ -85,10 +111,16 @@ class ChatOrchestrator:
             )
             if any(token in text for token in ("price", "session", "perform", "return", "move")):
                 tool_calls.append(
-                    ToolCallSpec(tool="market_data.get_session_summary", arguments={"exchange": exchange})
+                    ToolCallSpec(
+                        tool="market_data.get_session_summary",
+                        arguments={"exchange": exchange},
+                    )
                 )
                 tool_calls.append(
-                    ToolCallSpec(tool="market_data.get_data_quality", arguments={"exchange": exchange})
+                    ToolCallSpec(
+                        tool="market_data.get_data_quality",
+                        arguments={"exchange": exchange},
+                    )
                 )
                 return PlannerPlan(
                     intent="hybrid_explain",
@@ -122,7 +154,10 @@ class ChatOrchestrator:
                             "interval": "1h",
                         },
                     ),
-                    ToolCallSpec(tool="market_data.get_data_quality", arguments={"exchange": exchange}),
+                    ToolCallSpec(
+                        tool="market_data.get_data_quality",
+                        arguments={"exchange": exchange},
+                    ),
                 ],
             )
 
@@ -131,8 +166,14 @@ class ChatOrchestrator:
             requires_market_data=True,
             requires_research=False,
             tool_calls=[
-                ToolCallSpec(tool="market_data.get_session_summary", arguments={"exchange": exchange}),
-                ToolCallSpec(tool="market_data.get_data_quality", arguments={"exchange": exchange}),
+                ToolCallSpec(
+                    tool="market_data.get_session_summary",
+                    arguments={"exchange": exchange},
+                ),
+                ToolCallSpec(
+                    tool="market_data.get_data_quality",
+                    arguments={"exchange": exchange},
+                ),
             ],
         )
 
@@ -141,17 +182,29 @@ class ChatOrchestrator:
         for call in plan.tool_calls:
             try:
                 if call.tool == "market_data.get_session_summary":
-                    result = self.tools.get_session_summary(**call.arguments)
-                    outputs["timescale"].append(result["provenance"])
-                    outputs["market_session_summary"] = result["data"]
+                    summaries: dict[str, dict] = outputs.setdefault("market_session_summary", {})
+                    for exchange in _expand_market_exchanges(call.arguments.get("exchange")):
+                        result = self.tools.get_session_summary(exchange=exchange)
+                        outputs["timescale"].append(result["provenance"])
+                        summaries[exchange] = result["data"]
                 elif call.tool == "market_data.get_data_quality":
-                    result = self.tools.get_data_quality(**call.arguments)
-                    outputs["timescale"].append(result["provenance"])
-                    outputs["market_data_quality"] = result["data"]
+                    quality_by_exchange: dict[str, dict] = outputs.setdefault(
+                        "market_data_quality", {}
+                    )
+                    for exchange in _expand_market_exchanges(call.arguments.get("exchange")):
+                        result = self.tools.get_data_quality(exchange=exchange)
+                        outputs["timescale"].append(result["provenance"])
+                        quality_by_exchange[exchange] = result["data"]
                 elif call.tool == "market_data.get_symbol_timeseries":
-                    result = self.tools.get_symbol_timeseries(**call.arguments)
-                    outputs["timescale"].append(result["provenance"])
-                    outputs["market_symbol_timeseries"] = result["data"]
+                    series_by_exchange: dict[str, list[dict]] = outputs.setdefault(
+                        "market_symbol_timeseries", {}
+                    )
+                    arguments = dict(call.arguments)
+                    for exchange in _expand_market_exchanges(arguments.get("exchange")):
+                        arguments["exchange"] = exchange
+                        result = self.tools.get_symbol_timeseries(**arguments)
+                        outputs["timescale"].append(result["provenance"])
+                        series_by_exchange[exchange] = result["data"]
                 elif call.tool == "research.search_docs":
                     result = self.tools.search_research_docs(**call.arguments)
                     outputs["qdrant"].extend(result["provenance"])
@@ -171,33 +224,47 @@ class ChatOrchestrator:
         outputs: dict,
     ) -> ChatQueryResponse:
         quality_payload = outputs.get("market_data_quality") or {}
-        exchange = _resolve_exchange_scope(request.context.exchange)
-        badge, warnings = evaluate_quality_badge(
-            self.settings,
-            exchange=exchange,
-            active_symbols=int(quality_payload.get("active_symbols") or 0),
-            latest_candle_symbols=int(quality_payload.get("latest_candle_symbols") or 0),
-            latest_candle_ts=quality_payload.get("latest_candle_ts"),
-        )
+        if plan.intent == "smalltalk_or_identity":
+            badge, warnings, market_freshness = "complete", [], None
+        else:
+            badge, warnings, market_freshness = _evaluate_quality_bundle(
+                self.settings,
+                quality_payload,
+            )
 
         answer_text = _render_answer_text(plan.intent, outputs)
         tool_errors = outputs.get("errors", [])
         if tool_errors:
             for error in tool_errors:
                 if str(error.get("tool", "")).startswith("research."):
-                    warnings.append("Research retrieval is temporarily unavailable; answer uses market data.")
+                    warnings.append(
+                        "Research retrieval is temporarily unavailable; answer uses market data."
+                    )
                 else:
                     warnings.append("Some dependencies failed during retrieval.")
         citations = _build_citations(outputs)
-        if self.settings.chat_strict_citation_required and not citations:
+        if (
+            plan.intent != "smalltalk_or_identity"
+            and self.settings.chat_strict_citation_required
+            and not citations
+        ):
             answer_text = (
                 "I could not produce a cited answer from currently available sources. "
                 "Please retry in a moment."
             )
             warnings.append("No usable citations were available.")
+        elif self.settings.chat_use_llm_answer and self.llm_client is not None:
+            rewritten = self.llm_client.generate_answer(
+                question=request.message,
+                deterministic_answer=answer_text,
+                warnings=warnings,
+                citations=[f"{item.type}: {item.label}" for item in citations],
+            )
+            if rewritten:
+                answer_text = rewritten
 
         freshness = FreshnessInfo(
-            market_data_as_of=quality_payload.get("latest_candle_ts"),
+            market_data_as_of=market_freshness,
             research_data_as_of=_latest_research_ts(outputs.get("research_docs", [])),
         )
         response_id = f"resp_{uuid4().hex[:12]}"
@@ -252,20 +319,34 @@ class ChatOrchestrator:
 
 def _resolve_exchange_scope(exchange: str) -> str:
     normalized = (exchange or "BOTH").upper()
-    if normalized in {"NSE", "TSX"}:
+    if normalized in {"NSE", "TSX", "BOTH"}:
         return normalized
-    return "NSE"
+    return "BOTH"
 
 
 def _render_answer_text(intent: str, outputs: dict) -> str:
-    if intent == "data_quality_check":
-        quality = outputs.get("market_data_quality") or {}
+    if intent == "smalltalk_or_identity":
         return (
-            "Latest quality snapshot: "
-            f"active symbols={quality.get('active_symbols', 0)}, "
-            f"latest-candle symbols={quality.get('latest_candle_symbols', 0)}, "
-            f"completeness={quality.get('completeness_ratio', 0.0):.2%}, "
-            f"open backlog windows={quality.get('open_backlog_windows', 0)}."
+            "I am Lens, your Trade Analyst Assistant. I can answer exchange-scoped questions "
+            "using TimescaleDB market data and Qdrant research context with provenance. "
+            "I support NSE, TSX, and BOTH scope, and I report quality/freshness warnings "
+            "when coverage is partial or stale."
+        )
+
+    if intent == "data_quality_check":
+        quality_map = outputs.get("market_data_quality") or {}
+        if not quality_map:
+            return "No quality snapshot data is currently available."
+        lines = []
+        for exchange, quality in quality_map.items():
+            lines.append(
+                f"{exchange}: active={quality.get('active_symbols', 0)}, "
+                f"latest-candle symbols={quality.get('latest_candle_symbols', 0)}, "
+                f"completeness={quality.get('completeness_ratio', 0.0):.2%}, "
+                f"open backlog windows={quality.get('open_backlog_windows', 0)}"
+            )
+        return (
+            "Latest quality snapshot: " + "; ".join(lines) + "."
         )
 
     if intent == "research_lookup":
@@ -279,7 +360,8 @@ def _render_answer_text(intent: str, outputs: dict) -> str:
         )
 
     if intent == "price_lookup":
-        rows = outputs.get("market_symbol_timeseries") or []
+        series_map = outputs.get("market_symbol_timeseries") or {}
+        rows = _first_non_empty_series(series_map.values())
         if not rows:
             return "No hourly candles found for the requested symbol and window."
         first = rows[0]
@@ -292,16 +374,18 @@ def _render_answer_text(intent: str, outputs: dict) -> str:
             f"(from {first['close']:.2f} to {last['close']:.2f})."
         )
 
-    summary = outputs.get("market_session_summary") or {}
-    if not summary:
+    summary_map = outputs.get("market_session_summary") or {}
+    if not summary_map:
         return "No session summary data is currently available for this request."
-    return (
-        "Latest session summary: "
-        f"symbols={summary.get('symbol_count', 0)}, "
-        f"advancers={summary.get('advancers', 0)}, "
-        f"decliners={summary.get('decliners', 0)}, "
-        f"avg return={float(summary.get('avg_return_pct') or 0.0):.2f}%."
-    )
+    parts = []
+    for exchange, summary in summary_map.items():
+        parts.append(
+            f"{exchange}: symbols={summary.get('symbol_count', 0)}, "
+            f"advancers={summary.get('advancers', 0)}, "
+            f"decliners={summary.get('decliners', 0)}, "
+            f"avg return={float(summary.get('avg_return_pct') or 0.0):.2f}%"
+        )
+    return "Latest session summary: " + "; ".join(parts) + "."
 
 
 def _build_citations(outputs: dict) -> list[Citation]:
@@ -353,7 +437,64 @@ def _latest_research_ts(rows: list[dict]) -> datetime | None:
     return latest
 
 
+def _expand_market_exchanges(exchange: object) -> list[str]:
+    normalized = str(exchange or "BOTH").upper()
+    if normalized == "BOTH":
+        return ["NSE", "TSX"]
+    if normalized in {"NSE", "TSX"}:
+        return [normalized]
+    return ["NSE", "TSX"]
+
+
+def _first_non_empty_series(series_collection: Iterable[list[dict]]) -> list[dict]:
+    for series in series_collection:
+        if series:
+            return series
+    return []
+
+
+def _evaluate_quality_bundle(
+    settings: Settings,
+    quality_payload: dict,
+) -> tuple[str, list[str], datetime | None]:
+    if not quality_payload:
+        return "stale", ["No market data quality payload was available."], None
+
+    badges: list[str] = []
+    warnings: list[str] = []
+    freshness_values: list[datetime] = []
+    for exchange, payload in quality_payload.items():
+        latest_candle_ts = payload.get("latest_candle_ts")
+        if isinstance(latest_candle_ts, datetime):
+            freshness_values.append(latest_candle_ts)
+        badge, exchange_warnings = evaluate_quality_badge(
+            settings,
+            exchange=exchange,
+            active_symbols=int(payload.get("active_symbols") or 0),
+            latest_candle_symbols=int(payload.get("latest_candle_symbols") or 0),
+            latest_candle_ts=latest_candle_ts,
+            latest_expected_candle_ts=payload.get("latest_expected_candle_ts"),
+        )
+        badges.append(badge)
+        warnings.extend(exchange_warnings)
+
+    overall_badge = "complete"
+    if "stale" in badges:
+        overall_badge = "stale"
+    elif "partial" in badges:
+        overall_badge = "partial"
+
+    freshness = min(freshness_values) if freshness_values else None
+    return overall_badge, warnings, freshness
+
+
 def _follow_ups(intent: str) -> list[str]:
+    if intent == "smalltalk_or_identity":
+        return [
+            "How did NSE perform in the latest complete session?",
+            "Compare BOTH exchanges quality snapshot.",
+            "Why did NSE move today?",
+        ]
     if intent == "data_quality_check":
         return [
             "Show missing windows by hour for this exchange.",

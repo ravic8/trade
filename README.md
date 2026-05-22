@@ -14,6 +14,140 @@ original NSE/TSX notebooks into reusable pipelines for:
 
 The notebooks remain useful for exploration. Production code lives under `src/`.
 
+## Lens Vision
+
+Lens is the trader-facing reasoning agent for this research stack. Its job is
+not to echo a small set of canned database summaries. It should understand
+natural questions from the trader's point of view, infer the analytical intent,
+pick the right bounded tools, gather relevant evidence, reason carefully over
+that evidence, and explain the result without bias or trade-pushing language.
+
+For example, a prompt such as:
+
+```text
+When were highs and lows established for each stock, and what does that say
+about distribution and market momentum?
+```
+
+should be understood as a market-structure and breadth question. Lens should be
+able to plan the evidence it needs, use quantitative tools over the available
+OHLCV data to locate per-stock high/low timing and distribution, compare those
+distributions across the selected universe and sessions, validate data quality,
+and return a grounded analysis of momentum or distribution with caveats and
+provenance.
+
+The target Lens is a function-heavy quant analyst:
+
+- LLM reasoning should understand intent, plan analysis, compare evidence, and
+  communicate uncertainty.
+- Quant tools should compute facts such as OHLCV aggregates, high/low timing,
+  breadth, returns, RSI, Bollinger Bands, model features, and backtest metrics.
+- Fundamental tools should fetch structured financial facts while retrieval
+  tools surface cited filings, transcripts, notes, and research context.
+- Answers should remain unbiased: evidence, quality warnings, counter-signals,
+  and uncertainty come before conclusions.
+- Lens should improve daily through ingestion, training or extraction jobs where
+  appropriate, trace review, prompt and tool evaluation loops, regression
+  datasets, and feedback-driven quality checks.
+
+The initial environments are intentionally limited to `local` and `production`.
+Local development should make experiments easy and observable. Production work
+should focus on data licensing, secrets, reliability, cost controls, monitoring,
+and safe analyst workflows before any broader environment matrix is added.
+
+## Lens Progress
+
+Lens has a working V1 chat path and a strong data-pipeline base:
+
+- TimescaleDB stores NSE and TSX symbols, hourly OHLCV data, exchange calendars,
+  feed health, ingestion runs, and backlog windows.
+- Dagster runs exchange-aware hourly ingestion, backlog detection, and recovery
+  jobs.
+- The FastAPI chat API exposes safe, bounded TimescaleDB and Qdrant gateway
+  tools instead of raw SQL.
+- The React research page shows Lens answers, data-quality badges, freshness,
+  citations, provenance, and a debug audit view.
+- Session summary, symbol time-series, data-quality, and research-retrieval
+  tool surfaces exist.
+- LLM answer rewriting has been wired behind provider settings, with OpenAI
+  embeddings available for research document retrieval.
+- Freshness evaluation now checks the latest exchange-aligned candle expected
+  from the session calendar, so closed-market data is not incorrectly labeled
+  stale just because wall-clock time advanced.
+
+V1 still has deliberate limitations that the roadmap addresses:
+
+- The current planner is a small Python intent router, not a strong
+  natural-language LLM planner.
+- Prompt text does not yet reliably resolve symbols, exchange scope, windows,
+  indicators, model-building requests, or market-structure questions.
+- The present tool set is safe but narrow, so difficult questions can fall back
+  to generic summaries instead of evidence-rich analysis.
+- Current answer synthesis is more template-and-rewrite than deep multi-step
+  reasoning.
+- Fundamentals ingestion, hybrid document retrieval, ML experiment workflows,
+  and continuous agent evaluation are not yet complete.
+
+## Lens Roadmap
+
+Future Lens work should land as focused feature branches. Each branch should add
+tests, audit visibility, and eval cases for the new question class it supports.
+
+1. `feature/lens-direct-gemini-provider`
+   - Move Lens runtime generation to the direct Gemini API for the initial
+     cost-conscious provider path and remove OpenRouter from the active local
+     and production chat path.
+   - Add bounded output tokens, timeouts, retries, provider health, usage/cost
+     telemetry, and failure visibility in debug audit.
+2. `feature/lens-evals-and-traces`
+   - Create the first reasoning evaluation dataset and per-turn traces for
+     intent, plan, tools, evidence, citations, quality warnings, LLM status,
+     latency, and regressions.
+3. `feature/lens-query-understanding`
+   - Resolve natural-language exchange scopes, tickers, time windows, trader
+     concepts, indicator names, comparisons, and ML/fundamental intents before
+     planning.
+4. `feature/lens-structured-planner`
+   - Replace shallow keyword routing with a schema-validated Gemini planner that
+     selects only allowlisted bounded tools and has deterministic fallbacks for
+     simple safe requests.
+5. `feature/lens-market-structure-tools`
+   - Add the quant evidence needed for prompts about when highs/lows were
+     established, breadth distribution, intraday/session concentration,
+     momentum participation, top/bottom cohorts, and market-wide confirmation.
+6. `feature/lens-technical-analysis-tools`
+   - Add deterministic RSI, Bollinger Bands, moving averages, MACD, ATR,
+     crossovers, volatility, and technical-state tools over validated series.
+7. `feature/lens-technical-reasoning`
+   - Add evidence-grounded synthesis for technical and market-structure
+     questions with charts, caveats, citations, and counter-signal checks.
+8. `feature/lens-fundamentals-schema-ingestion`
+   - Add structured company, statement, ratio, valuation, peer-group, and
+     fiscal-period storage so changing financial facts are queried rather than
+     memorized by an LLM.
+9. `feature/lens-fundamental-doc-rag`
+   - Ingest filings, annual reports, transcripts, notes, and research with
+     finance-aware chunks, metadata, provenance, and embeddings.
+10. `feature/lens-hybrid-fundamental-retrieval`
+    - Combine structured metrics, vector search, keyword search, metadata
+      filters, table-aware retrieval, and reranking for finance-grade evidence.
+11. `feature/lens-hybrid-analyst-reasoning`
+    - Answer hard cross-evidence prompts by comparing technical, fundamental,
+      research, freshness, and counter-evidence before composing conclusions.
+12. `feature/lens-ml-experiment-tools`
+    - Add reproducible dataset, feature, baseline, LSTM, walk-forward
+      validation, leakage-check, evaluation, backtest, and artifact tools.
+13. `feature/lens-agent-graph-orchestration`
+    - Add graph-style orchestration for stateful multi-step reasoning once the
+      tools and evals are strong enough: planner, tool router, quant analyst,
+      fundamental analyst, research retrieval, evidence validator, and answer
+      composer nodes.
+14. `feature/lens-production-hardening`
+    - Add local/production configuration boundaries, secrets discipline,
+      licensed data-provider decisions, rate limits, caching, cost budgets,
+      monitoring, citation enforcement, graceful degradation, and deployment
+      runbooks.
+
 ## Stack
 
 - Python 3.11+
@@ -189,7 +323,9 @@ docker compose exec api trade-research backfill-hourly TSX --lookback-days 10
 ## Web UI
 
 The V1 UI lives in `apps/web`. It is a Vite + React + TypeScript research
-console with mock data fallbacks until the FastAPI endpoints are added.
+console with market status, job, symbol, screener, research, and Lens chat
+surfaces. Some non-chat endpoints still keep sample-data fallbacks when live
+backend data is unavailable.
 
 ```bash
 cd apps/web

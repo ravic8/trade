@@ -6,8 +6,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
-from trade_research.chat import ChatOrchestrator, ChatPolicy, ChatToolGateway
-from trade_research.config import get_settings
+from trade_research.chat import ChatLLMClient, ChatOrchestrator, ChatPolicy, ChatToolGateway
+from trade_research.config import Settings, get_settings
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.schemas import (
     ChatFeedbackRequest,
@@ -86,6 +86,9 @@ def chat_health() -> dict[str, object]:
         "strictCitationRequired": settings.chat_strict_citation_required,
         "qdrantConfigured": bool(settings.qdrant_url),
         "embeddingConfigured": bool(settings.openai_api_key),
+        "llmProvider": settings.llm_provider,
+        "llmConfigured": bool(_llm_api_key_present(settings)),
+        "llmAnswerEnabled": settings.chat_use_llm_answer,
         "checkedAt": datetime.now(UTC).isoformat(),
     }
 
@@ -364,7 +367,21 @@ def _chat_orchestrator() -> ChatOrchestrator:
         ),
         embedding_client=embedding_client,
     )
-    return ChatOrchestrator(settings=settings, tools=gateway, policy=ChatPolicy())
+    llm_client = None
+    if settings.chat_use_llm_answer and _llm_api_key_present(settings):
+        llm_client = ChatLLMClient(settings=settings)
+    return ChatOrchestrator(
+        settings=settings,
+        tools=gateway,
+        llm_client=llm_client,
+        policy=ChatPolicy(),
+    )
+
+
+def _llm_api_key_present(settings: Settings) -> bool:
+    if settings.llm_provider.lower() == "openrouter":
+        return bool(settings.openrouter_api_key)
+    return bool(settings.openai_api_key)
 
 
 def _iso(value: datetime | None) -> str | None:
