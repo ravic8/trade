@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from trade_research.schemas import ChatQueryRequest
 
-
 _UNSAFE_PATTERNS = (
     "drop table",
     "delete from",

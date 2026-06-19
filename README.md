@@ -1,540 +1,554 @@
 # Trade Research Agent
 
-Production-grade V1 scaffold for a market research agent. The project turns the
-original NSE/TSX notebooks into reusable pipelines for:
+Local-first market data and research infrastructure for building a systematic
+trade research agent focused on Indian equities.
 
-- exchange universes
-- OHLCV ingestion
-- market data quality checks
-- range/volume/overnight feature engineering
-- intraday range screening
-- scraped research documents
-- OpenAI embeddings
-- Qdrant vector search
+The project is currently a data foundation layer plus early research tooling. It
+builds a clean tradable NSE equity universe, maps symbols to provider
+instruments, ingests audited OHLCV data, stores canonical datasets locally, and
+prepares the ground for feature engineering, backtesting, model experiments, and
+the future Lens research agent.
 
-The notebooks remain useful for exploration. Production code lives under `src/`.
+## Project Vision
 
-## Lens Vision
+The long-term goal is a systematic trade research platform that helps answer
+evidence-based questions such as:
 
-Lens is the trader-facing reasoning agent for this research stack. Its job is
-not to echo a small set of canned database summaries. It should understand
-natural questions from the trader's point of view, infer the analytical intent,
-pick the right bounded tools, gather relevant evidence, reason carefully over
-that evidence, and explain the result without bias or trade-pushing language.
+- Which liquid NSE stocks are suitable for approximately Rs 1 lakh per-stock
+  trades?
+- Which technical, liquidity, volatility, and regime features have predictive
+  value?
+- Which setups can realistically target roughly 1% per trade after costs,
+  slippage, and risk controls?
+- Which signals are stable out-of-sample and worth paper trading?
+- How should a research agent explain candidates, risks, historical evidence,
+  and data-quality caveats?
 
-For example, a prompt such as:
+The system is intentionally not a live trading bot yet. The near-term objective
+is truthful data, reproducible features, auditable research datasets, and
+validated backtests.
+
+## Current Scope
+
+Current focus:
+
+- NSE listed equities.
+- Liquid cash-market universe selection using average daily turnover, volume,
+  trading consistency, and zero-volume checks.
+- Upstox instrument master ingestion.
+- Mapping the liquid NSE universe to Upstox instrument keys.
+- Batch daily OHLCV ingestion for mapped NSE equities.
+- TimescaleDB/PostgreSQL storage for structured market data.
+- Parquet and CSV outputs for local analytical workflows.
+- Data-quality audits for every major generated dataset.
+- Existing Yahoo-based hourly NSE/TSX ingestion through Dagster.
+- Early modeling/target experiments under `src/trade_research/modeling/` and
+  `experiments/`.
+
+## Non-Goals For Now
+
+These are deliberately out of scope until the data, feature, research, and
+backtesting layers are trustworthy:
+
+- Realtime streaming, websockets, or live candle appending.
+- Broker order placement or automated execution.
+- Intraday/minute-level production pipelines for NSE equities.
+- Indices and F&O production coverage.
+- Fundamentals ingestion.
+- Sentiment or alternative data ingestion.
+- Autonomous trading agents.
+- Cloud/server deployment as the primary operating mode.
+
+## Architecture Overview
+
+The current architecture is a local modular monolith:
 
 ```text
-When were highs and lows established for each stock, and what does that say
-about distribution and market momentum?
+Universe selection
+    -> provider instrument master
+    -> symbol/instrument mapping
+    -> batch OHLCV ingestion
+    -> data-quality audits
+    -> TimescaleDB + Parquet/CSV
+    -> feature/research/backtest layers
+    -> Lens research agent later
 ```
 
-should be understood as a market-structure and breadth question. Lens should be
-able to plan the evidence it needs, use quantitative tools over the available
-OHLCV data to locate per-stock high/low timing and distribution, compare those
-distributions across the selected universe and sessions, validate data quality,
-and return a grounded analysis of momentum or distribution with caveats and
-provenance.
+Core components:
 
-The target Lens is a function-heavy quant analyst:
+- **Python package**: reusable data, storage, feature, chat, and modeling code
+  under `src/trade_research/`.
+- **Typer CLI**: repeatable local batch commands exposed as `trade-research`.
+- **TimescaleDB/PostgreSQL**: canonical structured market-data store.
+- **Parquet/CSV**: local analytical outputs and reproducible batch artifacts.
+- **Dagster**: scheduled/observable ingestion for the existing hourly Yahoo NSE
+  and TSX pipelines.
+- **FastAPI + React**: existing application shell for Lens/chat/research UI.
+- **Qdrant**: vector store for document retrieval experiments.
+- **Docker Compose**: local infrastructure for Postgres/Timescale, Redis,
+  Qdrant, API, web, and Dagster.
 
-- LLM reasoning should understand intent, plan analysis, compare evidence, and
-  communicate uncertainty.
-- Quant tools should compute facts such as OHLCV aggregates, high/low timing,
-  breadth, returns, RSI, Bollinger Bands, model features, and backtest metrics.
-- Fundamental tools should fetch structured financial facts while retrieval
-  tools surface cited filings, transcripts, notes, and research context.
-- Answers should remain unbiased: evidence, quality warnings, counter-signals,
-  and uncertainty come before conclusions.
-- Lens should improve daily through ingestion, training or extraction jobs where
-  appropriate, trace review, prompt and tool evaluation loops, regression
-  datasets, and feedback-driven quality checks.
+## Folder Structure
 
-The initial environments are intentionally limited to `local` and `production`.
-Local development should make experiments easy and observable. Production work
-should focus on data licensing, secrets, reliability, cost controls, monitoring,
-and safe analyst workflows before any broader environment matrix is added.
+```text
+apps/web/                    React frontend
+src/trade_research/          Main Python package
+src/trade_research/data/     Market-data providers and audits
+src/trade_research/storage/  Timescale, Parquet, and vector storage helpers
+src/trade_research/universe/ Exchange universe providers
+src/trade_research/features/ Feature builders
+src/trade_research/modeling/ Modeling/target utilities
+src/trade_research/dagster/  Dagster assets, schedules, sensors, resources
+src/trade_research/chat/     Lens chat orchestration and tools
+scripts/                     Standalone local scripts
+experiments/                 Exploratory research and model experiments
+notebooks/                   Legacy/exploratory notebooks
+docs/                        Architecture and design notes
+data/                        Generated local datasets, gitignored
+artifacts/                   Generated model/research artifacts, gitignored
+output/                      Generated report/PDF outputs, gitignored
+tmp/                         Temporary render/debug outputs, gitignored
+deploy/                      Deployment and backup helper scripts
+dagster_home/                Local Dagster configuration
+```
 
-## Lens Progress
+Production-quality reusable logic should move into `src/trade_research/`.
+Notebooks and `experiments/` are for exploration and should call package code
+instead of becoming the only source of logic.
 
-Lens has a working V1 chat path and a strong data-pipeline base:
+## Completed Pipeline Progress
 
-- TimescaleDB stores NSE and TSX symbols, hourly OHLCV data, exchange calendars,
-  feed health, ingestion runs, and backlog windows.
-- Dagster runs exchange-aware hourly ingestion, backlog detection, and recovery
-  jobs.
-- The FastAPI chat API exposes safe, bounded TimescaleDB and Qdrant gateway
-  tools instead of raw SQL.
-- The React research page shows Lens answers, data-quality badges, freshness,
-  citations, provenance, and a debug audit view.
-- Session summary, symbol time-series, data-quality, and research-retrieval
-  tool surfaces exist.
-- Direct Gemini answer rewriting has been wired behind bounded runtime settings,
-  with OpenAI embeddings available for research document retrieval.
-- Freshness evaluation now checks the latest exchange-aligned candle expected
-  from the session calendar, so closed-market data is not incorrectly labeled
-  stale just because wall-clock time advanced.
+### Step 0: Liquid NSE Universe
 
-V1 still has deliberate limitations that the roadmap addresses:
+Script:
 
-- The current planner is a small Python intent router, not a strong
-  natural-language LLM planner.
-- Prompt text does not yet reliably resolve symbols, exchange scope, windows,
-  indicators, model-building requests, or market-structure questions.
-- The present tool set is safe but narrow, so difficult questions can fall back
-  to generic summaries instead of evidence-rich analysis.
-- Current answer synthesis is more template-and-rewrite than deep multi-step
-  reasoning.
-- Fundamentals ingestion, hybrid document retrieval, ML experiment workflows,
-  and continuous agent evaluation are not yet complete.
+```bash
+python scripts/select_liquid_nse_universe.py \
+  --min-avg-daily-turnover 1000000000 \
+  --top-n 1000
+```
 
-## Lens Roadmap
+Purpose:
 
-Future Lens work should land as focused feature branches. Each branch should add
-tests, audit visibility, and eval cases for the new question class it supports.
+- Fetch NSE equity universe.
+- Pull approximately six months of yfinance daily OHLCV.
+- Compute liquidity using average daily turnover (`close * volume`), average
+  daily volume, trading-day coverage, and zero-volume ratio.
+- Select the core tradable universe.
 
-1. `feature/lens-direct-gemini-provider`
-   - Move Lens runtime generation to the direct Gemini API for the initial
-     cost-conscious provider path and remove OpenRouter from the active local
-     and production chat path.
-   - Add bounded output tokens, timeouts, retries, provider health, usage/cost
-     telemetry, and failure visibility in debug audit.
-2. `feature/lens-evals-and-traces`
-   - Create the first reasoning evaluation dataset and per-turn traces for
-     intent, plan, tools, evidence, citations, quality warnings, LLM status,
-     latency, and regressions.
-3. `feature/lens-query-understanding`
-   - Resolve natural-language exchange scopes, tickers, time windows, trader
-     concepts, indicator names, comparisons, and ML/fundamental intents before
-     planning.
-4. `feature/lens-structured-planner`
-   - Replace shallow keyword routing with a schema-validated Gemini planner that
-     selects only allowlisted bounded tools and has deterministic fallbacks for
-     simple safe requests.
-5. `feature/lens-market-structure-tools`
-   - Add the quant evidence needed for prompts about when highs/lows were
-     established, breadth distribution, intraday/session concentration,
-     momentum participation, top/bottom cohorts, and market-wide confirmation.
-6. `feature/lens-technical-analysis-tools`
-   - Add deterministic RSI, Bollinger Bands, moving averages, MACD, ATR,
-     crossovers, volatility, and technical-state tools over validated series.
-7. `feature/lens-technical-reasoning`
-   - Add evidence-grounded synthesis for technical and market-structure
-     questions with charts, caveats, citations, and counter-signal checks.
-8. `feature/lens-fundamentals-schema-ingestion`
-   - Add structured company, statement, ratio, valuation, peer-group, and
-     fiscal-period storage so changing financial facts are queried rather than
-     memorized by an LLM.
-9. `feature/lens-fundamental-doc-rag`
-   - Ingest filings, annual reports, transcripts, notes, and research with
-     finance-aware chunks, metadata, provenance, and embeddings.
-10. `feature/lens-hybrid-fundamental-retrieval`
-    - Combine structured metrics, vector search, keyword search, metadata
-      filters, table-aware retrieval, and reranking for finance-grade evidence.
-11. `feature/lens-hybrid-analyst-reasoning`
-    - Answer hard cross-evidence prompts by comparing technical, fundamental,
-      research, freshness, and counter-evidence before composing conclusions.
-12. `feature/lens-ml-experiment-tools`
-    - Add reproducible dataset, feature, baseline, LSTM, walk-forward
-      validation, leakage-check, evaluation, backtest, and artifact tools.
-13. `feature/lens-agent-graph-orchestration`
-    - Add graph-style orchestration for stateful multi-step reasoning once the
-      tools and evals are strong enough: planner, tool router, quant analyst,
-      fundamental analyst, research retrieval, evidence validator, and answer
-      composer nodes.
-14. `feature/lens-production-hardening`
-    - Add local/production configuration boundaries, secrets discipline,
-      licensed data-provider decisions, rate limits, caching, cost budgets,
-      monitoring, citation enforcement, graceful degradation, and deployment
-      runbooks.
+Current result:
 
-## Stack
+- NSE universe size: 2374.
+- Tickers with data: 2372.
+- Core liquid stocks with six-month ADT >= Rs 100 crore/day: 264.
+- Duplicate ticker/date rows: 0.
 
-- Python 3.11+
-- FastAPI-ready package structure
-- pandas/Parquet/DuckDB for analytical workflows
-- PostgreSQL/TimescaleDB via `docker-compose.yml`
-- Qdrant for low-latency vector retrieval
-- Dagster for scheduled, observable data assets
-- OpenAI embeddings for scraped research documents
-- Typer CLI for V1 operations
+### Step 1.0: Upstox Instrument Master
 
-## Quick Start
+Command:
+
+```bash
+trade-research fetch-upstox-instruments
+```
+
+Purpose:
+
+- Fetch the full public Upstox instrument master.
+- Store the master locally.
+- Audit missing and duplicate instrument keys.
+- Optionally upsert instruments into TimescaleDB.
+
+Current result:
+
+- Total Upstox instruments: 140,865.
+- NSE equity instruments: 2,424.
+- Missing instrument keys: 0.
+- Duplicate instrument keys: 0.
+
+### Step 1.1: Liquid Universe To Upstox Mapping
+
+Command:
+
+```bash
+trade-research map-liquid-nse-upstox
+```
+
+Purpose:
+
+- Join the liquid NSE universe to Upstox NSE equity instruments.
+- Persist matched instruments for OHLCV fetching.
+- Persist unmatched symbols for manual review.
+- Optionally upsert the tradable universe and members into TimescaleDB.
+
+Current result:
+
+- Liquid universe rows: 264.
+- Upstox mapped rows: 261.
+- Unmatched symbols: `STLTECH`, `KRN`, `PFOCUS`.
+
+### Step 1.2: Upstox Daily OHLCV
+
+Command:
+
+```bash
+trade-research fetch-upstox-nse-daily
+```
+
+Purpose:
+
+- Fetch daily OHLCV from Upstox for mapped liquid NSE equities.
+- Default to incremental fetching from the latest stored date plus one day.
+- Use a two-calendar-day settlement lag when `--to-date` is omitted.
+- Write audit, failure, and skipped/current-symbol reports.
+- Upsert daily candles and data-quality audits into TimescaleDB.
+
+Current result:
+
+- Daily OHLCV rows: 125,189.
+- Symbols: 261.
+- Date range: 2024-06-18 to 2026-06-18.
+- Fetch failures: 0.
+- Audit status: 259 passed, 2 warnings (`IDEA`, `CUPID`).
+
+## Data Outputs
+
+Canonical current outputs:
+
+```text
+data/processed/universe/liquid_nse_stocks.csv
+data/processed/universe/liquid_nse_stock_audit.csv
+data/processed/universe/liquid_nse_universe_summary.json
+
+data/processed/instruments/upstox_instruments.parquet
+data/processed/instruments/upstox_instruments_audit.csv
+
+data/processed/universe/liquid_nse_upstox_mapping.csv
+data/processed/universe/liquid_nse_upstox_unmatched.csv
+
+data/processed/equities/nse_daily_ohlcv_upstox.parquet
+data/processed/equities/nse_daily_ohlcv_upstox_audit.csv
+data/processed/equities/nse_daily_ohlcv_upstox_failures.csv
+data/processed/equities/nse_daily_ohlcv_upstox_skipped.csv
+```
+
+`data/` is gitignored because these files are generated and may be large. Keep
+the files locally as canonical run artifacts unless intentionally rebuilding
+them.
+
+## Database And Storage Design
+
+TimescaleDB/PostgreSQL is the canonical structured store. Important tables:
+
+- `symbols`: exchange symbol master for NSE/TSX universe providers.
+- `provider_instruments`: full provider instrument master, currently Upstox.
+- `tradable_universes`: named universe definitions and criteria.
+- `tradable_universe_members`: universe membership, ranks, liquidity metrics,
+  and mapped instrument keys.
+- `ohlcv_daily`: daily Upstox OHLCV for mapped liquid NSE equities.
+- `ohlcv_hourly`: existing Yahoo hourly OHLCV for NSE/TSX.
+- `data_quality_audits`: row-level summary audit records for generated
+  datasets.
+- `ingestion_runs`: run history and success/failure counts.
+- `feed_health`: Yahoo hourly source health by symbol.
+- `hourly_backlog_windows`: detected and recovered hourly gaps.
+- `exchange_holidays`: cached exchange calendars.
+
+Hypertables:
+
+- `ohlcv_daily` is a Timescale hypertable on `date`.
+- `ohlcv_hourly` is a Timescale hypertable on `ts`.
+
+Local file storage:
+
+- Parquet is used for reusable analytical datasets.
+- CSV/JSON is used for audit reports, summaries, and manual review outputs.
+- Qdrant is available for document/vector retrieval experiments, not for
+  canonical OHLCV storage.
+- Redis is supporting infrastructure for jobs/cache style workloads, not a
+  durable market-data store.
+
+## How To Run Locally
+
+Create the Python environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
-docker compose up -d qdrant postgres redis
 ```
 
-## Docker
+Start local infrastructure:
 
-Run the full V1 app stack:
+```bash
+docker compose up -d postgres redis qdrant
+```
+
+Initialize the database schema:
+
+```bash
+trade-research init-db
+```
+
+Run the full Docker app stack:
 
 ```bash
 docker compose up --build
 ```
 
-Then open:
+Local services:
 
 ```text
-http://localhost:5173
+React web:       http://localhost:5173
+FastAPI API:     http://localhost:8000
+Dagster UI:      http://localhost:3000
+TimescaleDB:     localhost:5432
+Qdrant:          localhost:6333
 ```
 
-The compose stack starts:
+## Major Pipeline Commands
 
-- `web`: production-built React UI served by nginx
-- `api`: FastAPI backend on `http://localhost:8000`
-- `postgres`: TimescaleDB/PostgreSQL
-- `redis`: job/cache broker
-- `qdrant`: vector database
-- `dagster-webserver`: orchestration UI on `http://localhost:3000`
-- `dagster-daemon`: schedule runner for exchange-aware hourly NSE and TSX ingestion
-
-## Databases
-
-- **TimescaleDB/PostgreSQL** is the source of truth for structured market data:
-  exchange symbols, hourly OHLCV candles, ingestion runs, and later screener
-  outputs. Hourly candles are keyed by `(ticker, ts, source)`, so repeated
-  hourly runs upsert the same candle instead of duplicating it.
-- **Qdrant** is the vector index for the knowledge database: embedded document
-  chunks from filings, exchange announcements, scraped research, and internal
-  notes. Postgres should keep document metadata/provenance; Qdrant should power
-  semantic retrieval with symbol/date/source filters.
-- **Redis** is supporting infrastructure for jobs/cache style workloads. It is
-  not currently the durable store for market data or knowledge.
-
-Dagster currently defines four V1 market-data assets:
-
-- `nse_universe`: fetches the official NSE equity list and stores symbols
-- `nse_hourly_ohlcv`: fetches hourly Yahoo candles and upserts them into TimescaleDB
-- `tsx_universe`: fetches the configured TSX symbol list and stores symbols
-- `tsx_hourly_ohlcv`: fetches hourly Yahoo candles and upserts them into TimescaleDB
-
-Dagster uses separate exchange schedules:
-
-- `nse_hourly_schedule`: `45 9-16 * * 1-5`, timezone `Asia/Kolkata`
-- `tsx_hourly_schedule`: `45 9-16 * * 1-5`, timezone `America/Toronto`
-
-Dagster also runs exchange backlog sensors while the daemon is online:
-
-- `nse_hourly_backlog_sensor`: scans completed recent NSE hourly windows
-- `tsx_hourly_backlog_sensor`: scans completed recent TSX hourly windows
-
-The sensors compare expected exchange-aligned hourly windows with stored
-`ohlcv_hourly` symbol coverage. Missing or low-coverage windows are recorded in
-`hourly_backlog_windows` and queue bounded recovery jobs. Recovery jobs fetch
-the configured historical Yahoo hourly lookback, upsert candles, and rescore
-the specific backlog window before marking it `recovered` or `partial`.
-
-Each scheduled asset checks exchange sessions before fetching. NSE holidays come
-from the official NSE trading holiday API, and TSX holidays come from the
-official TMX trading calendar. Holidays are cached in TimescaleDB and refreshed
-monthly by default (`CALENDAR_REFRESH_DAYS=30`); if no fresh cached calendar is
-available and the official source cannot be reached, the guard fails closed and
-skips the fetch instead of ingesting on an unverified session. The symbol
-universes are also cached in TimescaleDB and refreshed weekly by default
-(`UNIVERSE_REFRESH_DAYS=7`).
-
-Docker defaults to ingesting the full cached NSE and TSX universes. Set
-`NSE_INGEST_LIMIT` or `TSX_INGEST_LIMIT` only when you want a smaller smoke
-run. Scheduled hourly assets use `HOURLY_REALTIME_LOOKBACK_DAYS=1`, so the
-realtime pipelines refresh the current Yahoo hourly trading-day window instead
-of downloading the last 10 days on every run.
-
-Hourly candles are upserted by candle timestamp, but the scheduled pipeline is
-not a gap-aware backlog replayer. If Docker or Dagster is down, the next
-scheduled run fetches only the configured realtime lookback. Run an explicit
-historical refresh with `trade-research backfill-hourly EXCHANGE` when you want
-to refill a wider Yahoo hourly window after downtime or for historical storage.
-That command uses `HOURLY_HISTORY_LOOKBACK_DAYS=10` by default and still lets
-you override it with `--lookback-days`.
-
-Automatic recent-gap recovery is controlled separately:
-
-- `HOURLY_BACKLOG_ENABLED=true`
-- `HOURLY_BACKLOG_SCAN_DAYS=10`
-- `HOURLY_BACKLOG_COVERAGE_THRESHOLD=0.5`
-- `HOURLY_BACKLOG_MAX_WINDOWS_PER_TICK=1`
-- `HOURLY_BACKLOG_MAX_ATTEMPTS=3`
-- `HOURLY_BACKLOG_MIN_CANDLE_LAG_MINUTES=20`
-- `HOURLY_BACKLOG_STALE_RECOVERY_MINUTES=30`
-
-The candle lag prevents a just-finished Yahoo hourly candle from being called
-missing too early. The coverage threshold is intentionally less than `1.0`
-because Yahoo does not serve every exchange symbol consistently; feed-health
-filtering still controls which cached symbols are considered fetchable.
-Queued or running recovery windows that stop making progress are eligible for a
-new bounded attempt after the stale-recovery interval.
-
-Yahoo feed health is tracked per symbol in TimescaleDB. Each hourly run skips
-symbols whose `next_retry_at` is still in the future, marks successful symbols
-`active`, backs off temporary failures, and marks repeated failures
-`unsupported` for a weekly retry. Tune this with
-`FEED_HEALTH_FAILURE_THRESHOLD`, `FEED_HEALTH_MAX_BACKOFF_HOURS`, and
-`FEED_HEALTH_UNSUPPORTED_RETRY_DAYS`.
-
-Yahoo fetching is bounded and conservative because it is a free development
-source. The default fetcher uses batch size `20`, at most `2` concurrent batch
-workers, `1s` between batch submissions, and retry/backoff/jitter settings from
-`YFINANCE_RETRY_ATTEMPTS`, `YFINANCE_RETRY_BASE_SECONDS`, and
-`YFINANCE_JITTER_SECONDS`.
-
-Preview an exchange universe:
+Select liquid NSE universe:
 
 ```bash
-trade-research universe NSE --limit 10
-trade-research universe TSX --limit 10
-trade-research market-session NSE
-trade-research market-session TSX
-trade-research feed-health
+python scripts/select_liquid_nse_universe.py \
+  --min-avg-daily-turnover 1000000000 \
+  --top-n 1000
 ```
 
-Run the V1 screener with a small smoke-test universe:
+Fetch Upstox instrument master:
 
 ```bash
-trade-research run-screener NSE --limit 50
+trade-research fetch-upstox-instruments
 ```
 
-Outputs are written under `data/` as Parquet files.
-
-Initialize the Timescale schema or run one-off hourly ingestions from the CLI:
+Map liquid NSE universe to Upstox:
 
 ```bash
-trade-research init-db
-trade-research ingest-hourly NSE --limit 20
-trade-research ingest-hourly TSX --limit 20
-trade-research backfill-hourly NSE --lookback-days 10
-trade-research backfill-hourly TSX --lookback-days 10
+trade-research map-liquid-nse-upstox
 ```
 
-Inside Docker:
+Fetch or incrementally refresh Upstox NSE daily OHLCV:
 
 ```bash
-docker compose exec api trade-research init-db
-docker compose exec api trade-research ingest-hourly NSE --limit 20
-docker compose exec api trade-research ingest-hourly TSX --limit 20
-docker compose exec api trade-research backfill-hourly NSE --lookback-days 10
-docker compose exec api trade-research backfill-hourly TSX --lookback-days 10
+trade-research fetch-upstox-nse-daily
 ```
 
-## Web UI
-
-The V1 UI lives in `apps/web`. It is a Vite + React + TypeScript research
-console with market status, job, symbol, screener, research, and Lens chat
-surfaces. Some non-chat endpoints still keep sample-data fallbacks when live
-backend data is unavailable.
+Force a full daily OHLCV refresh:
 
 ```bash
-cd apps/web
-npm install
-npm run dev
+trade-research fetch-upstox-nse-daily --full-refresh
 ```
 
-Open the URL printed by Vite, usually `http://localhost:5173`.
-
-When the backend API is running on port `8000`, Vite proxies `/api/*` requests
-to it. Without the backend, the UI still loads with sample market research data.
-
-## Production Notes
-
-Yahoo Finance is included only as a development/fallback data source. For
-reliable production market data, add licensed providers behind the market data
-provider interface and keep source metadata, fetch time, and quality flags.
-
-## Public Ubuntu Deployment
-
-`docker-compose.yml` remains the local developer stack and publishes service
-ports that are convenient on one workstation. Public Ubuntu hosting uses the
-standalone `docker-compose.prod.yml` file instead. The production stack exposes
-only Caddy on ports `80` and `443`, proxies Lens through the `web` nginx
-container, keeps `api`, TimescaleDB, Redis, and Qdrant on the Docker network,
-and restarts services unless they are explicitly stopped.
-
-DBeaver/CloudBeaver remains in the local developer compose stack, but it is not
-started by the production compose file. Dagster is kept available for
-production administration on `127.0.0.1:3000` only. Use SSH port forwarding
-for admin access:
+Smoke-test a small number of symbols:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 ubuntu@SERVER_IP
+trade-research fetch-upstox-nse-daily --limit 5
 ```
 
-Then open `http://localhost:3000` for Dagster from the admin workstation that
-owns the SSH session. Use containerized CLI tasks or an intentionally
-restricted admin path later if production database browsing becomes necessary.
-If port `3000` is already occupied on the Ubuntu host, change
-`DAGSTER_HOST_PORT` in `.env.prod` and forward that host-local port instead.
-
-Before public launch:
-
-1. Point a DNS record such as `lens.example.com` at the Ubuntu host public IP.
-2. Forward inbound router ports `80` and `443` to the Ubuntu host if it sits
-   behind a router, and make sure the ISP path is not blocked by CGNAT.
-3. Allow only SSH, HTTP, and HTTPS through the host firewall. Do not publish
-   Postgres, Qdrant, Redis, API, Dagster, or DBeaver directly.
-4. Keep the Caddy authentication gate and API chat rate limit enabled before
-   allowing untrusted internet traffic to spend LLM tokens.
-
-Prepare the Ubuntu host with Git, Docker Engine, and the Docker Compose plugin,
-then clone the repo and create the production secrets file:
+Run existing hourly Yahoo ingestion:
 
 ```bash
-cp .env.prod.example .env.prod
-nano .env.prod
+trade-research ingest-hourly NSE
+trade-research ingest-hourly TSX
 ```
 
-At minimum set a strong `POSTGRES_PASSWORD`, keep `DATABASE_URL` in sync with
-that password, set `LENS_DOMAIN` to the real public hostname, set
-`GEMINI_API_KEY` when Gemini-backed answer rewriting is enabled, and fill any
-OpenAI key needed for research embeddings. Set `API_CORS_ORIGINS` to the
-public HTTPS origin for Lens, for example `https://lens.example.com`.
-
-The public stack places an HTTP Basic Authentication gate in Caddy before the
-web UI and `/api` proxy. Generate the password hash on the host and store only
-that hash in `.env.prod`:
+Backfill a wider hourly Yahoo window:
 
 ```bash
-docker run --rm caddy:2.10-alpine caddy hash-password --plaintext 'choose-a-long-password'
+trade-research backfill-hourly NSE
 ```
 
-Set `LENS_BASIC_AUTH_USER` and `LENS_BASIC_AUTH_HASH` from that output. If the
-hash contains `$`, keep it quoted in `.env.prod` so Compose passes the literal
-hash through to Caddy. Do not put the plaintext password, production hash, API
-keys, or database password in the tracked example env files.
-
-The FastAPI layer also limits `POST /api/chat/query` per client IP. Production
-Compose trusts `X-Forwarded-For` only because the API stays behind the private
-nginx proxy there. Leave `CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR=false` if the API
-is exposed directly during local work. API request summaries log method, path,
-status, and duration only; chat text and secrets should stay out of logs.
-
-Build and start the public stack:
+Build legacy range features from a Parquet OHLCV file:
 
 ```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
-docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+trade-research features-from-parquet input.parquet output.parquet
 ```
 
-Caddy requests and renews HTTPS certificates when the configured
-`LENS_DOMAIN` resolves to the host and ports `80` and `443` are reachable.
-Inspect startup and certificate logs with:
+## Data Quality And Audit Rules
+
+The project is audit-driven. Every major dataset should ship with an audit or
+summary that can answer:
+
+- How many rows were requested, returned, skipped, and failed?
+- What symbols/instruments were included?
+- What date window was covered?
+- Were there duplicate symbol/date or instrument/date rows?
+- Are OHLCV values null, zero, negative, or structurally invalid?
+- Are volume and turnover values plausible?
+- Which symbols have warnings?
+- What provider/source produced the data?
+- What criteria were used to include or reject rows?
+
+Do not use a generated dataset for research until its audit has been inspected.
+Warnings are allowed, but they must be visible and explainable.
+
+## Incremental Vs Full Refresh
+
+The Upstox daily pipeline defaults to incremental mode:
+
+- For each mapped instrument, read the latest stored `ohlcv_daily` date.
+- Fetch from `latest_date + 1`.
+- Skip symbols already current.
+- Write skipped/current rows to
+  `data/processed/equities/nse_daily_ohlcv_upstox_skipped.csv`.
+- Do not overwrite the canonical full Parquet file when no new rows are fetched.
+
+Use `--full-refresh` when you intentionally want to refetch the full requested
+history. Use explicit `--from-date`/`--to-date` windows for controlled rebuilds
+or backfills.
+
+## Dagster Usage
+
+Dagster currently orchestrates the older Yahoo hourly NSE/TSX path:
+
+- `nse_universe` -> `nse_hourly_ohlcv`
+- `tsx_universe` -> `tsx_hourly_ohlcv`
+- hourly schedules with exchange time zones
+- backlog sensors for missing/partial hourly windows
+- bounded recovery jobs
+
+The newer Upstox instrument, mapping, and daily OHLCV pipelines are currently
+CLI-driven. Once the daily pipeline and feature layer stabilize, they can be
+promoted into Dagster assets for scheduled, observable runs.
+
+## Quant Research Design References
+
+The next research layer is intentionally modeled after patterns used in
+reputable quantitative research rather than ad hoc indicator hunting. The main
+lesson across these references is that durable quant work starts with a clean
+universe, audited data, clearly defined features/factors, forward-looking labels
+kept separate from features, out-of-sample validation, and portfolio/risk
+evaluation. It does not start by training many complex models and picking the
+best historical accuracy.
+
+Useful references and case studies:
+
+- [Fama-French factor models](https://en.wikipedia.org/wiki/Fama%E2%80%93French_three-factor_model):
+  classic asset-pricing work showing how systematic factors such as market,
+  size, value, profitability, and investment explain return differences. This
+  supports building explicit feature/factor families before modeling.
+- [Jegadeesh-Titman momentum research](https://en.wikipedia.org/wiki/Momentum_investing):
+  the canonical momentum case study, where prior winners and losers are sorted
+  and tested against future returns. This maps directly to cross-sectional
+  feature ranks, quantile analysis, and forward-return labels.
+- [AQR systematic factor investing](https://en.wikipedia.org/wiki/AQR_Capital_Management):
+  institutional example of combining long-term, repeatable style premia such as
+  value, momentum, defensive, carry, trend, and risk-balanced construction.
+  This reinforces process discipline over high conviction in any one stock.
+- [Two Centuries of Trend Following](https://arxiv.org/abs/1404.3274):
+  long-horizon evidence for trend-following across asset classes, with emphasis
+  on stability across time and markets. This supports testing trend and momentum
+  features for robustness, not just one good backtest window.
+- [Black-Litterman portfolio construction](https://en.wikipedia.org/wiki/Black%E2%80%93Litterman_model):
+  a portfolio-allocation framework showing that forecasts must be combined with
+  uncertainty, constraints, and risk-aware allocation. This is a reminder that
+  prediction quality alone is not enough.
+- [Purged cross-validation](https://en.wikipedia.org/wiki/Purged_cross-validation):
+  a financial machine-learning validation method designed to prevent leakage
+  when labels use future time windows. This is relevant for forward-return,
+  target-before-stop, and walk-forward model evaluation.
+- [Backtesting and overfitting warnings](https://en.wikipedia.org/wiki/Backtesting):
+  financial backtests are vulnerable to look-ahead bias, path dependence,
+  repeated testing, and overfitting. This supports strict audit trails,
+  out-of-sample splits, transaction costs, and experiment tracking.
+
+Design implications for this repo:
+
+- Build a **factor research layer**, not only a feature table.
+- Keep `features_daily` and labels/targets separate to reduce leakage risk.
+- Measure feature influence with IC/rank IC, quantile returns, hit rates,
+  t-stats, monthly stability, and later ablation/model contribution.
+- Compare every model to simple baselines and rule-based signals.
+- Treat LightGBM as a disciplined experiment after feature/label validation.
+- Treat LSTM/sequence models as later experiments, not the foundation.
+- Judge models by trading usefulness as well as ML metrics: expectancy, profit
+  factor, drawdown, turnover, cost sensitivity, and calibration.
+
+## Current Limitations
+
+- Daily production coverage is currently liquid NSE equities only.
+- Upstox daily OHLCV requires `UPSTOX_ACCESS_TOKEN`.
+- Instrument master fetching uses the public Upstox instruments endpoint and
+  does not require a token.
+- The current research/modeling layer is early and not yet a complete
+  experiment framework.
+- No production feature table such as `features_daily` exists yet.
+- No MLflow tracking exists yet.
+- No validated LightGBM/LSTM model pipeline exists yet.
+- No paper-trading simulator exists yet.
+- No live execution is implemented or intended in the near term.
+- Corporate actions, survivorship bias, and provider data quirks need deeper
+  treatment before serious strategy conclusions.
+
+## Roadmap
+
+Near-term:
+
+1. Build `features_daily` from `ohlcv_daily`.
+2. Add feature audits and feature-version tracking.
+3. Build target/label datasets separately from features:
+   `forward_ret_*`, universe outperformance, top-quantile labels, and
+   one-percent target/stop labels.
+4. Build factor research outputs: IC/rank IC, quantile analysis, hit-rate
+   tables, t-stats, and monthly stability.
+5. Add local experiment tracking, likely MLflow, for dataset versions, feature
+   versions, target definitions, model parameters, metrics, and artifacts.
+6. Train baselines, then LightGBM after the feature/label contract is stable.
+   Treat LSTM and other sequence models as later experiments.
+7. Build a frontend research dashboard for experiment results, feature impact,
+   signal review, backtest summaries, equity curves, and candidate review.
+
+Medium-term:
+
+1. Build a simple backtesting engine with costs, slippage, target/stop rules,
+   max holding period, and capital constraints.
+2. Add market-regime and breadth features.
+3. Add paper-trading simulation without broker execution.
+4. Add fundamentals ingestion after the technical research loop exists.
+5. Promote stable batch jobs into Dagster assets.
+
+Long-term:
+
+1. Add Lens as a research analyst and explanation layer over audited data,
+   features, models, and backtests.
+2. Add stronger retrieval over filings, reports, transcripts, and notes.
+3. Add production hardening, licensed data-provider decisions, monitoring, and
+   deployment runbooks.
+4. Consider live execution only after paper trading, risk controls, and
+   operational checks are mature.
+
+## Development Checks
+
+Run formatting/lint checks:
 
 ```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f caddy
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f api
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f dagster-daemon
+ruff check .
 ```
 
-Initialize the database or run admin CLI tasks inside the production API
-container:
+Run tests:
 
 ```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml exec api \
-  trade-research init-db
-docker compose --env-file .env.prod -f docker-compose.prod.yml exec api \
-  trade-research feed-health
+pytest
 ```
 
-Production data lives in Docker volumes for Caddy certificates, app data,
-TimescaleDB, Qdrant, and Redis. Back up Postgres and research/vector data
-before treating the host as durable production. After a host reboot, verify
-Caddy, API health, Dagster schedules, volume persistence, and public HTTPS
-before considering Lens live again.
-
-### Production Backups And Restore
-
-The production backup script writes artifacts under an ignored host directory
-by default. Run it from the repo checkout on the Ubuntu host while the
-production stack is running:
+Useful focused tests:
 
 ```bash
-./deploy/backup-prod.sh
+pytest tests/test_upstox_provider.py
+pytest tests/test_model_targets.py
+pytest tests/test_dagster_resources.py
 ```
 
-Each backup folder contains:
+## Notes And Caveats
 
-- `postgres.dump`: a custom-format `pg_dump` archive for the configured
-  production database.
-- A Qdrant collection snapshot for `QDRANT_COLLECTION` once that collection
-  exists.
-- `manifest.txt`: timestamp and artifact names for the backup set.
-
-Copy backup folders off the Ubuntu host after creation. A backup kept only on
-the same disk as Docker volumes does not protect against host or disk loss.
-This script backs up Postgres and the Qdrant research collection; decide
-separately whether `/app/data` needs file-level copies for manually staged
-research inputs or exported artifacts.
-
-Restore Postgres from a selected archive during a controlled maintenance
-window:
-
-```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml stop \
-  api dagster-webserver dagster-daemon
-./deploy/restore-prod-postgres.sh backups/production/BACKUP_STAMP/postgres.dump
-docker compose --env-file .env.prod -f docker-compose.prod.yml up -d \
-  api dagster-webserver dagster-daemon
-```
-
-The Postgres restore helper recreates the configured database, enables the
-TimescaleDB extension, enters the TimescaleDB restore state, runs `pg_restore`,
-and exits the restore state. Treat it as destructive: take a fresh backup
-before a restore and keep the application writers stopped until restored data
-is validated.
-
-Restore the Qdrant research collection snapshot from the same backup set:
-
-```bash
-./deploy/restore-prod-qdrant.sh \
-  backups/production/BACKUP_STAMP/COLLECTION-SNAPSHOT.snapshot
-```
-
-The Qdrant helper uploads the collection snapshot through Qdrant's private REST
-API with snapshot priority. After any restore, run:
-
-```bash
-./deploy/check-prod.sh
-docker compose --env-file .env.prod -f docker-compose.prod.yml exec api \
-  trade-research feed-health
-```
-
-### Production Monitoring
-
-Start with the bundled host-local health check:
-
-```bash
-./deploy/check-prod.sh
-```
-
-Use the health check output together with logs and container state:
-
-```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml ps
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 api
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 caddy
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs --tail=200 dagster-daemon
-```
-
-For host-level monitoring, alert on unreachable public HTTPS, failed Compose
-health/state, low disk space for Docker volumes and backup folders, repeated
-API `429` or provider failures, and missing Dagster ingestion activity.
-
-### Reboot Verification
-
-After an Ubuntu host reboot:
-
-1. Confirm Docker started the stack with `docker compose --env-file .env.prod
-   -f docker-compose.prod.yml ps`.
-2. Run `./deploy/check-prod.sh` and confirm Postgres, API, chat health, and
-   Qdrant collection inspection succeed.
-3. Open the public HTTPS Lens URL and confirm the Caddy login gate appears
-   before the UI.
-4. Use the SSH-forwarded Dagster admin port and confirm schedules/sensors are
-   present.
-5. Run a small Lens query and check citations, freshness, and Gemini failure
-   visibility in audit if answer rewriting is enabled.
-6. Confirm the most recent off-host backup folder exists before relying on the
-   host again.
+- This is research software, not financial advice.
+- Backtests can look precise while being wrong. Prioritize leakage prevention,
+  auditability, and out-of-sample validation.
+- A profitable-looking model should be judged by trading metrics as well as ML
+  metrics: precision, recall, calibration, expectancy, profit factor,
+  drawdown, turnover, and cost sensitivity.
+- Keep generated data local and reproducible. Commit code, tests, docs, and
+  schemas; do not commit bulky generated datasets.
+- Be conservative with cleanup. Keep canonical processed outputs and audit
+  files unless intentionally rebuilding them.

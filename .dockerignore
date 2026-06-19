@@ -6,8 +6,8 @@ __pycache__
 .pytest_cache
 .ruff_cache
 data
+notebooks
+artifacts
 apps/web/node_modules
 apps/web/dist
 apps/web/.vite
-NSE.ipynb
-TSX.ipynb

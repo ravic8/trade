@@ -8,7 +8,16 @@ from rich.console import Console
 from rich.table import Table
 
 from trade_research.config import get_settings
-from trade_research.data import YahooFinanceMarketDataProvider, validate_ohlcv
+from trade_research.data import (
+    UpstoxHistoricalDataProvider,
+    UpstoxInstrumentMasterProvider,
+    UpstoxNiftyFuturesHistoryProvider,
+    YahooFinanceMarketDataProvider,
+    audit_daily_ohlcv,
+    instrument_master_audit,
+    map_liquid_universe_to_upstox,
+    validate_ohlcv,
+)
 from trade_research.features import RangeFeatureBuilder
 from trade_research.market_calendar import session_decision
 from trade_research.screeners import IntradayRangeScreener
@@ -241,6 +250,418 @@ def backfill_hourly(
     ingest_hourly(exchange=exchange, limit=limit, lookback_days=history_days)
 
 
+@app.command("fetch-nifty-futures-history")
+def fetch_nifty_futures_history(
+    from_date: Annotated[
+        str | None,
+        typer.Option(help="Start date. Defaults to --months before --to-date."),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        typer.Option(help="End date. Defaults to yesterday."),
+    ] = None,
+    months: Annotated[
+        int,
+        typer.Option(min=1, max=6, help="Lookback months when --from-date is omitted."),
+    ] = 4,
+    interval: Annotated[
+        str,
+        typer.Option(help="Upstox interval: 1minute, 3minute, 5minute, 15minute, 30minute, day."),
+    ] = "1minute",
+    active_instrument_key: Annotated[
+        str | None,
+        typer.Option(
+            help=(
+                "Optional current NIFTY futures instrument key from the Upstox BOD "
+                "instruments file, e.g. NSE_FO|12345."
+            ),
+        ),
+    ] = None,
+    output_name: Annotated[
+        str,
+        typer.Option(help="Parquet path prefix under DATA_DIR."),
+    ] = "nifty/futures_history",
+    access_token: Annotated[
+        str | None,
+        typer.Option(help="Override UPSTOX_ACCESS_TOKEN for this run."),
+    ] = None,
+) -> None:
+    settings = get_settings()
+    token = access_token or settings.upstox_access_token
+    if not token:
+        raise typer.BadParameter("Set UPSTOX_ACCESS_TOKEN or pass --access-token.")
+
+    end = _parse_cli_date(to_date, "--to-date") if to_date else date.today() - timedelta(days=1)
+    start = (
+        _parse_cli_date(from_date, "--from-date")
+        if from_date
+        else _subtract_months(end, months)
+    )
+
+    with UpstoxNiftyFuturesHistoryProvider(token) as provider:
+        frame = provider.fetch_nifty50_futures_history(
+            start=start,
+            end=end,
+            interval=interval,
+            active_instrument_key=active_instrument_key,
+        )
+
+    if frame.empty:
+        raise typer.Exit("No NIFTY futures data returned from Upstox.")
+
+    path = ParquetStore(settings.data_dir).write_frame(output_name, frame)
+    console.print(f"Wrote {len(frame)} NIFTY futures rows: {path}")
+    console.print(f"Window: {start.isoformat()} to {end.isoformat()}")
+    console.print(
+        f"Contracts: {frame['TradingSymbol'].nunique()} | interval: {interval}"
+    )
+
+
+@app.command("fetch-upstox-instruments")
+def fetch_upstox_instruments(
+    output_name: Annotated[
+        str,
+        typer.Option(help="Processed Parquet path prefix under DATA_DIR."),
+    ] = "processed/instruments/upstox_instruments",
+    audit_output: Annotated[
+        Path,
+        typer.Option(help="Instrument audit CSV path."),
+    ] = Path("data/processed/instruments/upstox_instruments_audit.csv"),
+    store_db: Annotated[
+        bool,
+        typer.Option(help="Also upsert instruments into Timescale/Postgres."),
+    ] = True,
+) -> None:
+    settings = get_settings()
+    with UpstoxInstrumentMasterProvider() as provider:
+        instruments = provider.fetch()
+
+    audit = instrument_master_audit(instruments)
+    store = ParquetStore(settings.data_dir)
+    output_path = store.write_frame(output_name, instruments.drop(columns=["raw"]))
+    audit_output.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([audit.__dict__]).to_csv(audit_output, index=False)
+
+    rows_written = 0
+    if store_db:
+        db = TimescaleStore(settings.database_url)
+        db.initialize()
+        rows_written = db.upsert_provider_instruments(instruments, source="upstox")
+
+    console.print(f"Wrote Upstox instruments: {output_path} ({len(instruments)} rows)")
+    console.print(f"Wrote instrument audit: {audit_output}")
+    if store_db:
+        console.print(f"Upserted provider_instruments rows: {rows_written}")
+
+
+@app.command("map-liquid-nse-upstox")
+def map_liquid_nse_upstox(
+    universe_csv: Annotated[
+        Path,
+        typer.Option(help="Liquid NSE universe CSV from Step 0."),
+    ] = Path("data/processed/universe/liquid_nse_stocks.csv"),
+    instruments_name: Annotated[
+        str,
+        typer.Option(help="Processed Upstox instruments Parquet prefix under DATA_DIR."),
+    ] = "processed/instruments/upstox_instruments",
+    mapping_output: Annotated[
+        Path,
+        typer.Option(help="Matched liquid-universe mapping CSV."),
+    ] = Path("data/processed/universe/liquid_nse_upstox_mapping.csv"),
+    unmatched_output: Annotated[
+        Path,
+        typer.Option(help="Unmatched liquid symbols CSV."),
+    ] = Path("data/processed/universe/liquid_nse_upstox_unmatched.csv"),
+    universe_id: Annotated[
+        str,
+        typer.Option(help="Canonical local universe id."),
+    ] = "nse_liquid_adt_100cr",
+    store_db: Annotated[
+        bool,
+        typer.Option(help="Also upsert universe metadata and members into Timescale/Postgres."),
+    ] = True,
+) -> None:
+    settings = get_settings()
+    liquid = pd.read_csv(universe_csv)
+    instruments = ParquetStore(settings.data_dir).read_frame(instruments_name)
+    matched, unmatched = map_liquid_universe_to_upstox(liquid, instruments)
+
+    mapping_output.parent.mkdir(parents=True, exist_ok=True)
+    unmatched_output.parent.mkdir(parents=True, exist_ok=True)
+    matched.to_csv(mapping_output, index=False)
+    unmatched.to_csv(unmatched_output, index=False)
+
+    rows_written = 0
+    if store_db:
+        db = TimescaleStore(settings.database_url)
+        db.initialize()
+        rows_written = db.upsert_tradable_universe(
+            universe_id=universe_id,
+            name="NSE liquid equities ADT >= Rs 100 crore",
+            exchange="NSE",
+            source="yfinance_liquidity_plus_upstox_mapping",
+            criteria={
+                "avg_daily_turnover_min": 1_000_000_000,
+                "turnover_currency": "INR",
+                "lookback": "6 months",
+                "zero_volume_ratio_max": 0.03,
+            },
+            members=matched,
+            description=(
+                "Step 1 universe mapped to Upstox instrument keys for batch "
+                "historical ingestion."
+            ),
+        )
+
+    if not unmatched.empty:
+        console.print(f"[yellow]Unmatched liquid symbols: {len(unmatched)}[/yellow]")
+    console.print(f"Wrote Upstox mapping: {mapping_output} ({len(matched)} rows)")
+    console.print(f"Wrote unmatched symbols: {unmatched_output}")
+    if store_db:
+        console.print(f"Upserted tradable universe members: {rows_written}")
+
+
+@app.command("fetch-upstox-nse-daily")
+def fetch_upstox_nse_daily(
+    mapping_csv: Annotated[
+        Path,
+        typer.Option(help="Matched liquid NSE Upstox mapping CSV."),
+    ] = Path("data/processed/universe/liquid_nse_upstox_mapping.csv"),
+    years: Annotated[
+        int,
+        typer.Option(min=1, max=10, help="Daily candle lookback in years."),
+    ] = 2,
+    from_date: Annotated[
+        str | None,
+        typer.Option(help="Optional start date in YYYY-MM-DD format."),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        typer.Option(help="Optional end date in YYYY-MM-DD format."),
+    ] = None,
+    settlement_lag_days: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            max=7,
+            help=(
+                "Default calendar-day lag for completed daily candles when --to-date "
+                "is omitted."
+            ),
+        ),
+    ] = 2,
+    limit: Annotated[
+        int | None,
+        typer.Option(help="Optional smoke-test symbol limit."),
+    ] = None,
+    throttle_seconds: Annotated[
+        float,
+        typer.Option(min=0, help="Pause between Upstox candle requests."),
+    ] = 0.25,
+    output_name: Annotated[
+        str,
+        typer.Option(help="Canonical full-refresh Parquet path prefix under DATA_DIR."),
+    ] = "processed/equities/nse_daily_ohlcv_upstox",
+    incremental_output_name: Annotated[
+        str,
+        typer.Option(help="Incremental-run Parquet path prefix under DATA_DIR."),
+    ] = "processed/equities/nse_daily_ohlcv_upstox_incremental",
+    audit_output: Annotated[
+        Path,
+        typer.Option(help="Daily OHLCV audit CSV path."),
+    ] = Path("data/processed/equities/nse_daily_ohlcv_upstox_audit.csv"),
+    failures_output: Annotated[
+        Path,
+        typer.Option(help="Per-symbol fetch failures CSV path."),
+    ] = Path("data/processed/equities/nse_daily_ohlcv_upstox_failures.csv"),
+    skipped_output: Annotated[
+        Path,
+        typer.Option(help="Per-symbol skipped/current CSV path for incremental runs."),
+    ] = Path("data/processed/equities/nse_daily_ohlcv_upstox_skipped.csv"),
+    access_token: Annotated[
+        str | None,
+        typer.Option(help="Override UPSTOX_ACCESS_TOKEN for this run."),
+    ] = None,
+    full_refresh: Annotated[
+        bool,
+        typer.Option(help="Fetch the full requested history instead of only missing dates."),
+    ] = False,
+    store_db: Annotated[
+        bool,
+        typer.Option(help="Also upsert daily candles and audits into Timescale/Postgres."),
+    ] = True,
+) -> None:
+    settings = get_settings()
+    token = access_token or settings.upstox_access_token
+    if not token:
+        raise typer.BadParameter("Set UPSTOX_ACCESS_TOKEN or pass --access-token.")
+
+    end = (
+        _parse_cli_date(to_date, "--to-date")
+        if to_date
+        else date.today() - timedelta(days=settlement_lag_days)
+    )
+    base_start = (
+        _parse_cli_date(from_date, "--from-date") if from_date else _subtract_years(end, years)
+    )
+    is_full_window = full_refresh or from_date is not None
+    mapping = pd.read_csv(mapping_csv)
+    if limit:
+        mapping = mapping.head(limit)
+
+    run_id = None
+    db = TimescaleStore(settings.database_url) if store_db else None
+    if db is not None:
+        db.initialize()
+    latest_dates = (
+        {}
+        if db is None or full_refresh or from_date
+        else db.latest_daily_ohlcv_dates(
+            [str(key) for key in mapping["instrument_key"].dropna().tolist()],
+            source="upstox",
+        )
+    )
+    planned = _plan_daily_fetch_windows(
+        mapping,
+        base_start=base_start,
+        end=end,
+        latest_dates=latest_dates,
+    )
+    fetch_plan = planned[planned["should_fetch"]].copy()
+    skipped_plan = planned[~planned["should_fetch"]].copy()
+
+    skipped_output.parent.mkdir(parents=True, exist_ok=True)
+    skipped_plan.to_csv(skipped_output, index=False)
+
+    if db is not None:
+        run_id = db.start_ingestion_run(
+            job_name="upstox_nse_daily_ohlcv",
+            exchange="NSE",
+            source="upstox",
+            items_requested=len(fetch_plan),
+            run_metadata={
+                "trigger": "cli",
+                "mode": "full_refresh" if full_refresh or from_date else "incremental",
+                "base_start": base_start.isoformat(),
+                "end": end.isoformat(),
+                "settlement_lag_days": settlement_lag_days if to_date is None else None,
+                "mapped_symbols": len(mapping),
+                "skipped_current_symbols": len(skipped_plan),
+            },
+        )
+
+    frames: list[pd.DataFrame] = []
+    failures: list[dict[str, str]] = []
+    try:
+        with UpstoxHistoricalDataProvider(token) as provider:
+            for row in fetch_plan.to_dict(orient="records"):
+                try:
+                    frame = provider.fetch_daily_candles(
+                        instrument_key=str(row["instrument_key"]),
+                        start=_parse_cli_date(str(row["fetch_start"]), "fetch_start"),
+                        end=end,
+                        symbol=str(row["symbol"]),
+                        trading_symbol=str(row.get("trading_symbol") or row["symbol"]),
+                    )
+                    if not frame.empty:
+                        frames.append(frame)
+                except Exception as exc:
+                    failures.append(
+                        {
+                            "symbol": str(row["symbol"]),
+                            "instrument_key": str(row["instrument_key"]),
+                            "error": str(exc),
+                        }
+                    )
+                if throttle_seconds:
+                    import time
+
+                    time.sleep(throttle_seconds)
+
+        ohlcv = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        audit = (
+            audit_daily_ohlcv(ohlcv, fetch_plan)
+            if not fetch_plan.empty
+            else pd.DataFrame(
+                columns=[
+                    "symbol",
+                    "instrument_key",
+                    "rows",
+                    "start_date",
+                    "end_date",
+                    "missing_dates",
+                    "null_ohlcv_rows",
+                    "duplicate_date_rows",
+                    "zero_volume_rows",
+                    "zero_or_negative_close_rows",
+                    "status",
+                ]
+            )
+        )
+
+        store = ParquetStore(settings.data_dir)
+        output_path = None
+        if not ohlcv.empty:
+            output_path = store.write_frame(
+                output_name if is_full_window else incremental_output_name,
+                ohlcv,
+            )
+        audit_output.parent.mkdir(parents=True, exist_ok=True)
+        failures_output.parent.mkdir(parents=True, exist_ok=True)
+        audit.to_csv(audit_output, index=False)
+        pd.DataFrame(
+            failures,
+            columns=["symbol", "instrument_key", "error"],
+        ).to_csv(failures_output, index=False)
+
+        rows_written = db.upsert_daily_ohlcv(ohlcv) if db is not None and not ohlcv.empty else 0
+        audits_written = (
+            db.insert_data_quality_audits(
+                audit,
+                dataset_name="nse_daily_ohlcv",
+                source="upstox",
+                interval="1d",
+            )
+            if db is not None and not audit.empty
+            else 0
+        )
+        if db is not None and run_id is not None:
+            succeeded = (
+                int(audit["status"].isin(["passed", "warning"]).sum())
+                if not audit.empty
+                else 0
+            )
+            db.finish_ingestion_run(
+                run_id,
+                status="completed" if rows_written else "completed_empty",
+                items_processed=len(fetch_plan),
+                items_succeeded=succeeded,
+                items_failed=len(fetch_plan) - succeeded,
+            )
+    except Exception as exc:
+        if db is not None and run_id is not None:
+            db.finish_ingestion_run(
+                run_id,
+                status="failed",
+                items_processed=0,
+                items_succeeded=0,
+                items_failed=len(fetch_plan),
+                error_message=str(exc),
+            )
+        raise
+
+    if output_path is None:
+        console.print("No new Upstox NSE daily OHLCV rows fetched; existing Parquet left unchanged")
+    else:
+        console.print(f"Wrote Upstox NSE daily OHLCV: {output_path} ({len(ohlcv)} rows)")
+    console.print(f"Wrote daily audit: {audit_output}")
+    console.print(f"Wrote fetch failures: {failures_output} ({len(failures)} rows)")
+    console.print(f"Wrote skipped/current symbols: {skipped_output} ({len(skipped_plan)} rows)")
+    if db is not None:
+        console.print(f"Upserted ohlcv_daily rows: {rows_written}")
+        console.print(f"Inserted data_quality_audits rows: {audits_written}")
+
+
 @app.command("run-screener")
 def run_screener(
     exchange: Annotated[str, typer.Argument()],
@@ -306,6 +727,62 @@ def _successful_latest_candles(frame: pd.DataFrame) -> dict[str, datetime]:
         else datetime.fromisoformat(str(timestamp))
         for ticker, timestamp in latest.items()
     }
+
+
+def _plan_daily_fetch_windows(
+    mapping: pd.DataFrame,
+    base_start: date,
+    end: date,
+    latest_dates: dict[str, date],
+) -> pd.DataFrame:
+    rows = []
+    for record in mapping.to_dict(orient="records"):
+        instrument_key = str(record["instrument_key"])
+        latest_date = latest_dates.get(instrument_key)
+        fetch_start = base_start
+        if latest_date is not None:
+            fetch_start = max(base_start, latest_date + timedelta(days=1))
+        should_fetch = fetch_start <= end
+        rows.append(
+            {
+                **record,
+                "latest_stored_date": latest_date.isoformat() if latest_date else None,
+                "fetch_start": fetch_start.isoformat(),
+                "fetch_end": end.isoformat(),
+                "should_fetch": should_fetch,
+                "skip_reason": "" if should_fetch else "already_current",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _subtract_months(value: date, months: int) -> date:
+    year = value.year
+    month = value.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+
+    import calendar
+
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _subtract_years(value: date, years: int) -> date:
+    try:
+        return value.replace(year=value.year - years)
+    except ValueError:
+        return value.replace(year=value.year - years, day=28)
+
+
+def _parse_cli_date(value: str, option_name: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"{option_name} must use YYYY-MM-DD format, got {value!r}."
+        ) from exc
 
 
 @app.command("features-from-parquet")

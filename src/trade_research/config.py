@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
 
     polygon_api_key: str | None = None
+    upstox_access_token: str | None = None
 
     yfinance_batch_size: int = Field(default=20, ge=1, le=100)
     yfinance_throttle_seconds: float = Field(default=1.0, ge=0)

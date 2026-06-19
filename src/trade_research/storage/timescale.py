@@ -11,6 +11,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     MetaData,
@@ -125,6 +126,99 @@ hourly_backlog_windows_table = Table(
     Column("last_error", String),
 )
 
+provider_instruments_table = Table(
+    "provider_instruments",
+    metadata,
+    Column("source", String, primary_key=True),
+    Column("instrument_key", String, primary_key=True),
+    Column("exchange", String),
+    Column("segment", String),
+    Column("asset_type", String),
+    Column("trading_symbol", String),
+    Column("name", String),
+    Column("isin", String),
+    Column("lot_size", BigInteger),
+    Column("tick_size", Float),
+    Column("expiry", Date),
+    Column("strike", Float),
+    Column("option_type", String),
+    Column("underlying_symbol", String),
+    Column("underlying_key", String),
+    Column("exchange_token", String),
+    Column("active", Boolean, nullable=False, default=True),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+    Column("raw", JSON, nullable=False, default=dict),
+)
+
+tradable_universes_table = Table(
+    "tradable_universes",
+    metadata,
+    Column("universe_id", String, primary_key=True),
+    Column("name", String, nullable=False),
+    Column("description", String),
+    Column("exchange", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("criteria_json", JSON, nullable=False, default=dict),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+tradable_universe_members_table = Table(
+    "tradable_universe_members",
+    metadata,
+    Column("universe_id", String, primary_key=True),
+    Column("symbol", String, primary_key=True),
+    Column("instrument_key", String),
+    Column("rank", BigInteger),
+    Column("avg_daily_volume", Float),
+    Column("avg_daily_turnover", Float),
+    Column("trading_days", BigInteger),
+    Column("zero_volume_ratio", Float),
+    Column("start_date", Date),
+    Column("end_date", Date),
+    Column("included_at", DateTime(timezone=True), nullable=False),
+)
+
+ohlcv_daily_table = Table(
+    "ohlcv_daily",
+    metadata,
+    Column("instrument_key", String, primary_key=True),
+    Column("source", String, primary_key=True),
+    Column("date", Date, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("open", Float, nullable=False),
+    Column("high", Float, nullable=False),
+    Column("low", Float, nullable=False),
+    Column("close", Float, nullable=False),
+    Column("volume", BigInteger, nullable=False),
+    Column("open_interest", BigInteger),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+    Column("quality_status", String, nullable=False),
+)
+
+data_quality_audits_table = Table(
+    "data_quality_audits",
+    metadata,
+    Column("audit_id", String, primary_key=True),
+    Column("dataset_name", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("symbol", String),
+    Column("instrument_key", String),
+    Column("interval", String),
+    Column("start_date", Date),
+    Column("end_date", Date),
+    Column("rows", BigInteger, nullable=False),
+    Column("missing_dates", BigInteger, nullable=False, default=0),
+    Column("null_rows", BigInteger, nullable=False, default=0),
+    Column("duplicate_rows", BigInteger, nullable=False, default=0),
+    Column("zero_volume_rows", BigInteger, nullable=False, default=0),
+    Column("zero_or_negative_close_rows", BigInteger, nullable=False, default=0),
+    Column("coverage_ratio", Float),
+    Column("status", String, nullable=False),
+    Column("warnings_json", JSON, nullable=False, default=list),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 class TimescaleStore:
     def __init__(self, database_url: str) -> None:
@@ -157,6 +251,24 @@ class TimescaleStore:
                     "ON hourly_backlog_windows (exchange, status, window_start)"
                 )
             )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_provider_instruments_symbol "
+                    "ON provider_instruments (source, exchange, segment, trading_symbol)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_ohlcv_daily_symbol_date "
+                    "ON ohlcv_daily (symbol, date DESC)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_data_quality_dataset "
+                    "ON data_quality_audits (dataset_name, source, created_at DESC)"
+                )
+            )
 
         with self.engine.begin() as connection:
             connection.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
@@ -164,6 +276,12 @@ class TimescaleStore:
                 text(
                     "SELECT create_hypertable("
                     "'ohlcv_hourly', 'ts', if_not_exists => TRUE, migrate_data => TRUE)"
+                )
+            )
+            connection.execute(
+                text(
+                    "SELECT create_hypertable("
+                    "'ohlcv_daily', 'date', if_not_exists => TRUE, migrate_data => TRUE)"
                 )
             )
 
@@ -728,6 +846,149 @@ class TimescaleStore:
                 total += len(chunk)
         return total
 
+    def upsert_provider_instruments(self, frame: pd.DataFrame, source: str = "upstox") -> int:
+        rows = self._instrument_rows(frame, source=source)
+        if not rows:
+            return 0
+
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(provider_instruments_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in provider_instruments_table.columns
+                    if column.name not in {"source", "instrument_key"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["source", "instrument_key"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def upsert_tradable_universe(
+        self,
+        universe_id: str,
+        name: str,
+        exchange: str,
+        source: str,
+        criteria: Mapping[str, Any],
+        members: pd.DataFrame,
+        description: str | None = None,
+    ) -> int:
+        created_at = datetime.now(UTC)
+        member_rows = self._universe_member_rows(members, universe_id, created_at)
+        with self.engine.begin() as connection:
+            universe_statement = insert(tradable_universes_table).values(
+                universe_id=universe_id,
+                name=name,
+                description=description,
+                exchange=exchange,
+                source=source,
+                criteria_json=dict(criteria),
+                created_at=created_at,
+            )
+            connection.execute(
+                universe_statement.on_conflict_do_update(
+                    index_elements=["universe_id"],
+                    set_={
+                        "name": universe_statement.excluded.name,
+                        "description": universe_statement.excluded.description,
+                        "exchange": universe_statement.excluded.exchange,
+                        "source": universe_statement.excluded.source,
+                        "criteria_json": universe_statement.excluded.criteria_json,
+                        "created_at": universe_statement.excluded.created_at,
+                    },
+                )
+            )
+            connection.execute(
+                tradable_universe_members_table.delete().where(
+                    tradable_universe_members_table.c.universe_id == universe_id
+                )
+            )
+            if member_rows:
+                for chunk in _chunks(member_rows, size=1_000):
+                    connection.execute(tradable_universe_members_table.insert().values(chunk))
+        return len(member_rows)
+
+    def upsert_daily_ohlcv(
+        self,
+        frame: pd.DataFrame,
+        exchange: str = "NSE",
+        source: str = "upstox",
+    ) -> int:
+        rows = self._daily_ohlcv_rows(frame, exchange=exchange, source=source)
+        if not rows:
+            return 0
+
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(ohlcv_daily_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in ohlcv_daily_table.columns
+                    if column.name not in {"instrument_key", "source", "date"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["instrument_key", "source", "date"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def latest_daily_ohlcv_dates(
+        self,
+        instrument_keys: list[str],
+        source: str = "upstox",
+    ) -> dict[str, date]:
+        if not instrument_keys:
+            return {}
+        with self.engine.begin() as connection:
+            rows = (
+                connection.execute(
+                    select(
+                        ohlcv_daily_table.c.instrument_key,
+                        func.max(ohlcv_daily_table.c.date).label("latest_date"),
+                    )
+                    .where(ohlcv_daily_table.c.source == source)
+                    .where(ohlcv_daily_table.c.instrument_key.in_(instrument_keys))
+                    .group_by(ohlcv_daily_table.c.instrument_key)
+                )
+                .mappings()
+                .all()
+            )
+        return {
+            str(row["instrument_key"]): row["latest_date"]
+            for row in rows
+            if row["latest_date"] is not None
+        }
+
+    def insert_data_quality_audits(
+        self,
+        audit: pd.DataFrame,
+        dataset_name: str,
+        source: str,
+        interval: str,
+    ) -> int:
+        rows = self._audit_rows(
+            audit,
+            dataset_name=dataset_name,
+            source=source,
+            interval=interval,
+        )
+        if not rows:
+            return 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(data_quality_audits_table.insert().values(chunk))
+        return len(rows)
+
     def start_ingestion_run(
         self,
         job_name: str,
@@ -1001,14 +1262,19 @@ class TimescaleStore:
             ),
             backlog AS (
                 SELECT
-                    count(*) FILTER (WHERE status IN ('missing', 'partial', 'failed')) AS open_backlog_windows
+                    count(*) FILTER (
+                        WHERE status IN ('missing', 'partial', 'failed')
+                    ) AS open_backlog_windows
                 FROM hourly_backlog_windows
                 WHERE exchange = :exchange AND source = :source
             )
             SELECT
                 :exchange AS exchange,
                 (SELECT max_ts FROM latest_ts) AS latest_candle_ts,
-                coalesce((SELECT latest_candle_symbols FROM latest_counts), 0) AS latest_candle_symbols,
+                coalesce(
+                    (SELECT latest_candle_symbols FROM latest_counts),
+                    0
+                ) AS latest_candle_symbols,
                 coalesce((SELECT active_symbols FROM active_universe), 0) AS active_symbols,
                 coalesce((SELECT open_backlog_windows FROM backlog), 0) AS open_backlog_windows
             """
@@ -1058,6 +1324,129 @@ class TimescaleStore:
             )
         return rows
 
+    @staticmethod
+    def _instrument_rows(frame: pd.DataFrame, source: str) -> list[dict[str, Any]]:
+        fetched_at = datetime.now(UTC)
+        rows = []
+        for record in frame.to_dict(orient="records"):
+            instrument_key = _clean_string(record.get("instrument_key"))
+            if not instrument_key:
+                continue
+            rows.append(
+                {
+                    "source": source,
+                    "instrument_key": instrument_key,
+                    "exchange": _clean_string(record.get("exchange")),
+                    "segment": _clean_string(record.get("segment")),
+                    "asset_type": _clean_string(record.get("asset_type")),
+                    "trading_symbol": _clean_string(record.get("trading_symbol")),
+                    "name": _clean_string(record.get("name")),
+                    "isin": _clean_string(record.get("isin")),
+                    "lot_size": _nullable_int(record.get("lot_size")),
+                    "tick_size": _nullable_float(record.get("tick_size")),
+                    "expiry": _nullable_date(record.get("expiry")),
+                    "strike": _nullable_float(record.get("strike")),
+                    "option_type": _clean_string(record.get("option_type")),
+                    "underlying_symbol": _clean_string(record.get("underlying_symbol")),
+                    "underlying_key": _clean_string(record.get("underlying_key")),
+                    "exchange_token": _clean_string(record.get("exchange_token")),
+                    "active": True,
+                    "fetched_at": fetched_at,
+                    "raw": record.get("raw") if isinstance(record.get("raw"), dict) else {},
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _universe_member_rows(
+        members: pd.DataFrame,
+        universe_id: str,
+        included_at: datetime,
+    ) -> list[dict[str, Any]]:
+        rows = []
+        for record in members.to_dict(orient="records"):
+            rows.append(
+                {
+                    "universe_id": universe_id,
+                    "symbol": str(record["symbol"]).upper(),
+                    "instrument_key": _clean_string(record.get("instrument_key")),
+                    "rank": _nullable_int(record.get("rank")),
+                    "avg_daily_volume": _nullable_float(record.get("avg_daily_volume")),
+                    "avg_daily_turnover": _nullable_float(record.get("avg_daily_turnover")),
+                    "trading_days": _nullable_int(record.get("trading_days")),
+                    "zero_volume_ratio": _nullable_float(record.get("zero_volume_ratio")),
+                    "start_date": _nullable_date(record.get("first_date")),
+                    "end_date": _nullable_date(record.get("last_date")),
+                    "included_at": included_at,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _daily_ohlcv_rows(frame: pd.DataFrame, exchange: str, source: str) -> list[dict[str, Any]]:
+        if frame.empty:
+            return []
+
+        fetched_at = datetime.now(UTC)
+        rows = []
+        for record in frame.to_dict(orient="records"):
+            required_columns = ["Date", "Open", "High", "Low", "Close", "Volume"]
+            if any(pd.isna(record.get(column)) for column in required_columns):
+                continue
+            row = {
+                "instrument_key": str(record["InstrumentKey"]),
+                "source": source,
+                "date": _nullable_date(record["Date"]),
+                "symbol": str(record["Symbol"]).upper(),
+                "exchange": exchange,
+                "open": float(record["Open"]),
+                "high": float(record["High"]),
+                "low": float(record["Low"]),
+                "close": float(record["Close"]),
+                "volume": int(record["Volume"]),
+                "open_interest": _nullable_int(record.get("OpenInterest")),
+                "fetched_at": fetched_at,
+            }
+            row["quality_status"] = _quality_status(row)
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _audit_rows(
+        audit: pd.DataFrame,
+        dataset_name: str,
+        source: str,
+        interval: str,
+    ) -> list[dict[str, Any]]:
+        created_at = datetime.now(UTC)
+        rows = []
+        for record in audit.to_dict(orient="records"):
+            rows.append(
+                {
+                    "audit_id": str(uuid4()),
+                    "dataset_name": dataset_name,
+                    "source": source,
+                    "symbol": _clean_string(record.get("symbol")),
+                    "instrument_key": _clean_string(record.get("instrument_key")),
+                    "interval": interval,
+                    "start_date": _nullable_date(record.get("start_date")),
+                    "end_date": _nullable_date(record.get("end_date")),
+                    "rows": int(record.get("rows") or 0),
+                    "missing_dates": int(record.get("missing_dates") or 0),
+                    "null_rows": int(record.get("null_ohlcv_rows") or 0),
+                    "duplicate_rows": int(record.get("duplicate_date_rows") or 0),
+                    "zero_volume_rows": int(record.get("zero_volume_rows") or 0),
+                    "zero_or_negative_close_rows": int(
+                        record.get("zero_or_negative_close_rows") or 0
+                    ),
+                    "coverage_ratio": _nullable_float(record.get("coverage_ratio")),
+                    "status": str(record.get("status") or "unknown"),
+                    "warnings_json": [],
+                    "created_at": created_at,
+                }
+            )
+        return rows
+
 
 def make_timescale_store(database_url: str) -> TimescaleStore:
     return TimescaleStore(database_url)
@@ -1080,6 +1469,44 @@ def _as_utc(value: datetime) -> datetime:
 def _chunks(rows: list[dict[str, Any]], size: int) -> Iterable[list[dict[str, Any]]]:
     for start in range(0, len(rows), size):
         yield rows[start : start + size]
+
+
+def _clean_string(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _nullable_float(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _nullable_int(value: Any) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _nullable_date(value: Any) -> date | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
 
 
 def _feed_health_can_fetch(health: Mapping[str, Any], now: datetime) -> bool:

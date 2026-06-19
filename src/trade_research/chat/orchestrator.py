@@ -67,6 +67,14 @@ class ChatOrchestrator:
         exchange = _resolve_exchange_scope(request.context.exchange)
         tool_calls: list[ToolCallSpec] = []
 
+        if _is_greeting(text):
+            return PlannerPlan(
+                intent="smalltalk_or_identity",
+                requires_market_data=False,
+                requires_research=False,
+                tool_calls=[],
+            )
+
         if any(
             token in text
             for token in (
@@ -323,6 +331,21 @@ def _resolve_exchange_scope(exchange: str) -> str:
     if normalized in {"NSE", "TSX", "BOTH"}:
         return normalized
     return "BOTH"
+
+
+def _is_greeting(text: str) -> bool:
+    normalized = " ".join(text.strip().lower().rstrip("!,.?").split())
+    return normalized in {
+        "hi",
+        "hello",
+        "hey",
+        "hi lens",
+        "hello lens",
+        "hey lens",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    }
 
 
 def _render_answer_text(intent: str, outputs: dict) -> str:

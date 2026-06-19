@@ -227,3 +227,15 @@ def test_identity_prompt_returns_lens_description() -> None:
     assert response.answer.quality_badge == "complete"
     assert tools.session_summary_calls == []
     assert tools.data_quality_calls == []
+
+
+def test_greeting_returns_lens_description_without_market_queries() -> None:
+    tools = _FakeToolsOk()
+    orchestrator = ChatOrchestrator(settings=_settings(), tools=tools)
+    response = orchestrator.handle_query(
+        ChatQueryRequest(message="Hi!", context={"exchange": "NSE"})
+    )
+    assert "I am Lens" in response.answer.text
+    assert response.answer.quality_badge == "complete"
+    assert tools.session_summary_calls == []
+    assert tools.data_quality_calls == []
