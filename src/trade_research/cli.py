@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -18,7 +19,15 @@ from trade_research.data import (
     map_liquid_universe_to_upstox,
     validate_ohlcv,
 )
-from trade_research.features import RangeFeatureBuilder
+from trade_research.features import (
+    FEATURE_VERSION_V1_0,
+    DailyTechnicalFeatureBuilder,
+    RangeFeatureBuilder,
+    audit_daily_features,
+    invalid_daily_ohlcv_mask,
+    normalize_daily_ohlcv,
+    write_feature_audit_outputs,
+)
 from trade_research.market_calendar import session_decision
 from trade_research.screeners import IntradayRangeScreener
 from trade_research.storage import ParquetStore, TimescaleStore
@@ -795,6 +804,87 @@ def features_from_parquet(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     feature_df.to_parquet(output_path, index=False)
     console.print(f"Wrote {output_path}")
+
+
+@app.command("build-daily-features")
+def build_daily_features(
+    input_source: Annotated[
+        str,
+        typer.Option(help="Input source: parquet or timescale."),
+    ] = "parquet",
+    input_name: Annotated[
+        str,
+        typer.Option(help="Input Parquet path prefix under DATA_DIR."),
+    ] = "processed/equities/nse_daily_ohlcv_upstox",
+    output_name: Annotated[
+        str,
+        typer.Option(help="Feature Parquet path prefix under DATA_DIR."),
+    ] = "processed/features/daily_v1_ohlcv_technical",
+    feature_version: Annotated[
+        str,
+        typer.Option(help="Feature version stored in the output rows."),
+    ] = FEATURE_VERSION_V1_0,
+    audit_output: Annotated[
+        Path,
+        typer.Option(help="Feature audit CSV path."),
+    ] = Path("data/processed/features/daily_v1_ohlcv_technical_audit.csv"),
+    summary_output: Annotated[
+        Path,
+        typer.Option(help="Feature summary JSON path."),
+    ] = Path("data/processed/features/daily_v1_ohlcv_technical_summary.json"),
+    limit: Annotated[
+        int | None,
+        typer.Option(help="Optional symbol limit for smoke tests."),
+    ] = None,
+    strict_invalid_rows: Annotated[
+        bool,
+        typer.Option(help="Fail instead of excluding invalid OHLCV rows before feature build."),
+    ] = False,
+) -> None:
+    settings = get_settings()
+    normalized_source = input_source.lower()
+    if normalized_source not in {"parquet", "timescale"}:
+        raise typer.BadParameter("--input-source must be parquet or timescale.")
+
+    if normalized_source == "parquet":
+        source_frame = ParquetStore(settings.data_dir).read_frame(input_name)
+        source_frame = _limit_daily_feature_symbols(source_frame, limit)
+    else:
+        db = TimescaleStore(settings.database_url)
+        source_frame = db.daily_ohlcv_frame(limit=limit)
+
+    if source_frame.empty:
+        raise typer.Exit("No daily OHLCV rows found for feature generation.")
+
+    invalid_ohlcv_count = int(invalid_daily_ohlcv_mask(normalize_daily_ohlcv(source_frame)).sum())
+    features = DailyTechnicalFeatureBuilder(
+        feature_version=feature_version,
+        drop_invalid_rows=not strict_invalid_rows,
+    ).build(source_frame)
+    audit, summary = audit_daily_features(
+        features,
+        feature_version=feature_version,
+        invalid_ohlcv_count=invalid_ohlcv_count,
+    )
+    output_path = ParquetStore(settings.data_dir).write_frame(output_name, features)
+    write_feature_audit_outputs(audit, summary, audit_output, summary_output)
+
+    console.print(f"Wrote daily features: {output_path} ({len(features)} rows)")
+    console.print(f"Wrote feature audit: {audit_output}")
+    console.print(f"Wrote feature summary: {summary_output}")
+    if invalid_ohlcv_count:
+        console.print(f"[yellow]Excluded invalid OHLCV rows: {invalid_ohlcv_count}[/yellow]")
+    console.print(json.dumps(summary.__dict__, indent=2))
+
+
+def _limit_daily_feature_symbols(frame: pd.DataFrame, limit: int | None) -> pd.DataFrame:
+    if limit is None:
+        return frame
+    key_column = "InstrumentKey" if "InstrumentKey" in frame.columns else "instrument_key"
+    if key_column not in frame.columns:
+        return frame.head(0)
+    keys = sorted(frame[key_column].dropna().astype(str).unique())[:limit]
+    return frame[frame[key_column].astype(str).isin(keys)].copy()
 
 
 if __name__ == "__main__":

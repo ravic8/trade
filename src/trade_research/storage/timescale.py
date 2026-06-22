@@ -969,6 +969,35 @@ class TimescaleStore:
             if row["latest_date"] is not None
         }
 
+    def daily_ohlcv_frame(
+        self,
+        exchange: str = "NSE",
+        source: str = "upstox",
+        limit: int | None = None,
+    ) -> pd.DataFrame:
+        query = (
+            ohlcv_daily_table.select()
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.source == source)
+            .order_by(ohlcv_daily_table.c.instrument_key, ohlcv_daily_table.c.date)
+        )
+        if limit:
+            keys_query = (
+                select(ohlcv_daily_table.c.instrument_key)
+                .where(ohlcv_daily_table.c.exchange == exchange.upper())
+                .where(ohlcv_daily_table.c.source == source)
+                .group_by(ohlcv_daily_table.c.instrument_key)
+                .order_by(ohlcv_daily_table.c.instrument_key)
+                .limit(limit)
+            )
+            with self.engine.begin() as connection:
+                keys = [row[0] for row in connection.execute(keys_query).all()]
+            query = query.where(ohlcv_daily_table.c.instrument_key.in_(keys))
+
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return pd.DataFrame(rows)
+
     def insert_data_quality_audits(
         self,
         audit: pd.DataFrame,

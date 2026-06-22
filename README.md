@@ -88,6 +88,14 @@ Core components:
 - **Docker Compose**: local infrastructure for Postgres/Timescale, Redis,
   Qdrant, API, web, and Dagster.
 
+Step 2 feature-layer design docs:
+
+- [Feature Field Guide v1](docs/feature_field_guide_v1.md): concepts,
+  formulas, visual sketches, examples, traps, and research usage for each
+  feature family.
+- [Feature Layer v1 Spec](docs/feature_layer_v1_spec.md): implementation
+  contract for the first feature-layer development batches.
+
 ## Folder Structure
 
 ```text
