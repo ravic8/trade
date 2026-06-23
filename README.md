@@ -385,6 +385,26 @@ Store the frozen v1.0 daily feature set in TimescaleDB:
 trade-research build-daily-features --store-db
 ```
 
+Build Step 2.1 daily forward-return targets from the canonical daily OHLCV
+Parquet:
+
+```bash
+trade-research build-daily-targets
+```
+
+Store the Step 2.1 target set in TimescaleDB:
+
+```bash
+trade-research build-daily-targets --store-db
+```
+
+Build factor research outputs by joining frozen daily features with Step 2.1
+targets:
+
+```bash
+trade-research build-factor-research
+```
+
 ## Data Quality And Audit Rules
 
 The project is audit-driven. Every major dataset should ship with an audit or
@@ -495,6 +515,8 @@ Design implications for this repo:
   experiment framework.
 - `features_daily`, `feature_runs`, and `feature_audits` now exist for the
   frozen Step 2 v1.0 daily technical feature set.
+- `targets_daily`, `target_runs`, and `target_audits` now exist for Step 2.1
+  forward-return labels.
 - No MLflow tracking exists yet.
 - No validated LightGBM/LSTM model pipeline exists yet.
 - No paper-trading simulator exists yet.
@@ -506,11 +528,9 @@ Design implications for this repo:
 
 Near-term:
 
-1. Build target/label datasets separately from features:
-   `forward_ret_*`, universe outperformance, top-quantile labels, and
-   one-percent target/stop labels.
-2. Build factor research outputs: IC/rank IC, quantile analysis, hit-rate
-   tables, t-stats, and monthly stability.
+1. Extend factor research outputs with deeper diagnostics and visual notebooks.
+2. Extend target/label datasets with explicitly defined one-percent
+   target/stop labels after the daily forward-return contract is stable.
 3. Add local experiment tracking, likely MLflow, for dataset versions, feature
    versions, target definitions, model parameters, metrics, and artifacts.
 4. Train baselines, then LightGBM after the feature/label contract is stable.

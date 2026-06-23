@@ -410,23 +410,33 @@ market depth features
 random interaction features
 ```
 
-## Target Dataset Later
+## Step 2.1 Target Dataset
 
 Targets must be separate from features.
 
-Proposed target dataset:
+Initial target dataset:
 
 ```text
-labels_forward_returns_v1
+daily_v1_forward_returns
 ```
 
-Candidate columns:
+Initial target version:
+
+```text
+daily_v1_forward_returns_v1_0
+```
+
+Initial columns:
 
 ```text
 instrument_key
 symbol
+exchange
+source
 date
-label_version
+target_version
+computed_at
+quality_status
 forward_ret_1d
 forward_ret_5d
 forward_ret_10d
@@ -434,10 +444,38 @@ forward_ret_20d
 forward_ret_60d
 forward_outperform_universe_20d
 top_quantile_forward_return_20d
+```
+
+Deferred target candidates:
+
+```text
 forward_max_ret_3d
 forward_min_ret_3d
 hit_1pct_3d
 hit_1pct_before_minus_0_5pct_3d
+```
+
+The target-before-stop label needs an explicit daily-bar ambiguity rule or
+intraday data because daily candles cannot prove whether a target or stop was
+hit first when both levels appear inside the same future candle.
+
+Target formulas:
+
+```text
+forward_ret_Nd = close[t+N] / close[t] - 1
+forward_outperform_universe_20d =
+  forward_ret_20d - same-date average forward_ret_20d
+top_quantile_forward_return_20d =
+  true when same-date percentile rank of forward_ret_20d is in the top quantile
+```
+
+Target quality status:
+
+```text
+passed  = all v1.0 target columns are available for the row
+warning = one or more target columns are null, usually because the future window
+          is incomplete near the end of the dataset
+failed  = reserved for future hard target validation failures
 ```
 
 ## Signal Dataset Later
@@ -461,6 +499,45 @@ volume_expansion
 low_volatility_filter
 breakout_20d_high
 momentum_trend_volume_combo
+```
+
+## Factor Research Outputs
+
+Factor research joins feature rows at date `T` with target rows after date `T`.
+It is the first layer that asks whether a feature has useful relationship to
+future outcomes.
+
+Initial factor research dataset:
+
+```text
+daily_v1_factor_research
+```
+
+Input versions:
+
+```text
+feature_version: daily_v1_ohlcv_technical_v1_0
+target_version: daily_v1_forward_returns_v1_0
+```
+
+Initial outputs:
+
+```text
+data/processed/research/factors/daily_v1_factor_ic.csv
+data/processed/research/factors/daily_v1_factor_quantiles.csv
+data/processed/research/factors/daily_v1_factor_hit_rates.csv
+data/processed/research/factors/daily_v1_factor_monthly_stability.csv
+data/processed/research/factors/daily_v1_factor_research_summary.json
+```
+
+Metrics:
+
+```text
+IC = same-date cross-sectional Pearson correlation between feature and target
+rank IC = same-date Spearman correlation between feature and target
+quantile table = future returns by same-date feature bucket
+hit rate table = top-forward-return label rate by same-date feature bucket
+monthly stability = month-level IC/rank IC for persistence checks
 ```
 
 ## Audits
@@ -511,6 +588,36 @@ small number of extreme returns
 indicator nulls from rolling windows
 ```
 
+Every target run must write:
+
+```text
+data/processed/targets/daily_v1_forward_returns_audit.csv
+data/processed/targets/daily_v1_forward_returns_summary.json
+```
+
+Target audit fields:
+
+```text
+row_count
+symbol_count
+date_min
+date_max
+target_version
+duplicate_key_count
+invalid_ohlcv_count
+null_count_by_target
+null_pct_by_target
+inf_count_by_target
+quality_status_counts
+```
+
+Target warnings:
+
+```text
+incomplete future windows near the latest available dates
+null forward returns for horizons that cannot yet be computed
+```
+
 ## Storage Outputs
 
 Initial Parquet output:
@@ -534,6 +641,27 @@ feature_runs
 feature_audits
 ```
 
+Initial target Parquet output:
+
+```text
+data/processed/targets/daily_v1_forward_returns.parquet
+```
+
+Initial target audit outputs:
+
+```text
+data/processed/targets/daily_v1_forward_returns_audit.csv
+data/processed/targets/daily_v1_forward_returns_summary.json
+```
+
+Target TimescaleDB tables:
+
+```text
+targets_daily
+target_runs
+target_audits
+```
+
 Implementation status:
 
 ```text
@@ -541,6 +669,9 @@ Implementation status:
 2. Add tests and audits.
 3. Inspect feature values manually.
 4. Store v1.0 feature rows, run metadata, and feature audits in TimescaleDB.
+5. Build Step 2.1 forward-return target rows, audits, and summary output.
+6. Store Step 2.1 target rows, run metadata, and target audits in TimescaleDB.
+7. Build factor research outputs from frozen features and Step 2.1 targets.
 ```
 
 ## CLI Contract
@@ -576,6 +707,52 @@ Strict CLI behavior:
 
 ```text
 Use --strict-invalid-rows to fail instead of excluding invalid OHLCV rows.
+```
+
+Target command:
+
+```bash
+trade-research build-daily-targets
+```
+
+Target options:
+
+```text
+--input-source parquet|timescale
+--input-name processed/equities/nse_daily_ohlcv_upstox
+--output-name processed/targets/daily_v1_forward_returns
+--target-version daily_v1_forward_returns_v1_0
+--store-db / --no-store-db
+--limit
+--strict-invalid-rows
+```
+
+Default target CLI behavior:
+
+```text
+Exclude invalid OHLCV rows before target generation and report the exclusion
+count in daily_v1_forward_returns_summary.json.
+Write canonical target Parquet, audit CSV, and summary JSON. TimescaleDB
+storage is explicit via --store-db.
+```
+
+Factor research command:
+
+```bash
+trade-research build-factor-research
+```
+
+Factor research options:
+
+```text
+--feature-name processed/features/daily_v1_ohlcv_technical
+--target-name processed/targets/daily_v1_forward_returns
+--output-dir data/processed/research/factors
+--feature-version daily_v1_ohlcv_technical_v1_0
+--target-version daily_v1_forward_returns_v1_0
+--quantiles 5
+--min-date-rows 5
+--min-month-rows 20
 ```
 
 ## Required Tests
@@ -647,9 +824,23 @@ backtests
 models
 ```
 
+Current completion status:
+
+```text
+daily_v1_ohlcv_technical_v1_0 features are built, audited, and stored in
+TimescaleDB.
+
+daily_v1_forward_returns_v1_0 targets are built, audited, and stored in
+TimescaleDB.
+
+daily_v1_factor_research outputs are built from the frozen feature and target
+versions.
+```
+
 Next implementation step:
 
 ```text
-Store daily_v1_ohlcv_technical_v1_0 in TimescaleDB after this Parquet-first
-feature contract is accepted.
+Review the first factor research outputs, identify promising feature families,
+and decide whether to add deeper diagnostics, visual notebooks, or baseline
+models next.
 ```

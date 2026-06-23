@@ -29,8 +29,15 @@ from trade_research.features import (
     write_feature_audit_outputs,
 )
 from trade_research.market_calendar import session_decision
+from trade_research.research import DailyFactorResearchBuilder, write_factor_research_outputs
 from trade_research.screeners import IntradayRangeScreener
 from trade_research.storage import ParquetStore, TimescaleStore
+from trade_research.targets import (
+    DAILY_FORWARD_TARGET_VERSION_V1_0,
+    DailyForwardTargetBuilder,
+    audit_daily_forward_targets,
+    write_target_audit_outputs,
+)
 from trade_research.universe import NSEUniverseProvider, TSXUniverseProvider
 
 app = typer.Typer(help="Market research agent CLI.")
@@ -907,6 +914,177 @@ def build_daily_features(
         )
     if invalid_ohlcv_count:
         console.print(f"[yellow]Excluded invalid OHLCV rows: {invalid_ohlcv_count}[/yellow]")
+    console.print(json.dumps(summary.__dict__, indent=2))
+
+
+@app.command("build-daily-targets")
+def build_daily_targets(
+    input_source: Annotated[
+        str,
+        typer.Option(help="Input source: parquet or timescale."),
+    ] = "parquet",
+    input_name: Annotated[
+        str,
+        typer.Option(help="Input Parquet path prefix under DATA_DIR."),
+    ] = "processed/equities/nse_daily_ohlcv_upstox",
+    output_name: Annotated[
+        str,
+        typer.Option(help="Target Parquet path prefix under DATA_DIR."),
+    ] = "processed/targets/daily_v1_forward_returns",
+    target_version: Annotated[
+        str,
+        typer.Option(help="Target version stored in the output rows."),
+    ] = DAILY_FORWARD_TARGET_VERSION_V1_0,
+    audit_output: Annotated[
+        Path,
+        typer.Option(help="Target audit CSV path."),
+    ] = Path("data/processed/targets/daily_v1_forward_returns_audit.csv"),
+    summary_output: Annotated[
+        Path,
+        typer.Option(help="Target summary JSON path."),
+    ] = Path("data/processed/targets/daily_v1_forward_returns_summary.json"),
+    limit: Annotated[
+        int | None,
+        typer.Option(help="Optional symbol limit for smoke tests."),
+    ] = None,
+    strict_invalid_rows: Annotated[
+        bool,
+        typer.Option(help="Fail instead of excluding invalid OHLCV rows before target build."),
+    ] = False,
+    store_db: Annotated[
+        bool,
+        typer.Option(
+            "--store-db/--no-store-db",
+            help="Also store target rows, run metadata, and target audits in TimescaleDB.",
+        ),
+    ] = False,
+) -> None:
+    settings = get_settings()
+    started_at = datetime.now(UTC)
+    normalized_source = input_source.lower()
+    if normalized_source not in {"parquet", "timescale"}:
+        raise typer.BadParameter("--input-source must be parquet or timescale.")
+
+    db: TimescaleStore | None = None
+    if normalized_source == "parquet":
+        source_frame = ParquetStore(settings.data_dir).read_frame(input_name)
+        source_frame = _limit_daily_feature_symbols(source_frame, limit)
+    else:
+        db = TimescaleStore(settings.database_url)
+        source_frame = db.daily_ohlcv_frame(limit=limit)
+
+    if source_frame.empty:
+        raise typer.Exit("No daily OHLCV rows found for target generation.")
+
+    invalid_ohlcv_count = int(invalid_daily_ohlcv_mask(normalize_daily_ohlcv(source_frame)).sum())
+    targets = DailyForwardTargetBuilder(
+        target_version=target_version,
+        drop_invalid_rows=not strict_invalid_rows,
+    ).build(source_frame)
+    audit, summary = audit_daily_forward_targets(
+        targets,
+        target_version=target_version,
+        invalid_ohlcv_count=invalid_ohlcv_count,
+    )
+    output_path = ParquetStore(settings.data_dir).write_frame(output_name, targets)
+    write_target_audit_outputs(audit, summary, audit_output, summary_output)
+
+    db_rows = 0
+    audit_rows = 0
+    run_id: str | None = None
+    if store_db:
+        db = db or TimescaleStore(settings.database_url)
+        db.initialize()
+        db_rows = db.upsert_daily_targets(targets)
+        run_id = db.insert_target_run(
+            summary.__dict__,
+            source="upstox",
+            started_at=started_at,
+        )
+        audit_rows = db.insert_target_audits(
+            audit,
+            dataset_name=summary.dataset_name,
+            target_version=summary.target_version,
+            run_id=run_id,
+        )
+
+    console.print(f"Wrote daily targets: {output_path} ({len(targets)} rows)")
+    console.print(f"Wrote target audit: {audit_output}")
+    console.print(f"Wrote target summary: {summary_output}")
+    if store_db:
+        console.print(
+            "Stored Timescale targets: "
+            f"{db_rows} rows, {audit_rows} audit rows, run_id={run_id}"
+        )
+    if invalid_ohlcv_count:
+        console.print(f"[yellow]Excluded invalid OHLCV rows: {invalid_ohlcv_count}[/yellow]")
+    console.print(json.dumps(summary.__dict__, indent=2))
+
+
+@app.command("build-factor-research")
+def build_factor_research(
+    feature_name: Annotated[
+        str,
+        typer.Option(help="Feature Parquet path prefix under DATA_DIR."),
+    ] = "processed/features/daily_v1_ohlcv_technical",
+    target_name: Annotated[
+        str,
+        typer.Option(help="Target Parquet path prefix under DATA_DIR."),
+    ] = "processed/targets/daily_v1_forward_returns",
+    output_dir: Annotated[
+        Path,
+        typer.Option(help="Directory for factor research CSV/JSON outputs."),
+    ] = Path("data/processed/research/factors"),
+    feature_version: Annotated[
+        str,
+        typer.Option(help="Feature version to analyze."),
+    ] = FEATURE_VERSION_V1_0,
+    target_version: Annotated[
+        str,
+        typer.Option(help="Target version to analyze."),
+    ] = DAILY_FORWARD_TARGET_VERSION_V1_0,
+    quantiles: Annotated[
+        int,
+        typer.Option(help="Number of same-date feature quantiles to evaluate."),
+    ] = 5,
+    min_date_rows: Annotated[
+        int,
+        typer.Option(help="Minimum rows per date for IC/rank IC calculation."),
+    ] = 5,
+    min_month_rows: Annotated[
+        int,
+        typer.Option(help="Minimum rows per month for monthly stability calculation."),
+    ] = 20,
+) -> None:
+    settings = get_settings()
+    store = ParquetStore(settings.data_dir)
+    features = store.read_frame(feature_name)
+    targets = store.read_frame(target_name)
+    builder = DailyFactorResearchBuilder(
+        feature_version=feature_version,
+        target_version=target_version,
+        quantiles=quantiles,
+        min_date_rows=min_date_rows,
+        min_month_rows=min_month_rows,
+    )
+    ic, quantile_table, hit_rates, monthly, summary = builder.build(features, targets)
+    paths = write_factor_research_outputs(
+        ic,
+        quantile_table,
+        hit_rates,
+        monthly,
+        summary,
+        output_dir,
+    )
+
+    console.print(f"Wrote factor IC: {paths['ic']} ({len(ic)} rows)")
+    console.print(f"Wrote factor quantiles: {paths['quantiles']} ({len(quantile_table)} rows)")
+    console.print(f"Wrote factor hit rates: {paths['hit_rates']} ({len(hit_rates)} rows)")
+    console.print(
+        "Wrote factor monthly stability: "
+        f"{paths['monthly_stability']} ({len(monthly)} rows)"
+    )
+    console.print(f"Wrote factor summary: {paths['summary']}")
     console.print(json.dumps(summary.__dict__, indent=2))
 
 

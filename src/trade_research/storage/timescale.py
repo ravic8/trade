@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from trade_research.features.daily_technical import FEATURE_COLUMNS_V1_0
 from trade_research.schemas import Symbol
+from trade_research.targets.daily_forward import DAILY_FORWARD_TARGET_COLUMNS_V1_0
 
 metadata = MetaData()
 
@@ -272,6 +273,58 @@ feature_audits_table = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+targets_daily_table = Table(
+    "targets_daily",
+    metadata,
+    Column("instrument_key", String, primary_key=True),
+    Column("date", Date, primary_key=True),
+    Column("target_version", String, primary_key=True),
+    Column("source", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("computed_at", DateTime(timezone=True), nullable=False),
+    Column("quality_status", String, nullable=False),
+    Column("forward_ret_1d", Float),
+    Column("forward_ret_5d", Float),
+    Column("forward_ret_10d", Float),
+    Column("forward_ret_20d", Float),
+    Column("forward_ret_60d", Float),
+    Column("forward_outperform_universe_20d", Float),
+    Column("top_quantile_forward_return_20d", Boolean),
+)
+
+target_runs_table = Table(
+    "target_runs",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("dataset_name", String, nullable=False),
+    Column("target_version", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("finished_at", DateTime(timezone=True), nullable=False),
+    Column("rows", BigInteger, nullable=False),
+    Column("symbols", BigInteger, nullable=False),
+    Column("date_min", Date),
+    Column("date_max", Date),
+    Column("invalid_ohlcv_count", BigInteger, nullable=False, default=0),
+    Column("summary_json", JSON, nullable=False, default=dict),
+)
+
+target_audits_table = Table(
+    "target_audits",
+    metadata,
+    Column("audit_id", String, primary_key=True),
+    Column("run_id", String),
+    Column("dataset_name", String, nullable=False),
+    Column("target_version", String, nullable=False),
+    Column("target", String, nullable=False),
+    Column("null_count", BigInteger, nullable=False),
+    Column("null_pct", Float, nullable=False),
+    Column("inf_count", BigInteger, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 class TimescaleStore:
     def __init__(self, database_url: str) -> None:
@@ -346,6 +399,30 @@ class TimescaleStore:
                     "ON feature_audits (run_id, feature)"
                 )
             )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_targets_daily_symbol_date "
+                    "ON targets_daily (symbol, date DESC)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_targets_daily_version_date "
+                    "ON targets_daily (target_version, date DESC)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_target_runs_version "
+                    "ON target_runs (target_version, finished_at DESC)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_target_audits_run "
+                    "ON target_audits (run_id, target)"
+                )
+            )
 
         with self.engine.begin() as connection:
             connection.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
@@ -365,6 +442,12 @@ class TimescaleStore:
                 text(
                     "SELECT create_hypertable("
                     "'features_daily', 'date', if_not_exists => TRUE, migrate_data => TRUE)"
+                )
+            )
+            connection.execute(
+                text(
+                    "SELECT create_hypertable("
+                    "'targets_daily', 'date', if_not_exists => TRUE, migrate_data => TRUE)"
                 )
             )
 
@@ -1182,6 +1265,107 @@ class TimescaleStore:
             rows = [dict(row) for row in connection.execute(query).mappings()]
         return pd.DataFrame(rows)
 
+    def upsert_daily_targets(self, frame: pd.DataFrame) -> int:
+        rows = self._daily_target_rows(frame)
+        if not rows:
+            return 0
+
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(targets_daily_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in targets_daily_table.columns
+                    if column.name not in {"instrument_key", "date", "target_version"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["instrument_key", "date", "target_version"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def insert_target_run(
+        self,
+        summary: Mapping[str, Any],
+        source: str,
+        status: str = "completed",
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+    ) -> str:
+        run_id = str(uuid4())
+        finished = finished_at or datetime.now(UTC)
+        row = {
+            "run_id": run_id,
+            "dataset_name": str(summary["dataset_name"]),
+            "target_version": str(summary["target_version"]),
+            "source": source,
+            "status": status,
+            "started_at": started_at or finished,
+            "finished_at": finished,
+            "rows": int(summary.get("row_count") or 0),
+            "symbols": int(summary.get("symbol_count") or 0),
+            "date_min": _nullable_date(summary.get("date_min")),
+            "date_max": _nullable_date(summary.get("date_max")),
+            "invalid_ohlcv_count": int(summary.get("invalid_ohlcv_count") or 0),
+            "summary_json": dict(summary),
+        }
+        with self.engine.begin() as connection:
+            connection.execute(target_runs_table.insert().values(row))
+        return run_id
+
+    def insert_target_audits(
+        self,
+        audit: pd.DataFrame,
+        dataset_name: str,
+        target_version: str,
+        run_id: str | None = None,
+    ) -> int:
+        rows = self._target_audit_rows(
+            audit,
+            dataset_name=dataset_name,
+            target_version=target_version,
+            run_id=run_id,
+        )
+        if not rows:
+            return 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(target_audits_table.insert().values(chunk))
+        return len(rows)
+
+    def daily_target_frame(
+        self,
+        target_version: str,
+        exchange: str = "NSE",
+        limit: int | None = None,
+    ) -> pd.DataFrame:
+        query = (
+            targets_daily_table.select()
+            .where(targets_daily_table.c.target_version == target_version)
+            .where(targets_daily_table.c.exchange == exchange.upper())
+            .order_by(targets_daily_table.c.instrument_key, targets_daily_table.c.date)
+        )
+        if limit:
+            keys_query = (
+                select(targets_daily_table.c.instrument_key)
+                .where(targets_daily_table.c.target_version == target_version)
+                .where(targets_daily_table.c.exchange == exchange.upper())
+                .group_by(targets_daily_table.c.instrument_key)
+                .order_by(targets_daily_table.c.instrument_key)
+                .limit(limit)
+            )
+            with self.engine.begin() as connection:
+                keys = [row[0] for row in connection.execute(keys_query).all()]
+            query = query.where(targets_daily_table.c.instrument_key.in_(keys))
+
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return pd.DataFrame(rows)
+
     def insert_data_quality_audits(
         self,
         audit: pd.DataFrame,
@@ -1724,6 +1908,67 @@ class TimescaleStore:
             )
         return rows
 
+    @staticmethod
+    def _daily_target_rows(frame: pd.DataFrame) -> list[dict[str, Any]]:
+        if frame.empty:
+            return []
+
+        computed_at = datetime.now(UTC)
+        rows = []
+        for record in frame.to_dict(orient="records"):
+            instrument_key = _clean_string(record.get("instrument_key"))
+            target_date = _nullable_date(record.get("date"))
+            target_version = _clean_string(record.get("target_version"))
+            symbol = _clean_string(record.get("symbol"))
+            if not instrument_key or target_date is None or not target_version or not symbol:
+                continue
+
+            row = {
+                "instrument_key": instrument_key,
+                "date": target_date,
+                "target_version": target_version,
+                "source": _clean_string(record.get("source")) or "unknown",
+                "symbol": symbol.upper(),
+                "exchange": (_clean_string(record.get("exchange")) or "NSE").upper(),
+                "computed_at": computed_at,
+                "quality_status": _clean_string(record.get("quality_status")) or "unknown",
+            }
+            for column in DAILY_FORWARD_TARGET_COLUMNS_V1_0:
+                if column == "top_quantile_forward_return_20d":
+                    row[column] = _nullable_bool(record.get(column))
+                else:
+                    row[column] = _nullable_float(record.get(column))
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _target_audit_rows(
+        audit: pd.DataFrame,
+        dataset_name: str,
+        target_version: str,
+        run_id: str | None,
+    ) -> list[dict[str, Any]]:
+        created_at = datetime.now(UTC)
+        rows = []
+        for record in audit.to_dict(orient="records"):
+            target = _clean_string(record.get("target"))
+            if not target:
+                continue
+            rows.append(
+                {
+                    "audit_id": str(uuid4()),
+                    "run_id": run_id,
+                    "dataset_name": dataset_name,
+                    "target_version": target_version,
+                    "target": target,
+                    "null_count": int(record.get("null_count") or 0),
+                    "null_pct": float(record.get("null_pct") or 0.0),
+                    "inf_count": int(record.get("inf_count") or 0),
+                    "created_at": created_at,
+                }
+            )
+        return rows
+
 
 def make_timescale_store(database_url: str) -> TimescaleStore:
     return TimescaleStore(database_url)
@@ -1771,6 +2016,21 @@ def _nullable_int(value: Any) -> int | None:
         return int(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _nullable_bool(value: Any) -> bool | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "t", "1", "yes", "y"}:
+        return True
+    if text in {"false", "f", "0", "no", "n"}:
+        return False
+    return None
 
 
 def _nullable_date(value: Any) -> date | None:

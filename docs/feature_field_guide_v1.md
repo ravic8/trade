@@ -14,6 +14,7 @@ signals, and eventually strategies.
 Raw OHLCV
     -> raw feature
     -> normalized or ranked feature
+    -> target comparison
     -> signal
     -> strategy
     -> backtest / paper trading
@@ -24,6 +25,7 @@ Example:
 ```text
 ret_60d = 0.18
 rank_ret_60d = 0.92
+forward_ret_20d = 0.06
 top_20_momentum_60d = true
 monthly rebalance top 20 momentum stocks = strategy
 ```
@@ -33,6 +35,7 @@ Definitions:
 - **Raw feature**: A measured value for one stock on one date.
 - **Normalized feature**: A transformed value, often z-scored or scaled.
 - **Ranked feature**: A feature ranked against the same-date universe.
+- **Target**: A future outcome used to test whether a feature was useful.
 - **Signal**: A rule derived from one or more features.
 - **Strategy**: A portfolio process using signals, sizing, exits, costs, and
   rebalance rules.
@@ -833,6 +836,28 @@ Combination-only: useful only with other features.
 Regime-dependent: works in some market states, fails in others.
 ```
 
+The current first target set is:
+
+```text
+daily_v1_forward_returns_v1_0
+```
+
+It provides forward returns over 1, 5, 10, 20, and 60 sessions, plus a
+20-session universe-relative return and a top-quantile label. These targets are
+stored separately from features so research can join inputs and outcomes
+deliberately.
+
+The first factor research output set is:
+
+```text
+daily_v1_factor_research
+```
+
+It joins `daily_v1_ohlcv_technical_v1_0` features to
+`daily_v1_forward_returns_v1_0` targets on `instrument_key + date`, then writes
+IC/rank IC, same-date feature quantile returns, top-forward-return hit rates,
+and monthly stability tables.
+
 ## Good First Research Signals
 
 Start with interpretable signals, not complex formulas:
@@ -859,7 +884,6 @@ feature is a measurement.
 
 This guide does not define:
 
-- target labels,
 - model training,
 - backtest implementation,
 - portfolio sizing,
@@ -868,4 +892,4 @@ This guide does not define:
 - news/sentiment,
 - intraday features.
 
-Those should come after the feature layer and label layer are trusted.
+Those should come after the feature layer and target layer are trusted.
