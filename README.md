@@ -373,6 +373,18 @@ Build legacy range features from a Parquet OHLCV file:
 trade-research features-from-parquet input.parquet output.parquet
 ```
 
+Build Step 2 daily technical features from the canonical daily OHLCV Parquet:
+
+```bash
+trade-research build-daily-features
+```
+
+Store the frozen v1.0 daily feature set in TimescaleDB:
+
+```bash
+trade-research build-daily-features --store-db
+```
+
 ## Data Quality And Audit Rules
 
 The project is audit-driven. Every major dataset should ship with an audit or
@@ -481,7 +493,8 @@ Design implications for this repo:
   does not require a token.
 - The current research/modeling layer is early and not yet a complete
   experiment framework.
-- No production feature table such as `features_daily` exists yet.
+- `features_daily`, `feature_runs`, and `feature_audits` now exist for the
+  frozen Step 2 v1.0 daily technical feature set.
 - No MLflow tracking exists yet.
 - No validated LightGBM/LSTM model pipeline exists yet.
 - No paper-trading simulator exists yet.
@@ -493,18 +506,16 @@ Design implications for this repo:
 
 Near-term:
 
-1. Build `features_daily` from `ohlcv_daily`.
-2. Add feature audits and feature-version tracking.
-3. Build target/label datasets separately from features:
+1. Build target/label datasets separately from features:
    `forward_ret_*`, universe outperformance, top-quantile labels, and
    one-percent target/stop labels.
-4. Build factor research outputs: IC/rank IC, quantile analysis, hit-rate
+2. Build factor research outputs: IC/rank IC, quantile analysis, hit-rate
    tables, t-stats, and monthly stability.
-5. Add local experiment tracking, likely MLflow, for dataset versions, feature
+3. Add local experiment tracking, likely MLflow, for dataset versions, feature
    versions, target definitions, model parameters, metrics, and artifacts.
-6. Train baselines, then LightGBM after the feature/label contract is stable.
+4. Train baselines, then LightGBM after the feature/label contract is stable.
    Treat LSTM and other sequence models as later experiments.
-7. Build a frontend research dashboard for experiment results, feature impact,
+5. Build a frontend research dashboard for experiment results, feature impact,
    signal review, backtest summaries, equity curves, and candidate review.
 
 Medium-term:

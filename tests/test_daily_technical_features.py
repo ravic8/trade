@@ -121,3 +121,15 @@ def test_daily_v1_invalid_ohlcv_rows_fail() -> None:
 
     with pytest.raises(ValueError, match="invalid rows"):
         DailyTechnicalFeatureBuilder().build(frame)
+
+
+def test_daily_v1_invalid_ohlcv_rows_can_be_excluded() -> None:
+    frame = _daily_rows(days=3)
+    frame.loc[1, "High"] = 95.0
+
+    features = DailyTechnicalFeatureBuilder(drop_invalid_rows=True).build(frame)
+    audit, summary = audit_daily_features(features, invalid_ohlcv_count=1)
+
+    assert len(features) == 2
+    assert date(2025, 1, 2) not in set(features["date"])
+    assert summary.invalid_ohlcv_count == 1

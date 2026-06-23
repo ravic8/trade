@@ -526,7 +526,7 @@ data/processed/features/daily_v1_ohlcv_technical_audit.csv
 data/processed/features/daily_v1_ohlcv_technical_summary.json
 ```
 
-Future database tables:
+TimescaleDB tables:
 
 ```text
 features_daily
@@ -534,24 +534,24 @@ feature_runs
 feature_audits
 ```
 
-Implementation order:
+Implementation status:
 
 ```text
 1. Build and validate Parquet output.
 2. Add tests and audits.
 3. Inspect feature values manually.
-4. Add TimescaleDB storage after formulas are trusted.
+4. Store v1.0 feature rows, run metadata, and feature audits in TimescaleDB.
 ```
 
 ## CLI Contract
 
-Future command:
+Command:
 
 ```bash
 trade-research build-daily-features
 ```
 
-Candidate options:
+Options:
 
 ```text
 --input-source parquet|timescale
@@ -568,6 +568,8 @@ Default CLI behavior:
 ```text
 Exclude invalid OHLCV rows before feature generation and report the exclusion
 count in daily_v1_ohlcv_technical_summary.json.
+Write canonical Parquet, audit CSV, and summary JSON. TimescaleDB storage is
+explicit via --store-db.
 ```
 
 Strict CLI behavior:

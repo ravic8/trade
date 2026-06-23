@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -840,12 +840,21 @@ def build_daily_features(
         bool,
         typer.Option(help="Fail instead of excluding invalid OHLCV rows before feature build."),
     ] = False,
+    store_db: Annotated[
+        bool,
+        typer.Option(
+            "--store-db/--no-store-db",
+            help="Also store feature rows, run metadata, and feature audits in TimescaleDB.",
+        ),
+    ] = False,
 ) -> None:
     settings = get_settings()
+    started_at = datetime.now(UTC)
     normalized_source = input_source.lower()
     if normalized_source not in {"parquet", "timescale"}:
         raise typer.BadParameter("--input-source must be parquet or timescale.")
 
+    db: TimescaleStore | None = None
     if normalized_source == "parquet":
         source_frame = ParquetStore(settings.data_dir).read_frame(input_name)
         source_frame = _limit_daily_feature_symbols(source_frame, limit)
@@ -869,9 +878,33 @@ def build_daily_features(
     output_path = ParquetStore(settings.data_dir).write_frame(output_name, features)
     write_feature_audit_outputs(audit, summary, audit_output, summary_output)
 
+    db_rows = 0
+    audit_rows = 0
+    run_id: str | None = None
+    if store_db:
+        db = db or TimescaleStore(settings.database_url)
+        db.initialize()
+        db_rows = db.upsert_daily_features(features)
+        run_id = db.insert_feature_run(
+            summary.__dict__,
+            source="upstox",
+            started_at=started_at,
+        )
+        audit_rows = db.insert_feature_audits(
+            audit,
+            dataset_name=summary.dataset_name,
+            feature_version=summary.feature_version,
+            run_id=run_id,
+        )
+
     console.print(f"Wrote daily features: {output_path} ({len(features)} rows)")
     console.print(f"Wrote feature audit: {audit_output}")
     console.print(f"Wrote feature summary: {summary_output}")
+    if store_db:
+        console.print(
+            "Stored Timescale features: "
+            f"{db_rows} rows, {audit_rows} audit rows, run_id={run_id}"
+        )
     if invalid_ohlcv_count:
         console.print(f"[yellow]Excluded invalid OHLCV rows: {invalid_ohlcv_count}[/yellow]")
     console.print(json.dumps(summary.__dict__, indent=2))
