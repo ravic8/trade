@@ -325,6 +325,61 @@ target_audits_table = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+stock_coverage_runs_table = Table(
+    "stock_coverage_runs",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("dagster_run_id", String),
+    Column("source", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("as_of_date", Date, nullable=False),
+    Column("generated_at", DateTime(timezone=True), nullable=False),
+    Column("status", String, nullable=False),
+    Column("summary_json", JSON, nullable=False, default=dict),
+)
+
+stock_coverage_by_window_table = Table(
+    "stock_coverage_by_window",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("window_months", BigInteger, primary_key=True),
+    Column("instrument_key", String, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("window_start", Date, nullable=False),
+    Column("window_end", Date, nullable=False),
+    Column("first_date", Date),
+    Column("last_date", Date),
+    Column("expected_date_count", BigInteger, nullable=False),
+    Column("observed_date_count", BigInteger, nullable=False),
+    Column("missing_date_count", BigInteger, nullable=False),
+    Column("coverage_pct", Float, nullable=False),
+    Column("has_latest_expected_date", Boolean, nullable=False),
+    Column("latest_date_lag_days", BigInteger),
+    Column("coverage_status", String, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+daily_ohlcv_fetch_coverage_table = Table(
+    "daily_ohlcv_fetch_coverage",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("instrument_key", String, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("latest_stored_date", Date),
+    Column("fetch_start", Date),
+    Column("fetch_end", Date, nullable=False),
+    Column("should_fetch", Boolean, nullable=False),
+    Column("status", String, nullable=False),
+    Column("rows_fetched", BigInteger, nullable=False, default=0),
+    Column("skip_reason", String),
+    Column("error_message", String),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 class TimescaleStore:
     def __init__(self, database_url: str) -> None:
@@ -423,6 +478,24 @@ class TimescaleStore:
                     "ON target_audits (run_id, target)"
                 )
             )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_stock_coverage_window_status "
+                    "ON stock_coverage_by_window (window_months, coverage_status)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_stock_coverage_symbol_window "
+                    "ON stock_coverage_by_window (symbol, window_months)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_daily_ohlcv_fetch_coverage_status "
+                    "ON daily_ohlcv_fetch_coverage (run_id, status)"
+                )
+            )
 
         with self.engine.begin() as connection:
             connection.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
@@ -450,6 +523,132 @@ class TimescaleStore:
                     "'targets_daily', 'date', if_not_exists => TRUE, migrate_data => TRUE)"
                 )
             )
+
+    def insert_stock_coverage_run(
+        self,
+        run_id: str,
+        coverage: pd.DataFrame,
+        summary: Mapping[str, Any],
+        as_of_date: date,
+        dagster_run_id: str | None = None,
+        source: str = "upstox",
+        exchange: str = "NSE",
+        status: str = "completed",
+    ) -> int:
+        generated_at = datetime.now(UTC)
+        run_row = {
+            "run_id": run_id,
+            "dagster_run_id": dagster_run_id,
+            "source": source,
+            "exchange": exchange.upper(),
+            "as_of_date": as_of_date,
+            "generated_at": generated_at,
+            "status": status,
+            "summary_json": dict(summary),
+        }
+        rows = self._stock_coverage_rows(
+            coverage,
+            run_id=run_id,
+            source=source,
+            exchange=exchange,
+            created_at=generated_at,
+        )
+        with self.engine.begin() as connection:
+            run_statement = insert(stock_coverage_runs_table).values(run_row)
+            run_update_columns = {
+                column.name: getattr(run_statement.excluded, column.name)
+                for column in stock_coverage_runs_table.columns
+                if column.name != "run_id"
+            }
+            connection.execute(
+                run_statement.on_conflict_do_update(
+                    index_elements=["run_id"],
+                    set_=run_update_columns,
+                )
+            )
+            connection.execute(
+                stock_coverage_by_window_table.delete().where(
+                    stock_coverage_by_window_table.c.run_id == run_id
+                )
+            )
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(stock_coverage_by_window_table.insert().values(chunk))
+        return len(rows)
+
+    def insert_daily_ohlcv_fetch_coverage(
+        self,
+        run_id: str,
+        coverage: pd.DataFrame,
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> int:
+        rows = self._daily_ohlcv_fetch_coverage_rows(
+            coverage,
+            run_id=run_id,
+            source=source,
+            exchange=exchange,
+            created_at=datetime.now(UTC),
+        )
+        if not rows:
+            return 0
+        with self.engine.begin() as connection:
+            connection.execute(
+                daily_ohlcv_fetch_coverage_table.delete().where(
+                    daily_ohlcv_fetch_coverage_table.c.run_id == run_id
+                )
+            )
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(daily_ohlcv_fetch_coverage_table.insert().values(chunk))
+        return len(rows)
+
+    def daily_ohlcv_fetch_retry_candidates(
+        self,
+        run_id: str | None = None,
+        statuses: tuple[str, ...] = ("failed", "no_rows"),
+        source: str = "upstox",
+        exchange: str = "NSE",
+        limit: int | None = None,
+    ) -> pd.DataFrame:
+        if not statuses:
+            return pd.DataFrame()
+        selected_run_id = run_id or self.latest_daily_ohlcv_fetch_coverage_run_id(
+            source=source,
+            exchange=exchange,
+        )
+        if not selected_run_id:
+            return pd.DataFrame()
+        query = (
+            daily_ohlcv_fetch_coverage_table.select()
+            .where(daily_ohlcv_fetch_coverage_table.c.run_id == selected_run_id)
+            .where(daily_ohlcv_fetch_coverage_table.c.source == source)
+            .where(daily_ohlcv_fetch_coverage_table.c.exchange == exchange.upper())
+            .where(daily_ohlcv_fetch_coverage_table.c.status.in_(list(statuses)))
+            .order_by(
+                daily_ohlcv_fetch_coverage_table.c.status,
+                daily_ohlcv_fetch_coverage_table.c.symbol,
+            )
+        )
+        if limit:
+            query = query.limit(limit)
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return pd.DataFrame(rows)
+
+    def latest_daily_ohlcv_fetch_coverage_run_id(
+        self,
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> str | None:
+        query = (
+            select(daily_ohlcv_fetch_coverage_table.c.run_id)
+            .where(daily_ohlcv_fetch_coverage_table.c.source == source)
+            .where(daily_ohlcv_fetch_coverage_table.c.exchange == exchange.upper())
+            .group_by(daily_ohlcv_fetch_coverage_table.c.run_id)
+            .order_by(func.max(daily_ohlcv_fetch_coverage_table.c.created_at).desc())
+            .limit(1)
+        )
+        with self.engine.begin() as connection:
+            return connection.execute(query).scalar_one_or_none()
 
     def upsert_symbols(self, symbols: Iterable[Symbol], fetched_at: datetime | None = None) -> int:
         fetched = fetched_at or datetime.now(UTC)
@@ -674,7 +873,7 @@ class TimescaleStore:
                     "success_count": int(current.get("success_count") or 0),
                     "failure_count": int(current.get("failure_count") or 0) + 1,
                     "last_error_code": "no_hourly_data",
-                    "last_error_message": failure_message or "Yahoo returned no hourly candles",
+                    "last_error_message": failure_message or "Provider returned no hourly candles",
                     "latest_candle_ts": current.get("latest_candle_ts"),
                     "next_retry_at": next_retry_at,
                     "updated_at": now,
@@ -1140,6 +1339,8 @@ class TimescaleStore:
         exchange: str = "NSE",
         source: str = "upstox",
         limit: int | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> pd.DataFrame:
         query = (
             ohlcv_daily_table.select()
@@ -1147,6 +1348,10 @@ class TimescaleStore:
             .where(ohlcv_daily_table.c.source == source)
             .order_by(ohlcv_daily_table.c.instrument_key, ohlcv_daily_table.c.date)
         )
+        if start_date is not None:
+            query = query.where(ohlcv_daily_table.c.date >= start_date)
+        if end_date is not None:
+            query = query.where(ohlcv_daily_table.c.date <= end_date)
         if limit:
             keys_query = (
                 select(ohlcv_daily_table.c.instrument_key)
@@ -1163,6 +1368,19 @@ class TimescaleStore:
         with self.engine.begin() as connection:
             rows = [dict(row) for row in connection.execute(query).mappings()]
         return pd.DataFrame(rows)
+
+    def latest_daily_feature_date(
+        self,
+        feature_version: str,
+        exchange: str = "NSE",
+    ) -> date | None:
+        query = (
+            select(func.max(features_daily_table.c.date))
+            .where(features_daily_table.c.feature_version == feature_version)
+            .where(features_daily_table.c.exchange == exchange.upper())
+        )
+        with self.engine.begin() as connection:
+            return connection.execute(query).scalar_one_or_none()
 
     def upsert_daily_features(self, frame: pd.DataFrame) -> int:
         rows = self._daily_feature_rows(frame)
@@ -1241,6 +1459,8 @@ class TimescaleStore:
         feature_version: str,
         exchange: str = "NSE",
         limit: int | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> pd.DataFrame:
         query = (
             features_daily_table.select()
@@ -1248,6 +1468,10 @@ class TimescaleStore:
             .where(features_daily_table.c.exchange == exchange.upper())
             .order_by(features_daily_table.c.instrument_key, features_daily_table.c.date)
         )
+        if start_date is not None:
+            query = query.where(features_daily_table.c.date >= start_date)
+        if end_date is not None:
+            query = query.where(features_daily_table.c.date <= end_date)
         if limit:
             keys_query = (
                 select(features_daily_table.c.instrument_key)
@@ -1264,6 +1488,19 @@ class TimescaleStore:
         with self.engine.begin() as connection:
             rows = [dict(row) for row in connection.execute(query).mappings()]
         return pd.DataFrame(rows)
+
+    def latest_daily_target_date(
+        self,
+        target_version: str,
+        exchange: str = "NSE",
+    ) -> date | None:
+        query = (
+            select(func.max(targets_daily_table.c.date))
+            .where(targets_daily_table.c.target_version == target_version)
+            .where(targets_daily_table.c.exchange == exchange.upper())
+        )
+        with self.engine.begin() as connection:
+            return connection.execute(query).scalar_one_or_none()
 
     def upsert_daily_targets(self, frame: pd.DataFrame) -> int:
         rows = self._daily_target_rows(frame)
@@ -1342,6 +1579,8 @@ class TimescaleStore:
         target_version: str,
         exchange: str = "NSE",
         limit: int | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> pd.DataFrame:
         query = (
             targets_daily_table.select()
@@ -1349,6 +1588,10 @@ class TimescaleStore:
             .where(targets_daily_table.c.exchange == exchange.upper())
             .order_by(targets_daily_table.c.instrument_key, targets_daily_table.c.date)
         )
+        if start_date is not None:
+            query = query.where(targets_daily_table.c.date >= start_date)
+        if end_date is not None:
+            query = query.where(targets_daily_table.c.date <= end_date)
         if limit:
             keys_query = (
                 select(targets_daily_table.c.instrument_key)
@@ -1964,6 +2207,80 @@ class TimescaleStore:
                     "null_count": int(record.get("null_count") or 0),
                     "null_pct": float(record.get("null_pct") or 0.0),
                     "inf_count": int(record.get("inf_count") or 0),
+                    "created_at": created_at,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _stock_coverage_rows(
+        coverage: pd.DataFrame,
+        run_id: str,
+        source: str,
+        exchange: str,
+        created_at: datetime,
+    ) -> list[dict[str, Any]]:
+        rows = []
+        for record in coverage.to_dict(orient="records"):
+            instrument_key = _clean_string(record.get("instrument_key"))
+            symbol = _clean_string(record.get("symbol"))
+            window_months = _nullable_int(record.get("window_months"))
+            if not instrument_key or not symbol or window_months is None:
+                continue
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "window_months": window_months,
+                    "instrument_key": instrument_key,
+                    "symbol": symbol.upper(),
+                    "exchange": exchange.upper(),
+                    "source": source,
+                    "window_start": _nullable_date(record.get("window_start")),
+                    "window_end": _nullable_date(record.get("window_end")),
+                    "first_date": _nullable_date(record.get("first_date")),
+                    "last_date": _nullable_date(record.get("last_date")),
+                    "expected_date_count": int(record.get("expected_date_count") or 0),
+                    "observed_date_count": int(record.get("observed_date_count") or 0),
+                    "missing_date_count": int(record.get("missing_date_count") or 0),
+                    "coverage_pct": float(record.get("coverage_pct") or 0.0),
+                    "has_latest_expected_date": bool(record.get("has_latest_expected_date")),
+                    "latest_date_lag_days": _nullable_int(record.get("latest_date_lag_days")),
+                    "coverage_status": str(record.get("coverage_status") or "unknown"),
+                    "created_at": created_at,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _daily_ohlcv_fetch_coverage_rows(
+        coverage: pd.DataFrame,
+        run_id: str,
+        source: str,
+        exchange: str,
+        created_at: datetime,
+    ) -> list[dict[str, Any]]:
+        rows = []
+        for record in coverage.to_dict(orient="records"):
+            instrument_key = _clean_string(record.get("instrument_key"))
+            symbol = _clean_string(record.get("symbol"))
+            fetch_end = _nullable_date(record.get("fetch_end"))
+            if not instrument_key or not symbol or fetch_end is None:
+                continue
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "instrument_key": instrument_key,
+                    "symbol": symbol.upper(),
+                    "source": source,
+                    "exchange": exchange.upper(),
+                    "latest_stored_date": _nullable_date(record.get("latest_stored_date")),
+                    "fetch_start": _nullable_date(record.get("fetch_start")),
+                    "fetch_end": fetch_end,
+                    "should_fetch": bool(record.get("should_fetch")),
+                    "status": str(record.get("fetch_status") or record.get("status") or "unknown"),
+                    "rows_fetched": int(record.get("rows_fetched") or 0),
+                    "skip_reason": _clean_string(record.get("skip_reason")),
+                    "error_message": _clean_string(record.get("error")),
                     "created_at": created_at,
                 }
             )

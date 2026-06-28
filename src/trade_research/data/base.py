@@ -41,7 +41,7 @@ class MarketDataProvider(ABC):
 
         Args:
             tickers: Sequence of ticker strings
-            period: Yahoo-style period string (e.g. "7d", "10d") or lookback code
+            period: provider-specific period string or lookback code
 
         Returns:
             A pandas DataFrame with long-format columns:

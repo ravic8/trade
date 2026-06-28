@@ -1,10 +1,20 @@
-import { Activity, BriefcaseBusiness, Database, FlaskConical, Search } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  BriefcaseBusiness,
+  Database,
+  FlaskConical,
+  GitBranch,
+  Search,
+} from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity },
   { to: "/screeners", label: "Screeners", icon: FlaskConical },
   { to: "/research", label: "Research", icon: Search },
+  { to: "/research/progress", label: "Progress", icon: GitBranch },
+  { to: "/research/factors", label: "Factors", icon: BarChart3 },
   { to: "/jobs", label: "Jobs", icon: Database },
 ];
 

@@ -5,8 +5,11 @@ import {
   getChatHealth,
   getChatSources,
   getCandles,
+  getFactorIC,
+  getFactorSummary,
   getJobRuns,
   getMarketStatus,
+  getResearchProgress,
   getResearchNotes,
   getScreenerResults,
   postChatQuery,
@@ -27,6 +30,26 @@ export function useCandles(ticker: string) {
 
 export function useResearchNotes(ticker?: string) {
   return useQuery({ queryKey: ["research-notes", ticker ?? "all"], queryFn: () => getResearchNotes(ticker) });
+}
+
+export function useResearchProgress() {
+  return useQuery({ queryKey: ["research-progress"], queryFn: getResearchProgress });
+}
+
+export function useFactorSummary() {
+  return useQuery({ queryKey: ["factor-summary"], queryFn: getFactorSummary });
+}
+
+export function useFactorIC(params: {
+  target?: string;
+  sort?: string;
+  direction?: string;
+  limit?: number;
+}) {
+  return useQuery({
+    queryKey: ["factor-ic", params],
+    queryFn: () => getFactorIC(params),
+  });
 }
 
 export function useJobRuns() {

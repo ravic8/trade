@@ -6,8 +6,11 @@ import type {
   ChatQueryRequest,
   ChatQueryResponse,
   ChatSourcesResponse,
+  FactorICResponse,
+  FactorSummaryResponse,
   JobRun,
   MarketStatus,
+  ResearchProgressResponse,
   ResearchNote,
   ScreenerResult,
 } from "./types";
@@ -42,6 +45,47 @@ export function getResearchNotes(ticker?: string): Promise<ResearchNote[]> {
     : researchNotes;
   const query = ticker ? `?ticker=${encodeURIComponent(ticker)}` : "";
   return fetchJson(`/api/research/notes${query}`, filtered);
+}
+
+export function getResearchProgress(): Promise<ResearchProgressResponse> {
+  return fetchJson("/api/research/progress", {
+    overall_status: "warning",
+    step_count: 0,
+    completed_count: 0,
+    warning_count: 0,
+    missing_count: 0,
+    steps: [],
+  });
+}
+
+export function getFactorSummary(): Promise<FactorSummaryResponse> {
+  return fetchJson("/api/research/factors/summary", {
+    status: "missing",
+    path: "data/processed/research/factors/daily_v1_factor_research_summary.json",
+    summary: null,
+  });
+}
+
+export function getFactorIC(params: {
+  target?: string;
+  sort?: string;
+  direction?: string;
+  limit?: number;
+}): Promise<FactorICResponse> {
+  const query = new URLSearchParams();
+  if (params.target) query.set("target", params.target);
+  if (params.sort) query.set("sort", params.sort);
+  if (params.direction) query.set("direction", params.direction);
+  if (params.limit) query.set("limit", params.limit.toString());
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return fetchJson(`/api/research/factors/ic${suffix}`, {
+    status: "missing",
+    path: "data/processed/research/factors/daily_v1_factor_ic.csv",
+    target: params.target ?? null,
+    sort: params.sort ?? "mean_rank_ic",
+    direction: params.direction ?? "desc",
+    rows: [],
+  });
 }
 
 export function getJobRuns(): Promise<JobRun[]> {

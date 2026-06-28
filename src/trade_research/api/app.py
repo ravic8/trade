@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from trade_research.api.security import ChatRateLimitMiddleware, cors_origins
 from trade_research.chat import ChatLLMClient, ChatOrchestrator, ChatPolicy, ChatToolGateway
 from trade_research.config import Settings, get_settings
+from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.schemas import (
     ChatFeedbackRequest,
@@ -288,6 +289,34 @@ def research_notes(ticker: str | None = None) -> list[dict]:
     if ticker:
         return [note for note in notes if note["ticker"].upper() == ticker.upper()]
     return notes
+
+
+@app.get("/api/research/progress")
+def research_progress() -> dict:
+    return ResearchArtifactReader(settings.data_dir).progress()
+
+
+@app.get("/api/research/factors/summary")
+def research_factor_summary() -> dict:
+    return ResearchArtifactReader(settings.data_dir).factor_summary()
+
+
+@app.get("/api/research/factors/ic")
+def research_factor_ic(
+    target: str | None = None,
+    sort: str = "mean_rank_ic",
+    direction: str = "desc",
+    limit: int = 100,
+) -> dict:
+    normalized_direction = direction.lower()
+    if normalized_direction not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="direction must be asc or desc")
+    return ResearchArtifactReader(settings.data_dir).factor_ic(
+        target=target,
+        sort=sort,
+        direction=normalized_direction,
+        limit=min(max(limit, 0), 500),
+    )
 
 
 @app.get("/api/jobs/latest")

@@ -133,3 +133,89 @@ export type ChatAuditResponse = {
   tool_outputs: Record<string, unknown>;
   response: Record<string, unknown>;
 };
+
+export type ResearchArtifact = {
+  path: string;
+  kind: string;
+  required: boolean;
+  status: "present" | "missing";
+};
+
+export type ResearchDetailItem = {
+  label: string;
+  value: string | number | null;
+};
+
+export type ResearchProgressStep = {
+  step_id: string;
+  title: string;
+  status: "done" | "warning" | "missing";
+  row_count: number | null;
+  symbol_count: number | null;
+  date_min: string | null;
+  date_max: string | null;
+  warning_count: number;
+  failed_count: number;
+  last_generated_at: string | null;
+  command: string;
+  timescale_tables: string[];
+  artifacts: ResearchArtifact[];
+  notes: string[];
+  warning_explanation: string | null;
+  detail_items: ResearchDetailItem[];
+};
+
+export type ResearchProgressResponse = {
+  overall_status: "done" | "warning";
+  step_count: number;
+  completed_count: number;
+  warning_count: number;
+  missing_count: number;
+  steps: ResearchProgressStep[];
+};
+
+export type FactorSummary = {
+  dataset_name: string;
+  feature_version: string;
+  target_version: string;
+  generated_at: string;
+  row_count: number;
+  symbol_count: number;
+  date_min: string;
+  date_max: string;
+  feature_count: number;
+  return_target_count: number;
+  quantile_count: number;
+  ic_rows: number;
+  quantile_rows: number;
+  hit_rate_rows: number;
+  monthly_stability_rows: number;
+};
+
+export type FactorSummaryResponse = {
+  status: "done" | "missing";
+  path: string;
+  summary: FactorSummary | null;
+};
+
+export type FactorICRow = {
+  feature: string;
+  target: string;
+  dates: number;
+  rows: number;
+  mean_ic: number | null;
+  mean_rank_ic: number | null;
+  ic_t_stat: number | null;
+  rank_ic_t_stat: number | null;
+  positive_ic_pct: number | null;
+  positive_rank_ic_pct: number | null;
+};
+
+export type FactorICResponse = {
+  status: "done" | "missing";
+  path: string;
+  target: string | null;
+  sort: string;
+  direction: string;
+  rows: FactorICRow[];
+};

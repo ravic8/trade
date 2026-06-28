@@ -48,12 +48,6 @@ class Settings(BaseSettings):
     polygon_api_key: str | None = None
     upstox_access_token: str | None = None
 
-    yfinance_batch_size: int = Field(default=20, ge=1, le=100)
-    yfinance_throttle_seconds: float = Field(default=1.0, ge=0)
-    yfinance_max_workers: int = Field(default=2, ge=1, le=8)
-    yfinance_retry_attempts: int = Field(default=3, ge=1, le=8)
-    yfinance_retry_base_seconds: float = Field(default=1.0, ge=0)
-    yfinance_jitter_seconds: float = Field(default=0.5, ge=0)
     hourly_realtime_lookback_days: int = Field(default=1, ge=1, le=60)
     hourly_history_lookback_days: int = Field(default=10, ge=1, le=60)
     hourly_backlog_enabled: bool = True

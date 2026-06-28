@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pandas as pd
 
@@ -36,3 +36,77 @@ def test_daily_feature_rows_normalize_for_storage() -> None:
     assert row["open_interest"] is None
     assert row["ret_1d"] is None
     assert row["quality_status"] == "warning"
+
+
+def test_stock_coverage_rows_normalize_for_storage() -> None:
+    coverage = pd.DataFrame(
+        [
+            {
+                "window_months": 6,
+                "instrument_key": "NSE_EQ|TEST",
+                "symbol": "test",
+                "window_start": "2026-01-01",
+                "window_end": "2026-06-25",
+                "first_date": "2026-01-02",
+                "last_date": "2026-06-25",
+                "expected_date_count": 120,
+                "observed_date_count": 119,
+                "missing_date_count": 1,
+                "coverage_pct": 119 / 120,
+                "has_latest_expected_date": True,
+                "latest_date_lag_days": 0,
+                "coverage_status": "pass",
+            }
+        ]
+    )
+
+    rows = TimescaleStore._stock_coverage_rows(
+        coverage,
+        run_id="dagster-run",
+        source="upstox",
+        exchange="NSE",
+        created_at=datetime(2026, 6, 28, tzinfo=UTC),
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["run_id"] == "dagster-run"
+    assert row["window_months"] == 6
+    assert row["instrument_key"] == "NSE_EQ|TEST"
+    assert row["symbol"] == "TEST"
+    assert row["coverage_status"] == "pass"
+
+
+def test_daily_ohlcv_fetch_coverage_rows_normalize_for_storage() -> None:
+    coverage = pd.DataFrame(
+        [
+            {
+                "instrument_key": "NSE_EQ|TEST",
+                "symbol": "test",
+                "latest_stored_date": "2026-06-20",
+                "fetch_start": "2026-06-21",
+                "fetch_end": "2026-06-25",
+                "should_fetch": True,
+                "fetch_status": "failed",
+                "rows_fetched": 0,
+                "skip_reason": "",
+                "error": "rate limited",
+            }
+        ]
+    )
+
+    rows = TimescaleStore._daily_ohlcv_fetch_coverage_rows(
+        coverage,
+        run_id="ingestion-run",
+        source="upstox",
+        exchange="NSE",
+        created_at=datetime(2026, 6, 28, tzinfo=UTC),
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["run_id"] == "ingestion-run"
+    assert row["instrument_key"] == "NSE_EQ|TEST"
+    assert row["symbol"] == "TEST"
+    assert row["status"] == "failed"
+    assert row["error_message"] == "rate limited"

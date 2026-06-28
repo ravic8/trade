@@ -1,28 +1,41 @@
-# Trade Analyst Chatbot v1 - Frozen Implementation Contract
+# Trade Analyst Chatbot v1 - Current Implementation And Contract
 
 ## 1. Purpose
-Build a production-safe analyst chatbot that:
+Build a guarded analyst chatbot foundation that:
 - answers market-data questions from TimescaleDB,
 - answers research-context questions from Qdrant,
 - supports hybrid answers across both,
 - always provides provenance and quality/freshness signaling.
 
-This document is the implementation contract for v1. API, schemas, safety boundaries, and badge logic below are considered frozen unless explicitly revised.
+This document records the intended v1 contract and the current repo-backed
+implementation. It should not be read as evidence that every planned chat
+capability is complete.
 
-## 2. Current System Baseline (As Of 2026-05-22)
-- NSE and TSX universe pipelines exist.
-- Hourly OHLCV ingestion runs via yfinance.
-- TimescaleDB stores symbols, hourly OHLCV, feed health, ingestion runs, exchange holidays, and backlog windows.
-- Dagster schedules run exchange-aware realtime ingestion.
-- Realtime schedules use 1-day lookback.
-- Historical recovery uses backfill jobs with 10-day lookback.
-- Automatic backlog sensors detect missing/partial windows and trigger recovery jobs.
-- Feed health and row-quality flags exist.
-- Data quality snapshot:
+## 2. System Baseline
+- Upstox daily NSE OHLCV is the active market-data source.
+- TimescaleDB stores symbols, Upstox daily OHLCV, features, targets,
+  ingestion runs, exchange holidays, and run-scoped coverage.
+- Dagster definitions are focused on the daily Upstox research pipeline. The
+  active Python environment must include Dagster for this to run.
+- Historical hourly ingestion/backlog notes in older snapshots are legacy
+  context and are not part of the active Upstox-only path.
+- Historical data quality snapshot from 2026-05-22. Treat this as an example
+  runtime observation, not guaranteed current repo state:
   - NSE: active universe 2364, latest complete-session stocks 2172, latest candle 2026-05-22 15:15 IST.
   - TSX: active universe 660, latest complete-session stocks 408, latest candle 2026-05-21 15:30 America/Toronto.
-- FastAPI and React scaffolds exist.
-- Qdrant + embedding foundations exist.
+- FastAPI and React chat surfaces exist.
+- Qdrant + embedding foundations exist, but no end-to-end document ingestion
+  job or CLI is implemented.
+
+Current repo-backed implementation:
+
+- API routes live in `src/trade_research/api/app.py`.
+- Chat policy, deterministic planning, tool execution, answer assembly, and
+  in-memory audit capture live in `src/trade_research/chat/`.
+- Provenance response models live in `src/trade_research/schemas.py`; there is
+  no `src/trade_research/chat/provenance.py` file.
+- Optional LLM answer rewriting uses Gemini through `src/trade_research/chat/llm.py`.
+- Feedback currently returns `{"status": "accepted"}` but is not persisted.
 
 ## 3. Non-Goals (v1)
 - No order execution or autonomous trade actions.
@@ -47,8 +60,10 @@ This document is the implementation contract for v1. API, schemas, safety bounda
 - Returns ranked chunks with source metadata for citations.
 
 5. LLM Orchestration
-- Planner stage: intent + tool-call planning.
-- Answer stage: evidence-grounded response assembly with mandatory citations.
+- Current planner stage: deterministic intent and tool-call planning based on
+  the request text and context.
+- Optional answer stage: Gemini can rewrite the deterministic answer when
+  configured.
 
 6. UI Chat Surface (React)
 - Chat interaction, scope controls, quality badge display, and source drawer.
@@ -63,8 +78,8 @@ This document is the implementation contract for v1. API, schemas, safety bounda
   - `orchestrator.py`
   - `policy.py`
   - `tools.py`
-  - `provenance.py`
   - `quality.py`
+  - `llm.py`
 
 ## 6. API Contract
 All routes are under existing API namespace.
@@ -171,6 +186,9 @@ Response:
 ```
 
 ### 6.3 POST /api/chat/feedback
+Current behavior: validates the request and returns accepted. Feedback storage
+is planned but not implemented.
+
 Request:
 ```json
 {
@@ -229,8 +247,11 @@ Intent classes:
 - `research_lookup`
 - `hybrid_explain`
 
-Planner output must be strict JSON with explicit tool calls.
-Answer generator receives only planner output + tool results and must emit:
+Current planner output is a typed `PlannerPlan` object created by deterministic
+Python rules in `ChatOrchestrator`; strict LLM planner JSON is planned but not
+implemented.
+
+Answer generation receives only planner output + tool results and must emit:
 - direct answer,
 - warnings,
 - citations.
@@ -292,19 +313,21 @@ Degraded behavior:
 - If Timescale fails for requested factual market claim: return cannot-verify message; no fabricated output.
 
 ## 12. Observability and Audit
-Per chat turn capture:
+Current per chat turn capture:
 - `trace_id`, `response_id`, `session_id`, `user_id`
 - intent + planned tool calls
-- tool status/latency/error
+- tool errors
 - final badge and warnings
 - citation coverage metadata
 
-Persist audit payload:
+Current audit payload is kept in process memory by the orchestrator:
 - request
 - planner result
 - tool outputs (sanitized)
 - final response
 - provenance bundle
+
+Durable audit persistence is planned but not implemented.
 
 ## 13. Frontend Contract (React)
 Files to extend:
@@ -341,13 +364,24 @@ Acceptance gates:
 3. Badge/warning output aligns with live completeness/freshness.
 4. Degraded dependencies never produce fabricated claims.
 
-## 15. PR Sequence
-1. PR1: doc + schema + config constants.
-2. PR2: tool gateway + Timescale query templates + Qdrant retrieval wrapper.
-3. PR3: orchestration + policy + quality evaluator.
-4. PR4: API routes + backend tests.
-5. PR5: UI integration + frontend tests.
-6. PR6: observability/audit hardening.
+## 15. Implementation Status
+
+Implemented:
+
+1. Chat request/response schemas and API routes.
+2. Policy refusals for unsafe requests.
+3. Typed tool gateway for bounded Timescale and Qdrant retrieval.
+4. Deterministic orchestration, quality badges, citations, and provenance.
+5. React chat surface with quality badge and source drawer.
+6. Backend tests for core chat behavior.
+
+Partial or planned:
+
+1. LLM planner JSON.
+2. Durable feedback and audit persistence.
+3. Full document ingestion into Qdrant.
+4. Frontend tests for the chat UI.
+5. Production observability beyond in-memory audit payloads and logs.
 
 ## 16. Open Decisions To Resolve Before PR2
 1. Citation strictness mode default:
@@ -360,4 +394,3 @@ Acceptance gates:
 
 3. Max latency target for `/api/chat/query`:
 - recommended p95 target <= 8 seconds in v1.
-

@@ -5,8 +5,10 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import { AppShell } from "./shell/AppShell";
 import { DashboardPage } from "./pages/DashboardPage";
+import { FactorResearchPage } from "./pages/FactorResearchPage";
 import { JobsPage } from "./pages/JobsPage";
 import { ResearchPage } from "./pages/ResearchPage";
+import { ResearchProgressPage } from "./pages/ResearchProgressPage";
 import { ScreenersPage } from "./pages/ScreenersPage";
 import { SymbolPage } from "./pages/SymbolPage";
 import "./styles.css";
@@ -29,6 +31,8 @@ const router = createBrowserRouter([
       { path: "/screeners", element: <ScreenersPage /> },
       { path: "/symbols/:ticker", element: <SymbolPage /> },
       { path: "/research", element: <ResearchPage /> },
+      { path: "/research/progress", element: <ResearchProgressPage /> },
+      { path: "/research/factors", element: <FactorResearchPage /> },
       { path: "/jobs", element: <JobsPage /> },
     ],
   },

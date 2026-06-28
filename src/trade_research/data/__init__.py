@@ -8,7 +8,6 @@ from trade_research.data.upstox import (
     instrument_master_audit,
     map_liquid_universe_to_upstox,
 )
-from trade_research.data.yahoo import YahooFinanceMarketDataProvider
 
 __all__ = [
     "MarketDataProvider",
@@ -18,6 +17,5 @@ __all__ = [
     "audit_daily_ohlcv",
     "instrument_master_audit",
     "map_liquid_universe_to_upstox",
-    "YahooFinanceMarketDataProvider",
     "validate_ohlcv",
 ]
