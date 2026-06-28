@@ -2,6 +2,7 @@ import {
   Activity,
   BarChart3,
   BriefcaseBusiness,
+  BrainCircuit,
   Database,
   FlaskConical,
   GitBranch,
@@ -15,6 +16,7 @@ const navItems = [
   { to: "/research", label: "Research", icon: Search },
   { to: "/research/progress", label: "Progress", icon: GitBranch },
   { to: "/research/factors", label: "Factors", icon: BarChart3 },
+  { to: "/research/models", label: "Models", icon: BrainCircuit },
   { to: "/jobs", label: "Jobs", icon: Database },
 ];
 

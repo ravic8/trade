@@ -13,6 +13,7 @@ from trade_research.chat import ChatLLMClient, ChatOrchestrator, ChatPolicy, Cha
 from trade_research.config import Settings, get_settings
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
+from trade_research.research.ml_artifacts import MLArtifactReader
 from trade_research.schemas import (
     ChatFeedbackRequest,
     ChatFeedbackResponse,
@@ -316,6 +317,85 @@ def research_factor_ic(
         sort=sort,
         direction=normalized_direction,
         limit=min(max(limit, 0), 500),
+    )
+
+
+@app.get("/api/research/ml/summary")
+def research_ml_summary() -> dict:
+    return MLArtifactReader(settings.data_dir).summary()
+
+
+@app.get("/api/research/ml/model-metrics")
+def research_ml_model_metrics(run: str = "all") -> dict:
+    if run not in {"all", "baselines", "lightgbm"}:
+        raise HTTPException(status_code=400, detail="run must be all, baselines, or lightgbm")
+    return MLArtifactReader(settings.data_dir).model_metrics(run=run)
+
+
+@app.get("/api/research/ml/backtests")
+def research_ml_backtests(group: str = "all") -> dict:
+    if group not in {"all", "baselines", "lightgbm"}:
+        raise HTTPException(status_code=400, detail="group must be all, baselines, or lightgbm")
+    return MLArtifactReader(settings.data_dir).backtests(group=group)
+
+
+@app.get("/api/research/ml/candidates")
+def research_ml_candidates(
+    model_id: str = "momentum_1d",
+    top_n: int = 5,
+    run: str = "baselines",
+    limit: int = 200,
+) -> dict:
+    if run not in {"baselines", "lightgbm"}:
+        raise HTTPException(status_code=400, detail="run must be baselines or lightgbm")
+    return MLArtifactReader(settings.data_dir).candidates(
+        model_id=model_id,
+        top_n=min(max(top_n, 1), 100),
+        run=run,
+        limit=min(max(limit, 0), 1000),
+    )
+
+
+@app.get("/api/research/ml/latest-candidates")
+def research_ml_latest_candidates(
+    run: str = "baselines",
+    top_n: int = 5,
+) -> dict:
+    if run not in {"baselines", "lightgbm"}:
+        raise HTTPException(status_code=400, detail="run must be baselines or lightgbm")
+    return MLArtifactReader(settings.data_dir).latest_candidates(
+        run=run,
+        top_n=min(max(top_n, 1), 50),
+    )
+
+
+@app.get("/api/research/ml/equity-curve")
+def research_ml_equity_curve(
+    group: str = "baselines",
+    model_id: str = "momentum_1d",
+    top_n: int = 5,
+) -> dict:
+    if group not in {"baselines", "lightgbm"}:
+        raise HTTPException(status_code=400, detail="group must be baselines or lightgbm")
+    return MLArtifactReader(settings.data_dir).equity_curve(
+        group=group,
+        model_id=model_id,
+        top_n=min(max(top_n, 1), 100),
+    )
+
+
+@app.get("/api/research/ml/robustness")
+def research_ml_robustness(
+    group: str = "baselines",
+    model_id: str = "momentum_1d",
+    top_n: int = 5,
+) -> dict:
+    if group not in {"baselines", "lightgbm"}:
+        raise HTTPException(status_code=400, detail="group must be baselines or lightgbm")
+    return MLArtifactReader(settings.data_dir).robustness(
+        group=group,
+        model_id=model_id,
+        top_n=min(max(top_n, 1), 100),
     )
 
 

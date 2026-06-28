@@ -219,3 +219,196 @@ export type FactorICResponse = {
   direction: string;
   rows: FactorICRow[];
 };
+
+export type MLRunId = "all" | "baselines" | "lightgbm";
+export type MLConcreteRunId = "baselines" | "lightgbm";
+
+export type MLBacktestResult = {
+  group?: MLConcreteRunId;
+  model_id: string;
+  top_n: number;
+  day_count: number;
+  total_return: number | null;
+  average_daily_gross_return: number | null;
+  average_daily_net_return: number | null;
+  annualized_return: number | null;
+  annualized_volatility: number | null;
+  sharpe_ratio: number | null;
+  max_drawdown: number | null;
+  win_rate: number | null;
+  average_turnover: number | null;
+  total_transaction_cost: number | null;
+  best_day: number | null;
+  worst_day: number | null;
+  profit_factor: number | null;
+};
+
+export type MLModelRunSummary = {
+  run_id: MLConcreteRunId;
+  status: "done" | "missing";
+  generated_at: string | null;
+  model_count: number;
+  prediction_row_count: number;
+  fold_count: number | null;
+  best_backtest: MLBacktestResult | null;
+};
+
+export type MLDatasetSummary = {
+  dataset_name: string;
+  generated_at: string;
+  target_column: string;
+  coverage_policy: string;
+  leakage_note: string;
+  row_count: number;
+  trainable_row_count: number;
+  symbol_count: number;
+  trainable_symbol_count: number;
+  excluded_symbol_count: number;
+  feature_column_count: number;
+  date_min: string;
+  date_max: string;
+  leakage_checks_passed: boolean;
+};
+
+export type MLWalkForwardSummary = {
+  generated_at: string;
+  fold_count: number;
+  candidate_date_count: number;
+  skipped_candidate_count: number;
+  first_prediction_date: string | null;
+  last_prediction_date: string | null;
+  leakage_checks_passed: boolean;
+};
+
+export type MLSummaryResponse = {
+  status: "done" | "missing";
+  paths: Record<string, string>;
+  dataset: MLDatasetSummary | null;
+  walk_forward: MLWalkForwardSummary | null;
+  model_runs: MLModelRunSummary[];
+  current_winner: MLBacktestResult | null;
+  assumptions: {
+    target: string;
+    universe: string;
+    evaluation: string;
+    strategy: string;
+    caveat: string;
+  };
+};
+
+export type MLModelMetricRow = {
+  run_id: MLConcreteRunId;
+  model_id: string;
+  prediction_rows: number;
+  evaluated_rows: number;
+  prediction_date_count: number;
+  rank_ic_mean: number | null;
+  average_realized_return: number | null;
+  top_5_average_return: number | null;
+  top_5_hit_rate: number | null;
+  top_10_average_return: number | null;
+  top_10_hit_rate: number | null;
+  top_20_average_return: number | null;
+  top_20_hit_rate: number | null;
+};
+
+export type MLModelMetricsResponse = {
+  status: "done" | "missing";
+  run: MLRunId;
+  rows: MLModelMetricRow[];
+};
+
+export type MLBacktestsResponse = {
+  status: "done" | "missing";
+  group: MLRunId;
+  rows: MLBacktestResult[];
+};
+
+export type MLCandidateRow = {
+  prediction_date: string;
+  symbol: string;
+  instrument_key: string;
+  model_id: string;
+  rank: number;
+  score: number;
+  realized_forward_ret_1d: number | null;
+};
+
+export type MLCandidatesResponse = {
+  status: "done" | "missing";
+  path: string | null;
+  run: MLConcreteRunId;
+  model_id: string;
+  top_n: number;
+  rows: MLCandidateRow[];
+};
+
+export type MLEquityCurveRow = {
+  model_id: string;
+  top_n: number;
+  prediction_date: string;
+  equity: number;
+  drawdown: number;
+};
+
+export type MLEquityCurveResponse = {
+  status: "done" | "missing";
+  path: string;
+  group: MLConcreteRunId;
+  model_id: string;
+  top_n: number;
+  rows: MLEquityCurveRow[];
+};
+
+export type MLLatestCandidateModel = {
+  model_id: string;
+  rows: MLCandidateRow[];
+};
+
+export type MLLatestCandidatesResponse = {
+  status: "done" | "missing";
+  path: string | null;
+  run: MLConcreteRunId;
+  top_n: number;
+  prediction_date: string | null;
+  model_count: number;
+  models: MLLatestCandidateModel[];
+  note?: string;
+};
+
+export type MLCostSensitivityRow = MLBacktestResult & {
+  transaction_cost_bps: number;
+};
+
+export type MLDrawdownDailyRow = {
+  model_id: string;
+  prediction_date: string;
+  top_n: number;
+  selected_count: number;
+  gross_return: number;
+  turnover: number;
+  transaction_cost: number;
+  net_return: number;
+};
+
+export type MLDrawdownSummary = {
+  peak_date: string;
+  trough_date: string;
+  recovery_date: string | null;
+  max_drawdown: number;
+  peak_equity: number;
+  trough_equity: number;
+  days: number;
+  latest_peak_date: string;
+  daily_returns: MLDrawdownDailyRow[];
+};
+
+export type MLRobustnessResponse = {
+  status: "done" | "missing";
+  group: MLConcreteRunId;
+  model_id: string;
+  top_n: number;
+  cost_sensitivity: MLCostSensitivityRow[];
+  top_n_comparison: MLBacktestResult[];
+  drawdown: MLDrawdownSummary | null;
+};

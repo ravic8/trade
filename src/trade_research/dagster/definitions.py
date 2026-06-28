@@ -5,6 +5,7 @@ from trade_research.dagster.daily_assets import (
     daily_pipeline_health,
     daily_targets_v1,
     factor_research_v1,
+    ml_dataset_v1,
     processed_dataset_validation,
     upstox_daily_ohlcv,
 )
@@ -16,6 +17,7 @@ daily_research_pipeline_job = define_asset_job(
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
+        ml_dataset_v1,
         factor_research_v1,
         daily_pipeline_health,
     ],
@@ -23,7 +25,14 @@ daily_research_pipeline_job = define_asset_job(
 
 factor_research_job = define_asset_job(
     name="factor_research_job",
-    selection=[daily_features_v1, daily_targets_v1, factor_research_v1],
+    selection=[
+        upstox_daily_ohlcv,
+        daily_features_v1,
+        daily_targets_v1,
+        processed_dataset_validation,
+        ml_dataset_v1,
+        factor_research_v1,
+    ],
 )
 
 daily_research_schedule = ScheduleDefinition(
@@ -40,6 +49,7 @@ defs = Definitions(
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
+        ml_dataset_v1,
         factor_research_v1,
         daily_pipeline_health,
     ],

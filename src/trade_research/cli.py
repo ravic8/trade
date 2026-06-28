@@ -17,14 +17,25 @@ from trade_research.data import (
 )
 from trade_research.features import FEATURE_VERSION_V1_0
 from trade_research.market_calendar import session_decision
+from trade_research.modeling.backtest import BacktestConfig
+from trade_research.modeling.baselines import BaselineRunConfig
+from trade_research.modeling.latest_predictions import LatestPredictionConfig
+from trade_research.modeling.lightgbm_models import LightGBMRunConfig
+from trade_research.modeling.walk_forward import WalkForwardManifestConfig
 from trade_research.pipelines import (
+    run_baseline_predictions_v1_pipeline,
     run_daily_feature_pipeline,
     run_daily_pipeline_health_pipeline,
     run_daily_target_pipeline,
     run_factor_research_pipeline,
+    run_latest_predictions_v1_pipeline,
+    run_lightgbm_predictions_v1_pipeline,
+    run_ml_dataset_v1_pipeline,
+    run_prediction_backtest_v1_pipeline,
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
     run_upstox_daily_ohlcv_retry_pipeline,
+    run_walk_forward_folds_v1_pipeline,
 )
 from trade_research.storage import ParquetStore, TimescaleStore
 from trade_research.targets import (
@@ -749,6 +760,238 @@ def validate_processed_datasets_command(
     if summary["warnings"]:
         console.print("[yellow]Warnings:[/yellow]")
         for warning in summary["warnings"]:
+            console.print(f"- {warning}")
+
+
+@app.command("build-ml-dataset-v1")
+def build_ml_dataset_v1_command() -> None:
+    result = run_ml_dataset_v1_pipeline()
+    console.print(
+        "ML dataset v1: "
+        f"{result.status} | rows={result.metrics['row_count']} | "
+        f"trainable_rows={result.metrics['trainable_row_count']}"
+    )
+    console.print(f"Dataset: {result.artifacts['dataset']}")
+    console.print(f"Summary: {result.artifacts['summary']}")
+    console.print(f"Leakage checks: {result.artifacts['leakage_checks']}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for warning in result.warnings:
+            console.print(f"- {warning}")
+
+
+@app.command("build-walk-forward-folds-v1")
+def build_walk_forward_folds_v1_command(
+    min_train_days: Annotated[
+        int,
+        typer.Option(min=1, help="Minimum labeled trading dates in each train window."),
+    ] = 240,
+    validation_days: Annotated[
+        int,
+        typer.Option(min=1, help="Labeled trading dates in each validation window."),
+    ] = 60,
+    prediction_step_days: Annotated[
+        int,
+        typer.Option(min=1, help="Generate every Nth valid prediction date."),
+    ] = 1,
+    start_date: Annotated[
+        str | None,
+        typer.Option(help="Optional first prediction date in YYYY-MM-DD format."),
+    ] = None,
+    end_date: Annotated[
+        str | None,
+        typer.Option(help="Optional last prediction date in YYYY-MM-DD format."),
+    ] = None,
+    max_folds: Annotated[
+        int | None,
+        typer.Option(min=1, help="Optional cap for quick smoke runs."),
+    ] = None,
+) -> None:
+    config = WalkForwardManifestConfig(
+        min_train_days=min_train_days,
+        validation_days=validation_days,
+        prediction_step_days=prediction_step_days,
+        start_date=_parse_cli_date(start_date, "--start-date") if start_date else None,
+        end_date=_parse_cli_date(end_date, "--end-date") if end_date else None,
+        max_folds=max_folds,
+    )
+    result = run_walk_forward_folds_v1_pipeline(config=config)
+    console.print(
+        "Walk-forward folds v1: "
+        f"{result.status} | folds={result.metrics['fold_count']} | "
+        f"candidates={result.metrics['candidate_date_count']}"
+    )
+    console.print(f"Folds: {result.artifacts['folds']}")
+    console.print(f"Summary: {result.artifacts['summary']}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for warning in result.warnings:
+            console.print(f"- {warning}")
+
+
+@app.command("run-baseline-predictions-v1")
+def run_baseline_predictions_v1_command(
+    min_train_days: Annotated[
+        int,
+        typer.Option(min=1, help="Minimum labeled trading dates in each train window."),
+    ] = 180,
+    validation_days: Annotated[
+        int,
+        typer.Option(min=1, help="Labeled trading dates in each validation window."),
+    ] = 40,
+    prediction_step_days: Annotated[
+        int,
+        typer.Option(min=1, help="Predict every Nth valid prediction date."),
+    ] = 1,
+    max_folds: Annotated[
+        int | None,
+        typer.Option(min=1, help="Optional cap for quick smoke runs."),
+    ] = None,
+) -> None:
+    config = BaselineRunConfig(
+        min_train_days=min_train_days,
+        validation_days=validation_days,
+        prediction_step_days=prediction_step_days,
+        max_folds=max_folds,
+    )
+    result = run_baseline_predictions_v1_pipeline(config=config)
+    console.print(
+        "Baseline predictions v1: "
+        f"{result.status} | rows={result.metrics['prediction_row_count']} | "
+        f"models={result.metrics['model_count']} | folds={result.metrics['fold_count']}"
+    )
+    console.print(f"Predictions: {result.artifacts['predictions']}")
+    console.print(f"Metrics: {result.artifacts['metrics']}")
+    console.print(f"Summary: {result.artifacts['summary']}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for warning in result.warnings:
+            console.print(f"- {warning}")
+
+
+@app.command("run-lightgbm-predictions-v1")
+def run_lightgbm_predictions_v1_command(
+    min_train_days: Annotated[
+        int,
+        typer.Option(min=1, help="Minimum labeled trading dates in each train window."),
+    ] = 180,
+    validation_days: Annotated[
+        int,
+        typer.Option(min=1, help="Labeled trading dates in each validation window."),
+    ] = 40,
+    prediction_step_days: Annotated[
+        int,
+        typer.Option(min=1, help="Predict every Nth valid prediction date."),
+    ] = 1,
+    max_folds: Annotated[
+        int | None,
+        typer.Option(min=1, help="Optional cap. Defaults to 10 for a quick LightGBM run."),
+    ] = 10,
+    n_estimators: Annotated[
+        int,
+        typer.Option(min=1, help="LightGBM estimators per fold/model."),
+    ] = 80,
+) -> None:
+    config = LightGBMRunConfig(
+        min_train_days=min_train_days,
+        validation_days=validation_days,
+        prediction_step_days=prediction_step_days,
+        max_folds=max_folds,
+        n_estimators=n_estimators,
+    )
+    result = run_lightgbm_predictions_v1_pipeline(config=config)
+    console.print(
+        "LightGBM predictions v1: "
+        f"{result.status} | rows={result.metrics['prediction_row_count']} | "
+        f"models={result.metrics['model_count']} | folds={result.metrics['fold_count']}"
+    )
+    console.print(f"Predictions: {result.artifacts['predictions']}")
+    console.print(f"Metrics: {result.artifacts['metrics']}")
+    console.print(f"Summary: {result.artifacts['summary']}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for warning in result.warnings:
+            console.print(f"- {warning}")
+
+
+@app.command("run-prediction-backtest-v1")
+def run_prediction_backtest_v1_command(
+    predictions: Annotated[
+        Path,
+        typer.Option(help="Prediction parquet to backtest."),
+    ] = Path("data/processed/ml/baselines_v1/baseline_predictions.parquet"),
+    output_dir: Annotated[
+        Path | None,
+        typer.Option(help="Output directory for backtest artifacts."),
+    ] = None,
+    transaction_cost_bps: Annotated[
+        float,
+        typer.Option(min=0, help="One-way daily rebalance transaction cost in bps."),
+    ] = 10.0,
+) -> None:
+    config = BacktestConfig(transaction_cost_bps=transaction_cost_bps)
+    result = run_prediction_backtest_v1_pipeline(
+        predictions_path=predictions,
+        output_dir=output_dir,
+        config=config,
+    )
+    console.print(
+        "Prediction backtest v1: "
+        f"{result.status} | results={result.metrics['result_count']} | "
+        f"models={result.metrics['model_count']}"
+    )
+    console.print(f"Daily returns: {result.artifacts['daily_returns']}")
+    console.print(f"Equity curve: {result.artifacts['equity_curve']}")
+    console.print(f"Metrics: {result.artifacts['metrics']}")
+    console.print(f"Summary: {result.artifacts['summary']}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for warning in result.warnings:
+            console.print(f"- {warning}")
+
+
+@app.command("run-latest-predictions-v1")
+def run_latest_predictions_v1_command(
+    min_train_days: Annotated[
+        int,
+        typer.Option(min=1, help="Minimum labeled trading dates in the train window."),
+    ] = 180,
+    validation_days: Annotated[
+        int,
+        typer.Option(min=1, help="Labeled trading dates in the validation window."),
+    ] = 40,
+    include_lightgbm: Annotated[
+        bool,
+        typer.Option(
+            "--include-lightgbm/--no-include-lightgbm",
+            help="Train and score LightGBM models for the latest prediction date.",
+        ),
+    ] = True,
+    lightgbm_n_estimators: Annotated[
+        int,
+        typer.Option(min=1, help="LightGBM estimators for latest prediction models."),
+    ] = 80,
+) -> None:
+    config = LatestPredictionConfig(
+        min_train_days=min_train_days,
+        validation_days=validation_days,
+        include_lightgbm=include_lightgbm,
+        lightgbm_n_estimators=lightgbm_n_estimators,
+    )
+    result = run_latest_predictions_v1_pipeline(config=config)
+    console.print(
+        "Latest predictions v1: "
+        f"{result.status} | date={result.metrics['prediction_date']} | "
+        f"rows={result.metrics['prediction_row_count']} | "
+        f"models={result.metrics['model_count']}"
+    )
+    console.print(f"Predictions: {result.artifacts['predictions']}")
+    console.print(f"Candidates: {result.artifacts['candidates']}")
+    console.print(f"Summary: {result.artifacts['summary']}")
+    console.print(f"Report: {result.artifacts['report']}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for warning in result.warnings:
             console.print(f"- {warning}")
 
 

@@ -11,6 +11,7 @@ from trade_research.pipelines import (
     run_daily_pipeline_health_pipeline,
     run_daily_target_pipeline,
     run_factor_research_pipeline,
+    run_ml_dataset_v1_pipeline,
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
 )
@@ -106,6 +107,7 @@ def daily_targets_v1(
     group_name="daily_research",
     compute_kind="python",
     ins={
+        "ml_dataset": AssetIn("ml_dataset_v1"),
         "daily_features": AssetIn("daily_features_v1"),
         "daily_targets": AssetIn("daily_targets_v1"),
     },
@@ -113,9 +115,11 @@ def daily_targets_v1(
 )
 def factor_research_v1(
     context,
+    ml_dataset: PipelineRunResult,
     daily_features: PipelineRunResult,
     daily_targets: PipelineRunResult,
 ) -> PipelineRunResult:
+    _assert_upstream_not_failed(ml_dataset)
     _assert_upstream_not_failed(daily_features)
     _assert_upstream_not_failed(daily_targets)
     result = run_factor_research_pipeline()
@@ -130,6 +134,31 @@ def factor_research_v1(
         "processed_validation": AssetIn("processed_dataset_validation"),
         "daily_features": AssetIn("daily_features_v1"),
         "daily_targets": AssetIn("daily_targets_v1"),
+    },
+    description="Build the leakage-aware v1 ML dataset for next-day return models.",
+)
+def ml_dataset_v1(
+    context,
+    processed_validation: PipelineRunResult,
+    daily_features: PipelineRunResult,
+    daily_targets: PipelineRunResult,
+) -> PipelineRunResult:
+    _assert_upstream_not_failed(processed_validation)
+    _assert_upstream_not_failed(daily_features)
+    _assert_upstream_not_failed(daily_targets)
+    result = run_ml_dataset_v1_pipeline()
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="daily_research",
+    compute_kind="python",
+    ins={
+        "processed_validation": AssetIn("processed_dataset_validation"),
+        "ml_dataset": AssetIn("ml_dataset_v1"),
+        "daily_features": AssetIn("daily_features_v1"),
+        "daily_targets": AssetIn("daily_targets_v1"),
         "factor_research": AssetIn("factor_research_v1"),
     },
     description="Generate the end-to-end daily research pipeline health report.",
@@ -137,11 +166,13 @@ def factor_research_v1(
 def daily_pipeline_health(
     context,
     processed_validation: PipelineRunResult,
+    ml_dataset: PipelineRunResult,
     daily_features: PipelineRunResult,
     daily_targets: PipelineRunResult,
     factor_research: PipelineRunResult,
 ) -> PipelineRunResult:
     _assert_upstream_not_failed(processed_validation)
+    _assert_upstream_not_failed(ml_dataset)
     _assert_upstream_not_failed(daily_features)
     _assert_upstream_not_failed(daily_targets)
     _assert_upstream_not_failed(factor_research)

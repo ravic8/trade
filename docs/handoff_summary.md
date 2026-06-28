@@ -146,3 +146,14 @@ Build `ml_dataset_v1` as a separate layer after features and targets. It should
 join cleaned OHLCV, features, targets, coverage flags, listing/history metadata,
 and explicit exclusion reasons. Do not fold ML dataset logic back into features
 or targets.
+
+The frozen v1 strategy is documented in `docs/ml_dataset_v1_strategy.md`.
+Current decisions:
+
+- `ml_dataset_v1` depends on `processed_dataset_validation`.
+- First model target is next-day return (`forward_ret_1d`).
+- Eligible ML universe is stocks with 100% coverage across the full available
+  two-year history.
+- Evaluation should use leakage-aware daily walk-forward prediction.
+- The static full-history coverage universe must be recorded as a research
+  assumption and later replaced with point-in-time coverage eligibility.

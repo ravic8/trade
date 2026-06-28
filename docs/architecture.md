@@ -38,6 +38,11 @@ Dagster daily_research_pipeline_job
 Features and targets are intentionally separate. Feature rows describe what was
 known at date `T`; target rows describe outcomes after date `T`.
 
+The frozen first ML dataset and walk-forward evaluation contract is documented
+in `docs/ml_dataset_v1_strategy.md`. It defines `ml_dataset_v1` as a separate
+post-validation layer depending on `processed_dataset_validation`, with a
+static full-history 100% coverage universe for the first next-day return model.
+
 Implementation status:
 
 - Fully implemented: liquid NSE universe selection, Upstox instrument mapping,
@@ -49,8 +54,8 @@ Implementation status:
 - Partially implemented: Lens chat, React UI, and Qdrant retrieval helpers.
 - Mock-backed in places: screener results, research notes, and several
   dashboard fallback paths when database/API data is unavailable.
-- Planned: research signals, backtesting, experiment tracking, model training,
-  paper trading, and live execution.
+- Planned: `ml_dataset_v1`, research signals, backtesting, experiment tracking,
+  model training, paper trading, and live execution.
 
 Runtime notes:
 

@@ -8,13 +8,20 @@ import {
   getFactorIC,
   getFactorSummary,
   getJobRuns,
+  getMLBacktests,
+  getMLCandidates,
+  getMLEquityCurve,
+  getMLLatestCandidates,
+  getMLModelMetrics,
+  getMLRobustness,
+  getMLSummary,
   getMarketStatus,
   getResearchProgress,
   getResearchNotes,
   getScreenerResults,
   postChatQuery,
 } from "./client";
-import type { ChatQueryRequest } from "./types";
+import type { ChatQueryRequest, MLConcreteRunId, MLRunId } from "./types";
 
 export function useMarketStatus() {
   return useQuery({ queryKey: ["market-status"], queryFn: getMarketStatus });
@@ -49,6 +56,68 @@ export function useFactorIC(params: {
   return useQuery({
     queryKey: ["factor-ic", params],
     queryFn: () => getFactorIC(params),
+  });
+}
+
+export function useMLSummary() {
+  return useQuery({ queryKey: ["ml-summary"], queryFn: getMLSummary });
+}
+
+export function useMLModelMetrics(run: MLRunId) {
+  return useQuery({
+    queryKey: ["ml-model-metrics", run],
+    queryFn: () => getMLModelMetrics(run),
+  });
+}
+
+export function useMLBacktests(group: MLRunId) {
+  return useQuery({
+    queryKey: ["ml-backtests", group],
+    queryFn: () => getMLBacktests(group),
+  });
+}
+
+export function useMLCandidates(params: {
+  run: MLConcreteRunId;
+  modelId: string;
+  topN: number;
+  limit?: number;
+}) {
+  return useQuery({
+    queryKey: ["ml-candidates", params],
+    queryFn: () => getMLCandidates(params),
+  });
+}
+
+export function useMLLatestCandidates(params: {
+  run: MLConcreteRunId;
+  topN: number;
+}) {
+  return useQuery({
+    queryKey: ["ml-latest-candidates", params],
+    queryFn: () => getMLLatestCandidates(params),
+  });
+}
+
+export function useMLEquityCurve(params: {
+  group: MLConcreteRunId;
+  modelId: string;
+  topN: number;
+}) {
+  return useQuery({
+    queryKey: ["ml-equity-curve", params],
+    queryFn: () => getMLEquityCurve(params),
+  });
+}
+
+export function useMLRobustness(params: {
+  group: MLConcreteRunId;
+  modelId: string;
+  topN: number;
+}) {
+  return useQuery({
+    queryKey: ["ml-robustness", params],
+    queryFn: () => getMLRobustness(params),
   });
 }
 

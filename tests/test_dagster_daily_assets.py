@@ -123,6 +123,7 @@ def test_daily_pipeline_health_skips_factor_research_rebuild(monkeypatch) -> Non
     result = daily_assets.daily_pipeline_health(
         context,
         processed_validation=_result("processed_dataset_validation"),
+        ml_dataset=_result("ml_dataset_v1"),
         daily_features=_result("daily_features"),
         daily_targets=_result("daily_targets"),
         factor_research=_result("factor_research"),
@@ -136,3 +137,40 @@ def test_daily_pipeline_health_skips_factor_research_rebuild(monkeypatch) -> Non
         "store_coverage_db": True,
         "coverage_windows_months": [6, 9, 12, 15, 18, 24],
     }
+
+
+def test_ml_dataset_asset_depends_on_processed_validation(monkeypatch) -> None:
+    called = False
+
+    def fake_pipeline() -> object:
+        nonlocal called
+        called = True
+        return _result("ml_dataset_v1")
+
+    monkeypatch.setattr(daily_assets, "run_ml_dataset_v1_pipeline", fake_pipeline)
+
+    result = daily_assets.ml_dataset_v1(
+        dagster.build_op_context(),
+        processed_validation=_result("processed_dataset_validation"),
+        daily_features=_result("daily_features"),
+        daily_targets=_result("daily_targets"),
+    )
+
+    assert called is True
+    assert result.name == "ml_dataset_v1"
+
+
+def test_ml_dataset_asset_stops_on_failed_processed_validation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        daily_assets,
+        "run_ml_dataset_v1_pipeline",
+        lambda: pytest.fail("ml dataset pipeline should not run"),
+    )
+
+    with pytest.raises(RuntimeError, match="Upstream pipeline failed"):
+        daily_assets.ml_dataset_v1(
+            dagster.build_op_context(),
+            processed_validation=_result("processed_dataset_validation", status="fail"),
+            daily_features=_result("daily_features"),
+            daily_targets=_result("daily_targets"),
+        )

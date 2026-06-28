@@ -9,6 +9,15 @@ import type {
   FactorICResponse,
   FactorSummaryResponse,
   JobRun,
+  MLBacktestsResponse,
+  MLCandidatesResponse,
+  MLConcreteRunId,
+  MLEquityCurveResponse,
+  MLLatestCandidatesResponse,
+  MLModelMetricsResponse,
+  MLRobustnessResponse,
+  MLRunId,
+  MLSummaryResponse,
   MarketStatus,
   ResearchProgressResponse,
   ResearchNote,
@@ -85,6 +94,122 @@ export function getFactorIC(params: {
     sort: params.sort ?? "mean_rank_ic",
     direction: params.direction ?? "desc",
     rows: [],
+  });
+}
+
+export function getMLSummary(): Promise<MLSummaryResponse> {
+  return fetchJson("/api/research/ml/summary", {
+    status: "missing",
+    paths: {},
+    dataset: null,
+    walk_forward: null,
+    model_runs: [],
+    current_winner: null,
+    assumptions: {
+      target: "forward_ret_1d",
+      universe: "static_full_history_100pct_coverage",
+      evaluation: "leakage-aware walk-forward",
+      strategy: "long_top_n_equal_weight_daily_rebalanced",
+      caveat: "ML artifacts are not available yet.",
+    },
+  });
+}
+
+export function getMLModelMetrics(run: MLRunId): Promise<MLModelMetricsResponse> {
+  return fetchJson(`/api/research/ml/model-metrics?run=${encodeURIComponent(run)}`, {
+    status: "missing",
+    run,
+    rows: [],
+  });
+}
+
+export function getMLBacktests(group: MLRunId): Promise<MLBacktestsResponse> {
+  return fetchJson(`/api/research/ml/backtests?group=${encodeURIComponent(group)}`, {
+    status: "missing",
+    group,
+    rows: [],
+  });
+}
+
+export function getMLCandidates(params: {
+  run: MLConcreteRunId;
+  modelId: string;
+  topN: number;
+  limit?: number;
+}): Promise<MLCandidatesResponse> {
+  const query = new URLSearchParams({
+    run: params.run,
+    model_id: params.modelId,
+    top_n: params.topN.toString(),
+    limit: (params.limit ?? 200).toString(),
+  });
+  return fetchJson(`/api/research/ml/candidates?${query.toString()}`, {
+    status: "missing",
+    path: null,
+    run: params.run,
+    model_id: params.modelId,
+    top_n: params.topN,
+    rows: [],
+  });
+}
+
+export function getMLLatestCandidates(params: {
+  run: MLConcreteRunId;
+  topN: number;
+}): Promise<MLLatestCandidatesResponse> {
+  const query = new URLSearchParams({
+    run: params.run,
+    top_n: params.topN.toString(),
+  });
+  return fetchJson(`/api/research/ml/latest-candidates?${query.toString()}`, {
+    status: "missing",
+    path: null,
+    run: params.run,
+    top_n: params.topN,
+    prediction_date: null,
+    model_count: 0,
+    models: [],
+  });
+}
+
+export function getMLEquityCurve(params: {
+  group: MLConcreteRunId;
+  modelId: string;
+  topN: number;
+}): Promise<MLEquityCurveResponse> {
+  const query = new URLSearchParams({
+    group: params.group,
+    model_id: params.modelId,
+    top_n: params.topN.toString(),
+  });
+  return fetchJson(`/api/research/ml/equity-curve?${query.toString()}`, {
+    status: "missing",
+    path: "",
+    group: params.group,
+    model_id: params.modelId,
+    top_n: params.topN,
+    rows: [],
+  });
+}
+
+export function getMLRobustness(params: {
+  group: MLConcreteRunId;
+  modelId: string;
+  topN: number;
+}): Promise<MLRobustnessResponse> {
+  const query = new URLSearchParams({
+    group: params.group,
+    model_id: params.modelId,
+    top_n: params.topN.toString(),
+  });
+  return fetchJson(`/api/research/ml/robustness?${query.toString()}`, {
+    status: "missing",
+    group: params.group,
+    model_id: params.modelId,
+    top_n: params.topN,
+    cost_sensitivity: [],
+    top_n_comparison: [],
+    drawdown: null,
   });
 }
 

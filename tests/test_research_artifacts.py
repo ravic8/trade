@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 from trade_research.research.artifacts import ResearchArtifactReader
+from trade_research.research.ml_artifacts import MLArtifactReader
 
 
 def test_research_progress_reports_missing_artifacts(tmp_path: Path) -> None:
@@ -110,3 +111,184 @@ def test_research_factor_ic_missing_response_keeps_query_metadata(tmp_path: Path
     assert payload["sort"] == "mean_ic"
     assert payload["direction"] == "asc"
     assert payload["rows"] == []
+
+
+def test_ml_artifact_reader_summarizes_models_and_backtests(tmp_path: Path) -> None:
+    ml_path = tmp_path / "processed/ml"
+    (ml_path / "baselines_v1").mkdir(parents=True)
+    (ml_path / "backtests_v1/baselines").mkdir(parents=True)
+    (ml_path / "ml_dataset_v1_summary.json").write_text(
+        json.dumps(
+            {
+                "target_column": "forward_ret_1d",
+                "coverage_policy": "static_full_history_100pct_coverage",
+                "leakage_note": "static universe",
+                "row_count": 100,
+                "trainable_row_count": 80,
+                "symbol_count": 5,
+            }
+        )
+    )
+    (ml_path / "walk_forward_v1").mkdir()
+    (ml_path / "walk_forward_v1/walk_forward_summary.json").write_text(
+        json.dumps({"fold_count": 3})
+    )
+    (ml_path / "baselines_v1/baseline_metrics.json").write_text(
+        json.dumps(
+            {
+                "model_count": 1,
+                "prediction_row_count": 10,
+                "generated_at": "2026-06-28T00:00:00+00:00",
+                "manifest": {"fold_count": 3},
+                "models": [
+                    {
+                        "model_id": "momentum_1d",
+                        "prediction_rows": 10,
+                        "evaluated_rows": 10,
+                        "top_10_average_return": 0.01,
+                    }
+                ],
+            }
+        )
+    )
+    (ml_path / "backtests_v1/baselines/backtest_metrics.json").write_text(
+        json.dumps(
+            {
+                "model_count": 1,
+                "result_count": 1,
+                "results": [
+                    {
+                        "model_id": "momentum_1d",
+                        "top_n": 5,
+                        "day_count": 3,
+                        "total_return": 0.2,
+                    }
+                ],
+            }
+        )
+    )
+
+    payload = MLArtifactReader(tmp_path).summary()
+    metrics = MLArtifactReader(tmp_path).model_metrics()
+    backtests = MLArtifactReader(tmp_path).backtests()
+
+    assert payload["status"] == "done"
+    assert payload["current_winner"]["model_id"] == "momentum_1d"
+    assert metrics["rows"][0]["run_id"] == "baselines"
+    assert backtests["rows"][0]["total_return"] == 0.2
+
+
+def test_ml_artifact_reader_candidates_reads_prediction_parquet(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "processed/ml/baselines_v1"
+    baseline_path.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "prediction_date": "2026-01-01",
+                "instrument_key": "NSE_EQ|AAA",
+                "symbol": "AAA",
+                "model_id": "momentum_1d",
+                "rank": 1.0,
+                "score": 0.05,
+                "realized_forward_ret_1d": 0.02,
+            },
+            {
+                "prediction_date": "2026-01-01",
+                "instrument_key": "NSE_EQ|BBB",
+                "symbol": "BBB",
+                "model_id": "momentum_1d",
+                "rank": 6.0,
+                "score": 0.01,
+                "realized_forward_ret_1d": -0.01,
+            },
+        ]
+    ).to_parquet(baseline_path / "baseline_predictions.parquet", index=False)
+
+    payload = MLArtifactReader(tmp_path).candidates(model_id="momentum_1d", top_n=5)
+
+    assert payload["status"] == "done"
+    assert len(payload["rows"]) == 1
+    assert payload["rows"][0]["symbol"] == "AAA"
+
+
+def test_ml_artifact_reader_latest_candidates_groups_by_model(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "processed/ml/baselines_v1"
+    baseline_path.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "prediction_date": "2026-01-01",
+                "instrument_key": "NSE_EQ|OLD",
+                "symbol": "OLD",
+                "model_id": "momentum_1d",
+                "rank": 1.0,
+                "score": 0.9,
+                "realized_forward_ret_1d": 0.01,
+            },
+            {
+                "prediction_date": "2026-01-02",
+                "instrument_key": "NSE_EQ|AAA",
+                "symbol": "AAA",
+                "model_id": "momentum_1d",
+                "rank": 1.0,
+                "score": 0.5,
+                "realized_forward_ret_1d": None,
+            },
+            {
+                "prediction_date": "2026-01-02",
+                "instrument_key": "NSE_EQ|BBB",
+                "symbol": "BBB",
+                "model_id": "momentum_5d",
+                "rank": 1.0,
+                "score": 0.4,
+                "realized_forward_ret_1d": None,
+            },
+        ]
+    ).to_parquet(baseline_path / "baseline_predictions.parquet", index=False)
+
+    payload = MLArtifactReader(tmp_path).latest_candidates(run="baselines", top_n=1)
+
+    assert payload["status"] == "done"
+    assert payload["prediction_date"] == "2026-01-02"
+    assert payload["model_count"] == 2
+    assert {model["model_id"] for model in payload["models"]} == {"momentum_1d", "momentum_5d"}
+
+
+def test_ml_artifact_reader_robustness_computes_cost_sensitivity(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "processed/ml/baselines_v1"
+    baseline_path.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "prediction_date": "2026-01-01",
+                "instrument_key": "NSE_EQ|AAA",
+                "symbol": "AAA",
+                "model_id": "momentum_1d",
+                "rank": 1.0,
+                "score": 0.5,
+                "realized_forward_ret_1d": 0.02,
+            },
+            {
+                "prediction_date": "2026-01-02",
+                "instrument_key": "NSE_EQ|AAA",
+                "symbol": "AAA",
+                "model_id": "momentum_1d",
+                "rank": 1.0,
+                "score": 0.4,
+                "realized_forward_ret_1d": 0.01,
+            },
+        ]
+    ).to_parquet(baseline_path / "baseline_predictions.parquet", index=False)
+
+    payload = MLArtifactReader(tmp_path).robustness(
+        group="baselines",
+        model_id="momentum_1d",
+        top_n=1,
+        cost_bps_values=(0.0, 10.0),
+    )
+
+    assert payload["status"] == "done"
+    assert [row["transaction_cost_bps"] for row in payload["cost_sensitivity"]] == [0.0, 10.0]
+    zero_cost_return = payload["cost_sensitivity"][0]["total_return"]
+    ten_bps_return = payload["cost_sensitivity"][1]["total_return"]
+    assert zero_cost_return > ten_bps_return

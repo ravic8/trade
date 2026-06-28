@@ -118,6 +118,9 @@ Step 2 feature-layer design docs:
   a fresh Codex chat.
 - [Daily Pipeline Handoff](docs/daily_pipeline_handoff.md): detailed daily
   pipeline state, latest verified run ids, and retry/coverage details.
+- [ML Dataset v1 Strategy](docs/ml_dataset_v1_strategy.md): frozen contract for
+  the first leakage-aware next-day-return dataset, daily walk-forward
+  evaluation, and reporting plan.
 - [Research UI Implementation Plan](docs/research_ui_plan.md): read-only local
   research console plan for pipeline progress and factor research review.
 

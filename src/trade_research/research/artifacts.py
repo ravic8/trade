@@ -54,7 +54,88 @@ class ResearchArtifactReader:
                 ],
             ),
             self._summary_step(
-                step_id="step_2_2_factor_research",
+                step_id="step_2_2_processed_validation",
+                title="Processed Dataset Validation",
+                command="trade-research validate-processed-datasets",
+                summary_path="processed/validation/processed_dataset_validation_summary.json",
+                artifacts=[
+                    ArtifactRef("processed/validated/ohlcv_daily_validated.parquet", "parquet"),
+                    ArtifactRef(
+                        "processed/validation/processed_dataset_validation_summary.json",
+                        "json",
+                    ),
+                    ArtifactRef(
+                        "processed/validation/processed_dataset_validation_summary.md",
+                        "md",
+                    ),
+                    ArtifactRef(
+                        "processed/validation/daily_pipeline_stock_coverage.parquet",
+                        "parquet",
+                    ),
+                    ArtifactRef(
+                        "processed/validation/daily_pipeline_stock_coverage_windows.parquet",
+                        "parquet",
+                    ),
+                ],
+                timescale_tables=[],
+                notes=["Validated parquet artifacts are the canonical inputs for ML v1."],
+            ),
+            self._ml_dataset_step(),
+            self._walk_forward_step(),
+            self._model_metrics_step(
+                step_id="step_3_2_baseline_predictions",
+                title="Baseline Predictions",
+                command="trade-research run-baseline-predictions-v1",
+                metrics_path="processed/ml/baselines_v1/baseline_metrics.json",
+                artifacts=[
+                    ArtifactRef(
+                        "processed/ml/baselines_v1/baseline_predictions.parquet",
+                        "parquet",
+                    ),
+                    ArtifactRef("processed/ml/baselines_v1/baseline_metrics.json", "json"),
+                    ArtifactRef("processed/ml/baselines_v1/baseline_summary.md", "md"),
+                ],
+                notes=["Simple momentum baselines are the current bar to beat."],
+            ),
+            self._model_metrics_step(
+                step_id="step_3_3_lightgbm_predictions",
+                title="LightGBM Predictions",
+                command="trade-research run-lightgbm-predictions-v1",
+                metrics_path="processed/ml/lightgbm_v1/lightgbm_metrics.json",
+                artifacts=[
+                    ArtifactRef("processed/ml/lightgbm_v1/lightgbm_predictions.parquet", "parquet"),
+                    ArtifactRef("processed/ml/lightgbm_v1/lightgbm_metrics.json", "json"),
+                    ArtifactRef("processed/ml/lightgbm_v1/lightgbm_summary.md", "md"),
+                ],
+                notes=["Smoke-run LightGBM results are available for comparison."],
+            ),
+            self._backtest_step(
+                step_id="step_3_4_baseline_backtests",
+                title="Baseline Backtests",
+                command=(
+                    "trade-research run-prediction-backtest-v1 --predictions "
+                    "data/processed/ml/baselines_v1/baseline_predictions.parquet"
+                ),
+                metrics_path="processed/ml/backtests_v1/baselines/backtest_metrics.json",
+                artifact_dir="processed/ml/backtests_v1/baselines",
+                notes=["Long-only top-N equal-weight daily backtests with transaction costs."],
+            ),
+            self._backtest_step(
+                step_id="step_3_5_lightgbm_backtests",
+                title="LightGBM Backtests",
+                command=(
+                    "trade-research run-prediction-backtest-v1 --predictions "
+                    "data/processed/ml/lightgbm_v1/lightgbm_predictions.parquet"
+                ),
+                metrics_path="processed/ml/backtests_v1/lightgbm/backtest_metrics.json",
+                artifact_dir="processed/ml/backtests_v1/lightgbm",
+                notes=[
+                    "LightGBM backtests are shown separately because the smoke window is shorter."
+                ],
+            ),
+            self._latest_predictions_step(),
+            self._summary_step(
+                step_id="step_4_0_factor_research",
                 title="Factor Research Outputs",
                 command="trade-research build-factor-research",
                 summary_path="processed/research/factors/daily_v1_factor_research_summary.json",
@@ -309,6 +390,217 @@ class ResearchArtifactReader:
                 ]
         return self._refresh_step_status(step)
 
+    def _ml_dataset_step(self) -> dict[str, Any]:
+        step = self._base_step(
+            step_id="step_3_0_ml_dataset_v1",
+            title="ML Dataset v1",
+            command="trade-research build-ml-dataset-v1",
+            artifacts=[
+                ArtifactRef("processed/ml/ml_dataset_v1.parquet", "parquet"),
+                ArtifactRef("processed/ml/ml_dataset_v1_summary.json", "json"),
+                ArtifactRef("processed/ml/ml_dataset_v1_exclusions.csv", "csv"),
+                ArtifactRef("processed/ml/ml_dataset_v1_feature_columns.json", "json"),
+                ArtifactRef("processed/ml/ml_dataset_v1_leakage_checks.json", "json"),
+            ],
+            timescale_tables=[],
+            notes=[
+                "Target is forward_ret_1d.",
+                "Universe is static full-history 100% coverage for research v1.",
+            ],
+        )
+        summary = self._read_json(self.data_dir / "processed/ml/ml_dataset_v1_summary.json")
+        if summary is None:
+            return step
+        step["row_count"] = summary.get("row_count")
+        step["symbol_count"] = summary.get("symbol_count")
+        step["date_min"] = summary.get("date_min")
+        step["date_max"] = summary.get("date_max")
+        step["warning_count"] = 0 if summary.get("leakage_checks_passed") else 1
+        step["last_generated_at"] = summary.get("generated_at")
+        step["warning_explanation"] = (
+            None
+            if summary.get("leakage_checks_passed")
+            else "ML dataset leakage checks did not pass."
+        )
+        step["detail_items"] = [
+            {"label": "Trainable rows", "value": summary.get("trainable_row_count")},
+            {"label": "Eligible symbols", "value": summary.get("trainable_symbol_count")},
+            {"label": "Excluded symbols", "value": summary.get("excluded_symbol_count")},
+            {"label": "Feature columns", "value": summary.get("feature_column_count")},
+            {"label": "Coverage policy", "value": summary.get("coverage_policy")},
+            {"label": "Leakage checks passed", "value": summary.get("leakage_checks_passed")},
+        ]
+        return self._refresh_step_status(step)
+
+    def _latest_predictions_step(self) -> dict[str, Any]:
+        step = self._base_step(
+            step_id="step_3_6_latest_predictions",
+            title="Latest Prediction Layer",
+            command="trade-research run-latest-predictions-v1",
+            artifacts=[
+                ArtifactRef(
+                    "processed/ml/latest_predictions_v1/latest_predictions.parquet",
+                    "parquet",
+                ),
+                ArtifactRef("processed/ml/latest_predictions_v1/latest_candidates.json", "json"),
+                ArtifactRef(
+                    "processed/ml/latest_predictions_v1/latest_predictions_summary.json",
+                    "json",
+                ),
+                ArtifactRef(
+                    "processed/ml/latest_predictions_v1/latest_predictions_report.md",
+                    "md",
+                ),
+            ],
+            timescale_tables=[],
+            notes=[
+                "Current inference artifact for the latest feature-complete date.",
+                "This layer is separate from walk-forward backtest predictions.",
+            ],
+        )
+        summary = self._read_json(
+            self.data_dir / "processed/ml/latest_predictions_v1/latest_predictions_summary.json"
+        )
+        if summary is None:
+            return step
+        step["row_count"] = summary.get("prediction_row_count")
+        step["symbol_count"] = summary.get("prediction_symbol_count")
+        step["date_min"] = summary.get("prediction_date")
+        step["date_max"] = summary.get("prediction_date")
+        step["last_generated_at"] = summary.get("generated_at")
+        step["detail_items"] = [
+            {"label": "Prediction date", "value": summary.get("prediction_date")},
+            {"label": "Runs", "value": summary.get("run_count")},
+            {"label": "Models", "value": summary.get("model_count")},
+            {"label": "Prediction symbols", "value": summary.get("prediction_symbol_count")},
+            {"label": "Train end", "value": summary.get("train_end_date")},
+            {"label": "Validation end", "value": summary.get("validation_end_date")},
+        ]
+        return self._refresh_step_status(step)
+
+    def _walk_forward_step(self) -> dict[str, Any]:
+        step = self._base_step(
+            step_id="step_3_1_walk_forward_folds",
+            title="Walk-Forward Folds",
+            command="trade-research build-walk-forward-folds-v1",
+            artifacts=[
+                ArtifactRef("processed/ml/walk_forward_v1/walk_forward_folds.parquet", "parquet"),
+                ArtifactRef("processed/ml/walk_forward_v1/walk_forward_summary.json", "json"),
+            ],
+            timescale_tables=[],
+            notes=["Strict default config keeps train and validation windows before prediction."],
+        )
+        summary = self._read_json(
+            self.data_dir / "processed/ml/walk_forward_v1/walk_forward_summary.json"
+        )
+        if summary is None:
+            return step
+        step["row_count"] = summary.get("trainable_row_count")
+        step["symbol_count"] = None
+        step["date_min"] = summary.get("first_prediction_date")
+        step["date_max"] = summary.get("last_prediction_date")
+        step["warning_count"] = 0 if summary.get("leakage_checks_passed") else 1
+        step["last_generated_at"] = summary.get("generated_at")
+        step["warning_explanation"] = (
+            None
+            if summary.get("leakage_checks_passed")
+            else "Walk-forward leakage checks did not pass."
+        )
+        step["detail_items"] = [
+            {"label": "Folds", "value": summary.get("fold_count")},
+            {"label": "Candidate dates", "value": summary.get("candidate_date_count")},
+            {"label": "Skipped candidates", "value": summary.get("skipped_candidate_count")},
+            {"label": "Min train days", "value": summary.get("config", {}).get("min_train_days")},
+            {"label": "Validation days", "value": summary.get("config", {}).get("validation_days")},
+            {"label": "Leakage checks passed", "value": summary.get("leakage_checks_passed")},
+        ]
+        return self._refresh_step_status(step)
+
+    def _model_metrics_step(
+        self,
+        step_id: str,
+        title: str,
+        command: str,
+        metrics_path: str,
+        artifacts: list[ArtifactRef],
+        notes: list[str],
+    ) -> dict[str, Any]:
+        step = self._base_step(
+            step_id=step_id,
+            title=title,
+            command=command,
+            artifacts=artifacts,
+            timescale_tables=[],
+            notes=notes,
+        )
+        metrics = self._read_json(self.data_dir / metrics_path)
+        if metrics is None:
+            return step
+        best = self._best_prediction_metric(metrics)
+        step["row_count"] = metrics.get("prediction_row_count")
+        step["symbol_count"] = metrics.get("model_count")
+        step["date_min"] = metrics.get("manifest", {}).get("first_prediction_date")
+        step["date_max"] = metrics.get("manifest", {}).get("last_prediction_date")
+        step["last_generated_at"] = metrics.get("generated_at")
+        step["detail_items"] = [
+            {"label": "Models", "value": metrics.get("model_count")},
+            {"label": "Prediction rows", "value": metrics.get("prediction_row_count")},
+            {"label": "Folds", "value": metrics.get("manifest", {}).get("fold_count")},
+            {
+                "label": "Best top-10 model",
+                "value": best.get("model_id") if best else None,
+            },
+            {
+                "label": "Best top-10 avg return",
+                "value": best.get("top_10_average_return") if best else None,
+            },
+        ]
+        return self._refresh_step_status(step)
+
+    def _backtest_step(
+        self,
+        step_id: str,
+        title: str,
+        command: str,
+        metrics_path: str,
+        artifact_dir: str,
+        notes: list[str],
+    ) -> dict[str, Any]:
+        step = self._base_step(
+            step_id=step_id,
+            title=title,
+            command=command,
+            artifacts=[
+                ArtifactRef(f"{artifact_dir}/daily_portfolio_returns.csv", "csv"),
+                ArtifactRef(f"{artifact_dir}/portfolio_equity_curve.csv", "csv"),
+                ArtifactRef(f"{artifact_dir}/backtest_metrics.json", "json"),
+                ArtifactRef(f"{artifact_dir}/backtest_report.md", "md"),
+            ],
+            timescale_tables=[],
+            notes=notes,
+        )
+        metrics = self._read_json(self.data_dir / metrics_path)
+        if metrics is None:
+            return step
+        best = self._best_backtest_metric(metrics)
+        step["row_count"] = metrics.get("result_count")
+        step["symbol_count"] = metrics.get("model_count")
+        step["last_generated_at"] = metrics.get("generated_at")
+        step["detail_items"] = [
+            {"label": "Strategy", "value": metrics.get("strategy")},
+            {"label": "Models", "value": metrics.get("model_count")},
+            {"label": "Results", "value": metrics.get("result_count")},
+            {
+                "label": "Transaction cost bps",
+                "value": metrics.get("config", {}).get("transaction_cost_bps"),
+            },
+            {"label": "Best model", "value": best.get("model_id") if best else None},
+            {"label": "Best top N", "value": best.get("top_n") if best else None},
+            {"label": "Best total return", "value": best.get("total_return") if best else None},
+            {"label": "Best Sharpe", "value": best.get("sharpe_ratio") if best else None},
+        ]
+        return self._refresh_step_status(step)
+
     def _summary_step(
         self,
         step_id: str,
@@ -438,3 +730,25 @@ class ResearchArtifactReader:
             for key, label in labels.items()
             if key in summary
         ]
+
+    @staticmethod
+    def _best_prediction_metric(metrics: dict[str, Any]) -> dict[str, Any] | None:
+        rows = [
+            row
+            for row in metrics.get("models", [])
+            if row.get("top_10_average_return") is not None
+        ]
+        if not rows:
+            return None
+        return max(rows, key=lambda row: row.get("top_10_average_return") or float("-inf"))
+
+    @staticmethod
+    def _best_backtest_metric(metrics: dict[str, Any]) -> dict[str, Any] | None:
+        rows = [
+            row
+            for row in metrics.get("results", [])
+            if row.get("total_return") is not None
+        ]
+        if not rows:
+            return None
+        return max(rows, key=lambda row: row.get("total_return") or float("-inf"))
