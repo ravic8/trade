@@ -15,6 +15,7 @@ from trade_research.config import Settings, get_settings
 from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
 from trade_research.data.on_demand import run_daily_ohlcv_request
 from trade_research.data.provider_capabilities import provider_capability
+from trade_research.market_calendar import ExchangeHolidays, expected_trading_dates
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.research.ml_artifacts import MLArtifactReader
@@ -24,6 +25,7 @@ from trade_research.schemas import (
     ChatQueryRequest,
     ChatQueryResponse,
     ChatSourcesResponse,
+    DataAvailabilityResponse,
     DataCoveragePreviewRequest,
     DataCoveragePreviewResponse,
     DataPipelineHealthResponse,
@@ -154,6 +156,70 @@ def data_coverage(
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return DataCoveragePreviewResponse(**preview)
+
+
+@app.get("/api/data/availability", response_model=DataAvailabilityResponse)
+def data_availability(
+    provider: str = "upstox",
+    exchange: str = "NSE",
+    interval: str = "1d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    query: str | None = None,
+    universe_id: str | None = None,
+    coverage_status: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    sort: str = "symbol",
+) -> DataAvailabilityResponse:
+    if provider.lower() != "upstox":
+        raise HTTPException(status_code=400, detail="Only provider=upstox is supported.")
+    if exchange.upper() != "NSE":
+        raise HTTPException(status_code=400, detail="Only exchange=NSE is supported.")
+    if interval not in {"1d", "daily"}:
+        raise HTTPException(status_code=400, detail="Only interval=1d is supported.")
+    if (start_date is None) != (end_date is None):
+        raise HTTPException(
+            status_code=400,
+            detail="start_date and end_date must be supplied together.",
+        )
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+
+    try:
+        store = _store()
+        expected_rows = _expected_daily_rows(store, exchange, start_date, end_date)
+        payload = store.daily_ohlcv_availability(
+            source=provider.lower(),
+            exchange=exchange.upper(),
+            start_date=start_date,
+            end_date=end_date,
+            query_text=query,
+            universe_id=universe_id,
+            coverage_status=coverage_status,
+            expected_rows_per_symbol=expected_rows,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+    return DataAvailabilityResponse(
+        provider=provider.lower(),
+        exchange=exchange.upper(),
+        interval="1d",
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+        total=payload["total"],
+        rows=payload["rows"],
+        summary=payload["summary"],
+    )
 
 
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
@@ -664,6 +730,46 @@ def _to_data_pipeline_run_summary(row: dict) -> DataPipelineRunSummary:
         items_failed=int(row.get("items_failed") or 0),
         error_message=row.get("error_message"),
         run_metadata=row.get("run_metadata") if isinstance(row.get("run_metadata"), dict) else {},
+    )
+
+
+def _expected_daily_rows(
+    store: TimescaleStore,
+    exchange: str,
+    start_date: date | None,
+    end_date: date | None,
+) -> int:
+    if start_date is None or end_date is None:
+        return 0
+
+    holidays = _stored_exchange_holidays(store, exchange, start_date, end_date)
+    return len(expected_trading_dates(exchange, start_date, end_date, holidays=holidays))
+
+
+def _stored_exchange_holidays(
+    store: TimescaleStore,
+    exchange: str,
+    start_date: date,
+    end_date: date,
+) -> ExchangeHolidays | None:
+    closed_dates: set[date] = set()
+    early_close_dates: set[date] = set()
+    source_url = ""
+    for year in range(start_date.year, end_date.year + 1):
+        row = store.exchange_holidays(exchange, year)
+        if row is None:
+            return None
+        source_url = str(row.get("source_url") or source_url)
+        closed_dates.update(
+            date.fromisoformat(value) for value in row.get("closed_dates", [])
+        )
+        early_close_dates.update(
+            date.fromisoformat(value) for value in row.get("early_close_dates", [])
+        )
+    return ExchangeHolidays(
+        closed_dates=frozenset(closed_dates),
+        early_close_dates=frozenset(early_close_dates),
+        source_url=source_url,
     )
 
 

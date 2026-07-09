@@ -231,6 +231,49 @@ class DataCoveragePreviewResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class DataAvailabilityRow(BaseModel):
+    symbol: str
+    name: str | None = None
+    instrument_key: str
+    provider: str
+    exchange: str
+    interval: Literal["1d"] = "1d"
+    first_stored_date: date | None = None
+    latest_stored_date: date | None = None
+    stored_rows: int = Field(ge=0)
+    expected_rows: int = Field(ge=0)
+    coverage_pct: float = Field(ge=0.0)
+    missing_rows: int = Field(ge=0)
+    coverage_status: Literal["complete", "partial", "empty"]
+    last_successful_run: str | None = None
+    last_fetch_status: str | None = None
+
+
+class DataAvailabilitySummary(BaseModel):
+    symbols_total: int = Field(ge=0)
+    symbols_complete: int = Field(ge=0)
+    symbols_partial: int = Field(ge=0)
+    symbols_empty: int = Field(ge=0)
+    expected_rows: int = Field(ge=0)
+    stored_rows: int = Field(ge=0)
+    missing_rows: int = Field(ge=0)
+    estimated_provider_calls_for_missing: int = Field(ge=0)
+
+
+class DataAvailabilityResponse(BaseModel):
+    provider: str
+    exchange: str
+    interval: Literal["1d"] = "1d"
+    start_date: date | None = None
+    end_date: date | None = None
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    sort: str
+    total: int = Field(ge=0)
+    rows: list[DataAvailabilityRow] = Field(default_factory=list)
+    summary: DataAvailabilitySummary
+
+
 class DataPipelineRunSummary(BaseModel):
     id: str
     name: str

@@ -94,6 +94,64 @@ class FakeCoverageStore:
             }
         ]
 
+    def daily_ohlcv_availability(
+        self,
+        source: str = "upstox",
+        exchange: str = "NSE",
+        start_date: date | None = None,
+        end_date: date | None = None,
+        query_text: str | None = None,
+        universe_id: str | None = None,
+        coverage_status: str | None = None,
+        expected_rows_per_symbol: int = 0,
+        limit: int = 50,
+        offset: int = 0,
+        sort: str = "symbol",
+    ) -> dict:
+        assert source == "upstox"
+        assert exchange == "NSE"
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 1, 6)
+        assert query_text == "AAA"
+        assert universe_id is None
+        assert coverage_status is None
+        assert expected_rows_per_symbol == 3
+        assert limit == 25
+        assert offset == 0
+        assert sort == "-coverage_pct"
+        return {
+            "total": 1,
+            "rows": [
+                {
+                    "symbol": "AAA",
+                    "name": "AAA Limited",
+                    "instrument_key": "NSE_EQ|AAA",
+                    "provider": "upstox",
+                    "exchange": "NSE",
+                    "interval": "1d",
+                    "first_stored_date": date(2026, 1, 1),
+                    "latest_stored_date": date(2026, 1, 2),
+                    "stored_rows": 2,
+                    "expected_rows": 3,
+                    "coverage_pct": 2 / 3,
+                    "missing_rows": 1,
+                    "coverage_status": "partial",
+                    "last_successful_run": "run-1",
+                    "last_fetch_status": "fetched",
+                }
+            ],
+            "summary": {
+                "symbols_total": 1,
+                "symbols_complete": 0,
+                "symbols_partial": 1,
+                "symbols_empty": 0,
+                "expected_rows": 3,
+                "stored_rows": 2,
+                "missing_rows": 1,
+                "estimated_provider_calls_for_missing": 1,
+            },
+        }
+
 
 def _run_row() -> dict:
     return {
@@ -183,6 +241,36 @@ def test_data_coverage_get_requires_dates(monkeypatch) -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "start_date and end_date are required"
+
+
+def test_data_availability_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?start_date=2026-01-01&end_date=2026-01-06"
+            "&query=AAA&limit=25&sort=-coverage_pct"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["summary"]["missing_rows"] == 1
+    assert payload["summary"]["estimated_provider_calls_for_missing"] == 1
+    assert payload["rows"][0]["symbol"] == "AAA"
+    assert payload["rows"][0]["stored_rows"] == 2
+    assert payload["rows"][0]["expected_rows"] == 3
+    assert payload["rows"][0]["coverage_status"] == "partial"
+    assert payload["rows"][0]["last_successful_run"] == "run-1"
+
+
+def test_data_availability_requires_date_pair() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/data/availability?start_date=2026-01-01")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "start_date and end_date must be supplied together."
 
 
 def test_data_pipeline_health_endpoint(monkeypatch) -> None:
