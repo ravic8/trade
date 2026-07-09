@@ -4,6 +4,7 @@ import {
   BriefcaseBusiness,
   BrainCircuit,
   Database,
+  DatabaseZap,
   FlaskConical,
   GitBranch,
   Search,
@@ -12,6 +13,7 @@ import { NavLink, Outlet } from "react-router-dom";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity },
+  { to: "/data", label: "Data", icon: DatabaseZap },
   { to: "/screeners", label: "Screeners", icon: FlaskConical },
   { to: "/research", label: "Research", icon: Search },
   { to: "/research/progress", label: "Progress", icon: GitBranch },

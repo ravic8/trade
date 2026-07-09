@@ -70,6 +70,25 @@ class MarketCalendarError(RuntimeError):
     pass
 
 
+def expected_trading_dates(
+    exchange: str,
+    start: date,
+    end: date,
+    holidays: ExchangeHolidays | None = None,
+) -> list[date]:
+    if start > end:
+        raise ValueError("start must be on or before end")
+    _config(exchange)
+    closed_dates = holidays.closed_dates if holidays else frozenset()
+    current = start
+    dates: list[date] = []
+    while current <= end:
+        if current.weekday() < 5 and current not in closed_dates:
+            dates.append(current)
+        current += timedelta(days=1)
+    return dates
+
+
 def session_decision(
     exchange: str,
     at: datetime | None = None,

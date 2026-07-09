@@ -188,6 +188,7 @@ export function MLResearchPage() {
             run="baselines"
             loading={baselineLatestQuery.isLoading}
             predictionDate={baselineLatestQuery.data?.prediction_date ?? null}
+            targetSessionDate={baselineLatestQuery.data?.target_session_date ?? null}
             note={baselineLatestQuery.data?.note}
             models={baselineLatestQuery.data?.models ?? []}
           />
@@ -196,6 +197,7 @@ export function MLResearchPage() {
             run="lightgbm"
             loading={lightgbmLatestQuery.isLoading}
             predictionDate={lightgbmLatestQuery.data?.prediction_date ?? null}
+            targetSessionDate={lightgbmLatestQuery.data?.target_session_date ?? null}
             note={lightgbmLatestQuery.data?.note}
             models={lightgbmLatestQuery.data?.models ?? []}
           />
@@ -498,6 +500,7 @@ function LatestCandidatePanel({
   run,
   loading,
   predictionDate,
+  targetSessionDate,
   note,
   models,
 }: {
@@ -505,6 +508,7 @@ function LatestCandidatePanel({
   run: MLConcreteRunId;
   loading: boolean;
   predictionDate: string | null;
+  targetSessionDate: string | null;
   note?: string;
   models: MLLatestCandidateModel[];
 }) {
@@ -512,7 +516,13 @@ function LatestCandidatePanel({
     <div className="candidate-run-panel">
       <div className="candidate-run-header">
         <strong>{title}</strong>
-        <span>{predictionDate ? `prediction date ${predictionDate}` : "no prediction date"}</span>
+        <span>
+          {targetSessionDate
+            ? `target ${targetSessionDate}${predictionDate ? ` | feature ${predictionDate}` : ""}`
+            : predictionDate
+              ? `feature date ${predictionDate}`
+              : "no prediction date"}
+        </span>
       </div>
       {note ? <p className="candidate-note">{note}</p> : null}
       {loading ? (

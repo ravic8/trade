@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { AppShell } from "./shell/AppShell";
+import { DataPipelinePage } from "./pages/DataPipelinePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FactorResearchPage } from "./pages/FactorResearchPage";
 import { JobsPage } from "./pages/JobsPage";
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
     children: [
       { path: "/", element: <Navigate to="/dashboard" replace /> },
       { path: "/dashboard", element: <DashboardPage /> },
+      { path: "/data", element: <DataPipelinePage /> },
       { path: "/screeners", element: <ScreenersPage /> },
       { path: "/symbols/:ticker", element: <SymbolPage /> },
       { path: "/research", element: <ResearchPage /> },

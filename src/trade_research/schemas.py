@@ -152,6 +152,124 @@ class ChatFeedbackResponse(BaseModel):
     status: Literal["accepted"]
 
 
+class ProviderHistoricalCapability(BaseModel):
+    unit: Literal["minutes", "hours", "days", "weeks", "months"]
+    interval_min: int = Field(ge=1)
+    interval_max: int = Field(ge=1)
+    available_from: date
+    max_window: str | None = None
+    notes: str | None = None
+
+
+class ProviderRateLimits(BaseModel):
+    standard_api_per_second: int = Field(ge=1)
+    standard_api_per_minute: int = Field(ge=1)
+    standard_api_per_30_minutes: int = Field(ge=1)
+
+
+class ProviderCapabilityResponse(BaseModel):
+    provider: str
+    api_version: str
+    source_url: str
+    historical: list[ProviderHistoricalCapability]
+    rate_limits: ProviderRateLimits
+    notes: list[str] = Field(default_factory=list)
+
+
+class DataCoveragePreviewRequest(BaseModel):
+    provider: Literal["upstox"] = "upstox"
+    exchange: Literal["NSE"] = "NSE"
+    symbols: list[str] = Field(min_length=1, max_length=200)
+    unit: Literal["days"] = "days"
+    interval: int = Field(default=1, ge=1)
+    start_date: date
+    end_date: date
+
+
+class DataPipelineRequest(DataCoveragePreviewRequest):
+    steps: list[Literal["fetch_ohlcv", "validate_ohlcv"]] = Field(
+        default_factory=lambda: ["fetch_ohlcv", "validate_ohlcv"]
+    )
+    mode: Literal["incremental_missing_only"] = "incremental_missing_only"
+
+
+class DataPipelineHealthResponse(BaseModel):
+    provider: Literal["upstox"]
+    exchange: Literal["NSE"]
+    daily_ohlcv_enabled: bool
+    upstox_access_token_configured: bool
+    max_concurrent_fetches: int = Field(ge=1)
+    checked_at: datetime
+
+
+class DataCoveragePreviewTask(BaseModel):
+    symbol: str
+    trading_symbol: str
+    instrument_key: str
+    fetch_start: date
+    fetch_end: date
+    missing_rows: int = Field(ge=0)
+    status: Literal["queued"]
+
+
+class DataCoveragePreviewResponse(BaseModel):
+    provider: str
+    exchange: str
+    unit: str
+    interval: int
+    start_date: date
+    end_date: date
+    symbols_requested: int = Field(ge=0)
+    symbols_resolved: int = Field(ge=0)
+    unresolved_symbols: list[str] = Field(default_factory=list)
+    ambiguous_symbols: list[str] = Field(default_factory=list)
+    expected_rows: int = Field(ge=0)
+    already_present_rows: int = Field(ge=0)
+    missing_rows: int = Field(ge=0)
+    estimated_provider_calls: int = Field(ge=0)
+    tasks: list[DataCoveragePreviewTask] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DataPipelineRunSummary(BaseModel):
+    id: str
+    name: str
+    status: str
+    exchange: str
+    source: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    duration_seconds: int | None = None
+    items_requested: int = Field(ge=0)
+    items_processed: int = Field(ge=0)
+    items_succeeded: int = Field(ge=0)
+    items_failed: int = Field(ge=0)
+    error_message: str | None = None
+    run_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DailyOhlcvFetchCoverageRow(BaseModel):
+    run_id: str
+    instrument_key: str
+    symbol: str
+    source: str
+    exchange: str
+    latest_stored_date: date | None = None
+    fetch_start: date | None = None
+    fetch_end: date
+    should_fetch: bool
+    status: str
+    rows_fetched: int = Field(ge=0)
+    skip_reason: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+
+
+class DataPipelineRunDetail(BaseModel):
+    run: DataPipelineRunSummary
+    fetch_coverage: list[DailyOhlcvFetchCoverageRow] = Field(default_factory=list)
+
+
 class ToolCallSpec(BaseModel):
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)

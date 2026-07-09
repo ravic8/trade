@@ -6,6 +6,12 @@ import type {
   ChatQueryRequest,
   ChatQueryResponse,
   ChatSourcesResponse,
+  DataCoveragePreviewRequest,
+  DataCoveragePreviewResponse,
+  DataPipelineHealthResponse,
+  DataPipelineRequest,
+  DataPipelineRunDetail,
+  DataPipelineRunSummary,
   FactorICResponse,
   FactorSummaryResponse,
   JobRun,
@@ -19,6 +25,7 @@ import type {
   MLRunId,
   MLSummaryResponse,
   MarketStatus,
+  ProviderCapabilityResponse,
   ResearchProgressResponse,
   ResearchNote,
   ScreenerResult,
@@ -34,6 +41,21 @@ async function fetchJson<T>(path: string, fallback: T): Promise<T> {
   } catch {
     return fallback;
   }
+}
+
+async function strictFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    let message = `Request failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (payload.detail) message = payload.detail;
+    } catch {
+      // Keep the HTTP status fallback.
+    }
+    throw new Error(message);
+  }
+  return (await response.json()) as T;
 }
 
 export function getMarketStatus(): Promise<MarketStatus[]> {
@@ -167,6 +189,7 @@ export function getMLLatestCandidates(params: {
     run: params.run,
     top_n: params.topN,
     prediction_date: null,
+    target_session_date: null,
     model_count: 0,
     models: [],
   });
@@ -215,6 +238,42 @@ export function getMLRobustness(params: {
 
 export function getJobRuns(): Promise<JobRun[]> {
   return fetchJson("/api/jobs/latest", jobRuns);
+}
+
+export function getUpstoxProviderCapabilities(): Promise<ProviderCapabilityResponse> {
+  return strictFetchJson("/api/data/provider-capabilities/upstox");
+}
+
+export function getDataPipelineHealth(): Promise<DataPipelineHealthResponse> {
+  return strictFetchJson("/api/data/pipeline-health");
+}
+
+export function previewDataCoverage(
+  payload: DataCoveragePreviewRequest,
+): Promise<DataCoveragePreviewResponse> {
+  return strictFetchJson("/api/data/coverage/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createDataPipelineRequest(
+  payload: DataPipelineRequest,
+): Promise<DataPipelineRunDetail> {
+  return strictFetchJson("/api/data/pipeline-requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getDataPipelineRuns(): Promise<DataPipelineRunSummary[]> {
+  return strictFetchJson("/api/data/pipeline-runs");
+}
+
+export function getDataPipelineRunDetail(runId: string): Promise<DataPipelineRunDetail> {
+  return strictFetchJson(`/api/data/pipeline-runs/${encodeURIComponent(runId)}`);
 }
 
 export async function postChatQuery(payload: ChatQueryRequest): Promise<ChatQueryResponse> {

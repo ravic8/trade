@@ -47,6 +47,8 @@ class Settings(BaseSettings):
 
     polygon_api_key: str | None = None
     upstox_access_token: str | None = None
+    data_pipeline_max_concurrent_fetches: int = Field(default=1, ge=1, le=16)
+    data_pipeline_throttle_seconds: float = Field(default=0.0, ge=0, le=10)
 
     hourly_realtime_lookback_days: int = Field(default=1, ge=1, le=60)
     hourly_history_lookback_days: int = Field(default=10, ge=1, le=60)

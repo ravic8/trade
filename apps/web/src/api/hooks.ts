@@ -5,6 +5,10 @@ import {
   getChatHealth,
   getChatSources,
   getCandles,
+  createDataPipelineRequest,
+  getDataPipelineHealth,
+  getDataPipelineRunDetail,
+  getDataPipelineRuns,
   getFactorIC,
   getFactorSummary,
   getJobRuns,
@@ -19,9 +23,17 @@ import {
   getResearchProgress,
   getResearchNotes,
   getScreenerResults,
+  getUpstoxProviderCapabilities,
+  previewDataCoverage,
   postChatQuery,
 } from "./client";
-import type { ChatQueryRequest, MLConcreteRunId, MLRunId } from "./types";
+import type {
+  ChatQueryRequest,
+  DataCoveragePreviewRequest,
+  DataPipelineRequest,
+  MLConcreteRunId,
+  MLRunId,
+} from "./types";
 
 export function useMarketStatus() {
   return useQuery({ queryKey: ["market-status"], queryFn: getMarketStatus });
@@ -123,6 +135,41 @@ export function useMLRobustness(params: {
 
 export function useJobRuns() {
   return useQuery({ queryKey: ["job-runs"], queryFn: getJobRuns });
+}
+
+export function useUpstoxProviderCapabilities() {
+  return useQuery({
+    queryKey: ["data-provider-capabilities", "upstox"],
+    queryFn: getUpstoxProviderCapabilities,
+  });
+}
+
+export function useDataPipelineRuns() {
+  return useQuery({ queryKey: ["data-pipeline-runs"], queryFn: getDataPipelineRuns });
+}
+
+export function useDataPipelineHealth() {
+  return useQuery({ queryKey: ["data-pipeline-health"], queryFn: getDataPipelineHealth });
+}
+
+export function useDataPipelineRunDetail(runId: string | null) {
+  return useQuery({
+    queryKey: ["data-pipeline-run", runId],
+    queryFn: () => getDataPipelineRunDetail(runId as string),
+    enabled: Boolean(runId),
+  });
+}
+
+export function useDataCoveragePreview() {
+  return useMutation({
+    mutationFn: (payload: DataCoveragePreviewRequest) => previewDataCoverage(payload),
+  });
+}
+
+export function useCreateDataPipelineRequest() {
+  return useMutation({
+    mutationFn: (payload: DataPipelineRequest) => createDataPipelineRequest(payload),
+  });
 }
 
 export function useChatHealth() {

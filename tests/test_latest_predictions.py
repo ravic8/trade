@@ -30,6 +30,8 @@ def test_latest_predictions_scores_latest_feature_complete_date() -> None:
     assert not result.predictions.empty
     assert set(result.predictions["run_id"]) == {"baselines"}
     assert result.summary["prediction_date"] == "2026-01-08"
+    assert result.summary["target_session_date"] == "2026-01-09"
+    assert result.candidates["target_session_date"] == "2026-01-09"
     assert result.candidates["runs"][0]["models"]
 
 
@@ -56,6 +58,7 @@ def test_latest_predictions_pipeline_writes_artifacts(tmp_path: Path) -> None:
 
     assert result.status == "pass"
     assert result.metrics["prediction_date"] == "2026-01-08"
+    assert result.metrics["target_session_date"] == "2026-01-09"
     for path in result.artifacts.values():
         assert path.exists()
         assert output_dir in path.parents

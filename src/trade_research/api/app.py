@@ -1,16 +1,20 @@
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from math import cos, sin
 from time import monotonic
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
 from trade_research.api.security import ChatRateLimitMiddleware, cors_origins
 from trade_research.chat import ChatLLMClient, ChatOrchestrator, ChatPolicy, ChatToolGateway
 from trade_research.config import Settings, get_settings
+from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
+from trade_research.data.on_demand import run_daily_ohlcv_request
+from trade_research.data.provider_capabilities import provider_capability
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.research.ml_artifacts import MLArtifactReader
@@ -20,6 +24,13 @@ from trade_research.schemas import (
     ChatQueryRequest,
     ChatQueryResponse,
     ChatSourcesResponse,
+    DataCoveragePreviewRequest,
+    DataCoveragePreviewResponse,
+    DataPipelineHealthResponse,
+    DataPipelineRequest,
+    DataPipelineRunDetail,
+    DataPipelineRunSummary,
+    ProviderCapabilityResponse,
     ScreenerResult,
     SourcesPayload,
 )
@@ -57,6 +68,191 @@ async def log_request_summary(request: Request, call_next):
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "time": datetime.now(UTC).isoformat()}
+
+
+@app.get(
+    "/api/data/provider-capabilities/upstox",
+    response_model=ProviderCapabilityResponse,
+)
+def upstox_provider_capabilities() -> ProviderCapabilityResponse:
+    capability = provider_capability("upstox")
+    return ProviderCapabilityResponse(
+        provider=capability.provider,
+        api_version=capability.api_version,
+        source_url=capability.source_url,
+        historical=[
+            {
+                "unit": item.unit,
+                "interval_min": item.interval_min,
+                "interval_max": item.interval_max,
+                "available_from": item.available_from,
+                "max_window": item.max_window,
+                "notes": item.notes,
+            }
+            for item in capability.historical
+        ],
+        rate_limits={
+            "standard_api_per_second": capability.rate_limits.standard_api_per_second,
+            "standard_api_per_minute": capability.rate_limits.standard_api_per_minute,
+            "standard_api_per_30_minutes": capability.rate_limits.standard_api_per_30_minutes,
+        },
+        notes=list(capability.notes),
+    )
+
+
+@app.post("/api/data/coverage/preview", response_model=DataCoveragePreviewResponse)
+def data_coverage_preview(
+    request: DataCoveragePreviewRequest,
+) -> DataCoveragePreviewResponse:
+    try:
+        preview = build_daily_coverage_preview(
+            CoveragePreviewInput(
+                provider=request.provider,
+                exchange=request.exchange,
+                symbols=tuple(request.symbols),
+                unit=request.unit,
+                interval=request.interval,
+                start_date=request.start_date,
+                end_date=request.end_date,
+            ),
+            store=_store(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return DataCoveragePreviewResponse(**preview)
+
+
+@app.get("/api/data/coverage", response_model=DataCoveragePreviewResponse)
+def data_coverage(
+    symbols: Annotated[list[str], Query(min_length=1)],
+    provider: str = "upstox",
+    exchange: str = "NSE",
+    unit: str = "days",
+    interval: int = 1,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> DataCoveragePreviewResponse:
+    if start_date is None or end_date is None:
+        raise HTTPException(status_code=400, detail="start_date and end_date are required")
+    try:
+        preview = build_daily_coverage_preview(
+            CoveragePreviewInput(
+                provider=provider,
+                exchange=exchange,
+                symbols=tuple(symbols),
+                unit=unit,
+                interval=interval,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            store=_store(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return DataCoveragePreviewResponse(**preview)
+
+
+@app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
+def data_pipeline_health() -> DataPipelineHealthResponse:
+    settings = get_settings()
+    return DataPipelineHealthResponse(
+        provider="upstox",
+        exchange="NSE",
+        daily_ohlcv_enabled=True,
+        upstox_access_token_configured=bool(settings.upstox_access_token),
+        max_concurrent_fetches=settings.data_pipeline_max_concurrent_fetches,
+        checked_at=datetime.now(UTC),
+    )
+
+
+@app.get("/api/data/pipeline-runs", response_model=list[DataPipelineRunSummary])
+def data_pipeline_runs(
+    provider: str | None = "upstox",
+    exchange: str | None = "NSE",
+    status: str | None = None,
+    limit: int = 20,
+) -> list[DataPipelineRunSummary]:
+    try:
+        rows = _store().latest_runs(
+            limit=min(max(limit, 1), 100),
+            source=provider,
+            exchange=exchange,
+            status=status,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [_to_data_pipeline_run_summary(row) for row in rows]
+
+
+@app.get("/api/data/pipeline-runs/{run_id}", response_model=DataPipelineRunDetail)
+def data_pipeline_run_detail(run_id: str) -> DataPipelineRunDetail:
+    try:
+        store = _store()
+        row = store.ingestion_run(run_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Pipeline run not found")
+        coverage = store.daily_ohlcv_fetch_coverage_for_run(
+            run_id,
+            source=row["source"],
+            exchange=row["exchange"],
+        )
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return DataPipelineRunDetail(
+        run=_to_data_pipeline_run_summary(row),
+        fetch_coverage=coverage,
+    )
+
+
+@app.post("/api/data/pipeline-requests", response_model=DataPipelineRunDetail)
+def create_data_pipeline_request(request: DataPipelineRequest) -> DataPipelineRunDetail:
+    if set(request.steps) != {"fetch_ohlcv", "validate_ohlcv"}:
+        raise HTTPException(
+            status_code=400,
+            detail="MVP data pipeline requests must include fetch_ohlcv and validate_ohlcv.",
+        )
+    settings = get_settings()
+    try:
+        store = _store()
+        result = run_daily_ohlcv_request(
+            CoveragePreviewInput(
+                provider=request.provider,
+                exchange=request.exchange,
+                symbols=tuple(request.symbols),
+                unit=request.unit,
+                interval=request.interval,
+                start_date=request.start_date,
+                end_date=request.end_date,
+            ),
+            store=store,
+            access_token=settings.upstox_access_token,
+            throttle_seconds=settings.data_pipeline_throttle_seconds,
+            max_concurrent_fetches=settings.data_pipeline_max_concurrent_fetches,
+        )
+        row = store.ingestion_run(result.run_id)
+        if row is None:
+            raise HTTPException(status_code=500, detail="Pipeline run was not persisted")
+        coverage = store.daily_ohlcv_fetch_coverage_for_run(
+            result.run_id,
+            source=row["source"],
+            exchange=row["exchange"],
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return DataPipelineRunDetail(
+        run=_to_data_pipeline_run_summary(row),
+        fetch_coverage=coverage,
+    )
 
 
 @app.post("/api/chat/query", response_model=ChatQueryResponse)
@@ -450,6 +646,25 @@ def latest_jobs() -> list[dict]:
             "itemsProcessed": 128,
         },
     ]
+
+
+def _to_data_pipeline_run_summary(row: dict) -> DataPipelineRunSummary:
+    return DataPipelineRunSummary(
+        id=str(row["run_id"]),
+        name=str(row["job_name"]),
+        status=str(row["status"]),
+        exchange=str(row["exchange"]),
+        source=str(row["source"]),
+        started_at=row["started_at"],
+        finished_at=row.get("finished_at"),
+        duration_seconds=_duration_seconds(row["started_at"], row.get("finished_at")),
+        items_requested=int(row.get("items_requested") or 0),
+        items_processed=int(row.get("items_processed") or 0),
+        items_succeeded=int(row.get("items_succeeded") or 0),
+        items_failed=int(row.get("items_failed") or 0),
+        error_message=row.get("error_message"),
+        run_metadata=row.get("run_metadata") if isinstance(row.get("run_metadata"), dict) else {},
+    )
 
 
 def _to_screener_result(row: dict) -> dict:

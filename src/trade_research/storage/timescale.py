@@ -1334,6 +1334,59 @@ class TimescaleStore:
             if row["latest_date"] is not None
         }
 
+    def resolve_provider_instruments(
+        self,
+        symbols: list[str],
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> list[dict[str, Any]]:
+        normalized_symbols = sorted(
+            {symbol.strip().upper() for symbol in symbols if symbol.strip()}
+        )
+        if not normalized_symbols:
+            return []
+        exchange_upper = exchange.upper()
+        query = (
+            provider_instruments_table.select()
+            .where(provider_instruments_table.c.source == source)
+            .where(provider_instruments_table.c.active.is_(True))
+            .where(provider_instruments_table.c.trading_symbol.in_(normalized_symbols))
+            .where(
+                (provider_instruments_table.c.exchange == exchange_upper)
+                | (provider_instruments_table.c.segment == f"{exchange_upper}_EQ")
+            )
+            .order_by(provider_instruments_table.c.trading_symbol)
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def daily_ohlcv_dates_by_instrument(
+        self,
+        instrument_keys: list[str],
+        start_date: date,
+        end_date: date,
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> dict[str, set[date]]:
+        if not instrument_keys:
+            return {}
+        query = (
+            select(ohlcv_daily_table.c.instrument_key, ohlcv_daily_table.c.date)
+            .where(ohlcv_daily_table.c.source == source)
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.instrument_key.in_(instrument_keys))
+            .where(ohlcv_daily_table.c.date >= start_date)
+            .where(ohlcv_daily_table.c.date <= end_date)
+            .order_by(ohlcv_daily_table.c.instrument_key, ohlcv_daily_table.c.date)
+        )
+        dates_by_key: dict[str, set[date]] = {key: set() for key in instrument_keys}
+        with self.engine.begin() as connection:
+            rows = connection.execute(query).all()
+        for instrument_key, candle_date in rows:
+            if candle_date is not None:
+                dates_by_key.setdefault(str(instrument_key), set()).add(candle_date)
+        return dates_by_key
+
     def daily_ohlcv_frame(
         self,
         exchange: str = "NSE",
@@ -1679,12 +1732,53 @@ class TimescaleStore:
                 )
             )
 
-    def latest_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+    def latest_runs(
+        self,
+        limit: int = 20,
+        source: str | None = None,
+        exchange: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
         query = (
             ingestion_runs_table.select()
             .order_by(ingestion_runs_table.c.started_at.desc())
             .limit(limit)
         )
+        if source:
+            query = query.where(ingestion_runs_table.c.source == source)
+        if exchange:
+            query = query.where(ingestion_runs_table.c.exchange == exchange.upper())
+        if status:
+            query = query.where(ingestion_runs_table.c.status == status)
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def ingestion_run(self, run_id: str) -> dict[str, Any] | None:
+        query = ingestion_runs_table.select().where(ingestion_runs_table.c.run_id == run_id)
+        with self.engine.begin() as connection:
+            row = connection.execute(query).mappings().first()
+        return dict(row) if row else None
+
+    def daily_ohlcv_fetch_coverage_for_run(
+        self,
+        run_id: str,
+        source: str | None = None,
+        exchange: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = (
+            daily_ohlcv_fetch_coverage_table.select()
+            .where(daily_ohlcv_fetch_coverage_table.c.run_id == run_id)
+            .order_by(
+                daily_ohlcv_fetch_coverage_table.c.status,
+                daily_ohlcv_fetch_coverage_table.c.symbol,
+            )
+        )
+        if source:
+            query = query.where(daily_ohlcv_fetch_coverage_table.c.source == source)
+        if exchange:
+            query = query.where(
+                daily_ohlcv_fetch_coverage_table.c.exchange == exchange.upper()
+            )
         with self.engine.begin() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 

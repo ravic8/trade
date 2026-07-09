@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -37,6 +37,7 @@ class LatestPredictionConfig:
     include_lightgbm: bool = True
     lightgbm_n_estimators: int = 80
     lightgbm_n_jobs: int = 1
+    target_session_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -70,8 +71,9 @@ def run_latest_predictions(
 
     predictions = pd.concat(frames, ignore_index=True) if frames else _empty_predictions()
     predictions = predictions.sort_values(["run_id", "model_id", "rank"]).reset_index(drop=True)
-    candidates = _candidate_payload(predictions, cfg, prediction_date)
-    summary = _summary(predictions, candidates, fold, cfg)
+    target_session_date = cfg.target_session_date or _next_weekday(prediction_date)
+    candidates = _candidate_payload(predictions, cfg, prediction_date, target_session_date)
+    summary = _summary(predictions, candidates, fold, cfg, target_session_date)
     return LatestPredictionRun(
         predictions=predictions,
         candidates=candidates,
@@ -152,6 +154,7 @@ def _candidate_payload(
     predictions: pd.DataFrame,
     config: LatestPredictionConfig,
     prediction_date: date,
+    target_session_date: date,
 ) -> dict[str, Any]:
     runs = []
     for run_id, run_group in predictions.groupby("run_id", sort=True):
@@ -171,6 +174,7 @@ def _candidate_payload(
         "artifact_name": "latest_predictions_v1_candidates",
         "generated_at": datetime.now(UTC).isoformat(),
         "prediction_date": prediction_date.isoformat(),
+        "target_session_date": target_session_date.isoformat(),
         "target_column": config.target_column,
         "top_n_values": list(config.top_n_values),
         "runs": runs,
@@ -205,11 +209,13 @@ def _summary(
     candidates: dict[str, Any],
     fold,
     config: LatestPredictionConfig,
+    target_session_date: date,
 ) -> dict[str, Any]:
     return {
         "artifact_name": "latest_predictions_v1",
         "generated_at": datetime.now(UTC).isoformat(),
         "prediction_date": fold.prediction_date.isoformat(),
+        "target_session_date": target_session_date.isoformat(),
         "target_column": config.target_column,
         "prediction_row_count": int(len(predictions)),
         "run_count": int(predictions["run_id"].nunique()) if not predictions.empty else 0,
@@ -237,7 +243,8 @@ def _summary_markdown(summary: dict[str, Any], candidates: dict[str, Any]) -> st
         "# Latest Predictions v1",
         "",
         f"Generated at: `{summary['generated_at']}`",
-        f"Prediction date: `{summary['prediction_date']}`",
+        f"Feature date: `{summary['prediction_date']}`",
+        f"Target session: `{summary['target_session_date']}`",
         f"Prediction rows: `{summary['prediction_row_count']}`",
         f"Models: `{summary['model_count']}`",
         "",
@@ -253,6 +260,13 @@ def _summary_markdown(summary: dict[str, Any], candidates: dict[str, Any]) -> st
             lines.append(f"| {run['run_id']} | {model['model_id']} | {symbols} |")
     lines.append("")
     return "\n".join(lines)
+
+
+def _next_weekday(value: date) -> date:
+    next_date = value + timedelta(days=1)
+    while next_date.weekday() >= 5:
+        next_date += timedelta(days=1)
+    return next_date
 
 
 def _empty_predictions() -> pd.DataFrame:

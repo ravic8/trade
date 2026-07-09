@@ -971,17 +971,32 @@ def run_latest_predictions_v1_command(
         int,
         typer.Option(min=1, help="LightGBM estimators for latest prediction models."),
     ] = 80,
+    target_session_date: Annotated[
+        str | None,
+        typer.Option(
+            help=(
+                "Session date these latest predictions are intended for, in YYYY-MM-DD. "
+                "Defaults to the next weekday after the feature date."
+            ),
+        ),
+    ] = None,
 ) -> None:
     config = LatestPredictionConfig(
         min_train_days=min_train_days,
         validation_days=validation_days,
         include_lightgbm=include_lightgbm,
         lightgbm_n_estimators=lightgbm_n_estimators,
+        target_session_date=(
+            _parse_cli_date(target_session_date, "--target-session-date")
+            if target_session_date
+            else None
+        ),
     )
     result = run_latest_predictions_v1_pipeline(config=config)
     console.print(
         "Latest predictions v1: "
         f"{result.status} | date={result.metrics['prediction_date']} | "
+        f"target_session={result.metrics['target_session_date']} | "
         f"rows={result.metrics['prediction_row_count']} | "
         f"models={result.metrics['model_count']}"
     )

@@ -48,6 +48,120 @@ export type JobRun = {
   itemsProcessed: number;
 };
 
+export type ProviderHistoricalCapability = {
+  unit: "minutes" | "hours" | "days" | "weeks" | "months";
+  interval_min: number;
+  interval_max: number;
+  available_from: string;
+  max_window: string | null;
+  notes?: string | null;
+};
+
+export type ProviderCapabilityResponse = {
+  provider: string;
+  api_version: string;
+  source_url: string;
+  historical: ProviderHistoricalCapability[];
+  rate_limits: {
+    standard_api_per_second: number;
+    standard_api_per_minute: number;
+    standard_api_per_30_minutes: number;
+  };
+  notes: string[];
+};
+
+export type DataCoveragePreviewRequest = {
+  provider: "upstox";
+  exchange: "NSE";
+  symbols: string[];
+  unit: "days";
+  interval: number;
+  start_date: string;
+  end_date: string;
+};
+
+export type DataPipelineRequest = DataCoveragePreviewRequest & {
+  steps: ("fetch_ohlcv" | "validate_ohlcv")[];
+  mode: "incremental_missing_only";
+};
+
+export type DataPipelineHealthResponse = {
+  provider: "upstox";
+  exchange: "NSE";
+  daily_ohlcv_enabled: boolean;
+  upstox_access_token_configured: boolean;
+  max_concurrent_fetches: number;
+  checked_at: string;
+};
+
+export type DataCoveragePreviewTask = {
+  symbol: string;
+  trading_symbol: string;
+  instrument_key: string;
+  fetch_start: string;
+  fetch_end: string;
+  missing_rows: number;
+  status: "queued";
+};
+
+export type DataCoveragePreviewResponse = {
+  provider: string;
+  exchange: string;
+  unit: string;
+  interval: number;
+  start_date: string;
+  end_date: string;
+  symbols_requested: number;
+  symbols_resolved: number;
+  unresolved_symbols: string[];
+  ambiguous_symbols: string[];
+  expected_rows: number;
+  already_present_rows: number;
+  missing_rows: number;
+  estimated_provider_calls: number;
+  tasks: DataCoveragePreviewTask[];
+  warnings: string[];
+};
+
+export type DataPipelineRunSummary = {
+  id: string;
+  name: string;
+  status: string;
+  exchange: string;
+  source: string;
+  started_at: string;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  items_requested: number;
+  items_processed: number;
+  items_succeeded: number;
+  items_failed: number;
+  error_message: string | null;
+  run_metadata: Record<string, unknown>;
+};
+
+export type DailyOhlcvFetchCoverageRow = {
+  run_id: string;
+  instrument_key: string;
+  symbol: string;
+  source: string;
+  exchange: string;
+  latest_stored_date: string | null;
+  fetch_start: string | null;
+  fetch_end: string;
+  should_fetch: boolean;
+  status: string;
+  rows_fetched: number;
+  skip_reason: string | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+export type DataPipelineRunDetail = {
+  run: DataPipelineRunSummary;
+  fetch_coverage: DailyOhlcvFetchCoverageRow[];
+};
+
 export type ChatExchange = "NSE" | "TSX" | "BOTH";
 export type ChatQualityBadge = "complete" | "partial" | "stale";
 export type ChatCitationType = "timescale_query" | "qdrant_chunk";
@@ -371,6 +485,7 @@ export type MLLatestCandidatesResponse = {
   run: MLConcreteRunId;
   top_n: number;
   prediction_date: string | null;
+  target_session_date: string | null;
   model_count: number;
   models: MLLatestCandidateModel[];
   note?: string;

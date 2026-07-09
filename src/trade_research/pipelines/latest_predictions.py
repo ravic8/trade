@@ -71,6 +71,7 @@ def run_latest_predictions_v1_pipeline(
             "model_count": result.summary["model_count"],
             "run_count": result.summary["run_count"],
             "prediction_date": result.summary["prediction_date"],
+            "target_session_date": result.summary["target_session_date"],
         },
         warnings=warnings,
     )

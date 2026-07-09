@@ -209,6 +209,7 @@ class MLArtifactReader:
             "run": run,
             "top_n": top_n,
             "prediction_date": latest_date.isoformat() if pd.notna(latest_date) else None,
+            "target_session_date": None,
             "model_count": len(models),
             "models": models,
             "note": (
@@ -244,6 +245,7 @@ class MLArtifactReader:
             "run": run,
             "top_n": top_n,
             "prediction_date": payload.get("prediction_date"),
+            "target_session_date": payload.get("target_session_date"),
             "model_count": len(models),
             "models": models,
             "note": payload.get("note"),

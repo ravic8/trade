@@ -871,6 +871,163 @@ tbody tr:hover {
   color: #9f2f29;
 }
 
+.data-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.data-request-form {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.data-request-form label {
+  display: grid;
+  gap: 6px;
+  color: #43545d;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.data-request-form input,
+.data-request-form textarea {
+  width: 100%;
+  border: 1px solid #cfd9de;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #21313a;
+  padding: 9px 10px;
+}
+
+.data-request-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.icon-button.primary {
+  border-color: #0f684a;
+  background: #0f684a;
+  color: #ffffff;
+}
+
+.icon-button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.form-error {
+  margin: 0;
+  border-left: 3px solid #9f2f29;
+  color: #8b2823;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  padding-left: 8px;
+}
+
+.safety-box {
+  border: 1px solid #dfe6e9;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.safety-box.ready {
+  background: #f2faf6;
+  border-color: #b7dccb;
+  color: #0f684a;
+}
+
+.safety-box.warning {
+  background: #fff8e8;
+  border-color: #ead29a;
+  color: #6f4a00;
+}
+
+.safety-box strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.safety-box ul,
+.warning-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.safety-box li,
+.warning-list li {
+  line-height: 1.45;
+}
+
+.warning-list {
+  color: #6f4a00;
+  padding-bottom: 14px;
+  padding-top: 14px;
+}
+
+.provider-limits-panel svg {
+  color: #0f684a;
+}
+
+.limits-list {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.limits-list div {
+  min-width: 0;
+  border: 1px solid #e8eef1;
+  border-radius: 8px;
+  background: #fbfcfc;
+  padding: 11px;
+}
+
+.limits-list span,
+.limits-list small,
+.limits-list strong {
+  display: block;
+}
+
+.limits-list span {
+  color: #60717a;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.limits-list strong {
+  margin-top: 5px;
+  color: #25363e;
+}
+
+.limits-list small {
+  margin-top: 4px;
+  color: #60717a;
+}
+
+.selected-row {
+  background: #edf6f1;
+}
+
+.data-detail-grid {
+  padding: 16px;
+}
+
 .chat-panel {
   padding-bottom: 16px;
 }

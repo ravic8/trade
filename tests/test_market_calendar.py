@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from trade_research.market_calendar import (
     ExchangeHolidays,
+    expected_trading_dates,
     fetch_exchange_holidays,
     parse_tsx_holidays,
     session_decision,
@@ -28,6 +29,27 @@ def test_parse_tsx_official_calendar_section_marks_christmas_eve_early_close() -
     assert datetime(2026, 12, 25).date() in holidays.closed_dates
     assert datetime(2026, 12, 24).date() in holidays.early_close_dates
     assert datetime(2026, 5, 25).date() not in holidays.closed_dates
+
+
+def test_expected_trading_dates_skip_weekends_and_holidays() -> None:
+    holidays = ExchangeHolidays(
+        closed_dates=frozenset({datetime(2026, 1, 5).date()}),
+        early_close_dates=frozenset(),
+        source_url="test",
+    )
+
+    dates = expected_trading_dates(
+        "NSE",
+        datetime(2026, 1, 1).date(),
+        datetime(2026, 1, 6).date(),
+        holidays=holidays,
+    )
+
+    assert dates == [
+        datetime(2026, 1, 1).date(),
+        datetime(2026, 1, 2).date(),
+        datetime(2026, 1, 6).date(),
+    ]
 
 
 def test_session_decision_skips_exchange_holiday(monkeypatch) -> None:
