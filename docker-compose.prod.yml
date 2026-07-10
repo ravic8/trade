@@ -1,0 +1,161 @@
+name: trade-prod
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "127.0.0.1:${PROD_WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      APP_ENV: production
+      DATA_DIR: /app/data
+      DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
+      QDRANT_URL: http://qdrant:6333
+      API_CORS_ORIGINS: ${PROD_API_CORS_ORIGINS:-http://localhost:8080}
+      CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR: ${PROD_CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR:-true}
+      UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
+      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${PROD_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      GEMINI_API_KEY: ${PROD_GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${PROD_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      QDRANT_API_KEY: ${PROD_QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${PROD_QDRANT_COLLECTION:-market_research_documents}
+      APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
+      ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
+      ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
+      CHAT_ENABLED: ${PROD_CHAT_ENABLED:-true}
+      CHAT_STRICT_CITATION_REQUIRED: ${PROD_CHAT_STRICT_CITATION_REQUIRED:-true}
+      CHAT_USE_LLM_ANSWER: ${PROD_CHAT_USE_LLM_ANSWER:-true}
+      CHAT_ANSWER_MODEL: ${PROD_CHAT_ANSWER_MODEL:-gemini-2.5-flash}
+      CHAT_PLANNER_MODEL: ${PROD_CHAT_PLANNER_MODEL:-gemini-2.5-flash}
+      CHAT_RATE_LIMIT_ENABLED: ${PROD_CHAT_RATE_LIMIT_ENABLED:-true}
+      CHAT_RATE_LIMIT_REQUESTS: ${PROD_CHAT_RATE_LIMIT_REQUESTS:-12}
+      CHAT_RATE_LIMIT_WINDOW_SECONDS: ${PROD_CHAT_RATE_LIMIT_WINDOW_SECONDS:-60}
+      DATA_PIPELINE_MAX_CONCURRENT_FETCHES: ${PROD_DATA_PIPELINE_MAX_CONCURRENT_FETCHES:-1}
+      DATA_PIPELINE_THROTTLE_SECONDS: ${PROD_DATA_PIPELINE_THROTTLE_SECONDS:-0.25}
+    volumes:
+      - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
+      - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  dagster-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["dagster-daemon", "run", "-w", "/app/dagster_home/workspace.yaml"]
+    environment:
+      APP_ENV: production
+      DATA_DIR: /app/data
+      DAGSTER_HOME: /app/dagster_home
+      DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
+      QDRANT_URL: http://qdrant:6333
+      UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
+      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${PROD_GEMINI_API_KEY:-}
+      APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
+      ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
+      ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
+      DATA_PIPELINE_MAX_CONCURRENT_FETCHES: ${PROD_DATA_PIPELINE_MAX_CONCURRENT_FETCHES:-1}
+      DATA_PIPELINE_THROTTLE_SECONDS: ${PROD_DATA_PIPELINE_THROTTLE_SECONDS:-0.25}
+    volumes:
+      - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
+      - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
+      - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+  dagster-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command:
+      [
+        "dagster-webserver",
+        "-h",
+        "0.0.0.0",
+        "-p",
+        "3000",
+        "-w",
+        "/app/dagster_home/workspace.yaml",
+      ]
+    profiles:
+      - admin
+    environment:
+      APP_ENV: production
+      DATA_DIR: /app/data
+      DAGSTER_HOME: /app/dagster_home
+      DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
+      QDRANT_URL: http://qdrant:6333
+      UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
+      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${PROD_GEMINI_API_KEY:-}
+      APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
+      ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
+      ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
+    ports:
+      - "127.0.0.1:${PROD_DAGSTER_WEB_PORT:-3000}:3000"
+    volumes:
+      - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
+      - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
+      - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_DB: ${PROD_POSTGRES_DB:-trade_research}
+      POSTGRES_USER: ${PROD_POSTGRES_USER:-trade}
+      POSTGRES_PASSWORD: ${PROD_POSTGRES_PASSWORD:-trade_prod_change_me}
+    volumes:
+      - ${PROD_POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PROD_POSTGRES_USER:-trade} -d ${PROD_POSTGRES_DB:-trade_research}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${PROD_REDIS_DATA_DIR:-./data/redis}:/data
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - ${PROD_QDRANT_DATA_DIR:-./data/qdrant}:/qdrant/storage
+    restart: unless-stopped

@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     chat_rate_limit_requests: int = Field(default=12, ge=1, le=1000)
     chat_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     chat_rate_limit_trust_forwarded_for: bool = False
+    admin_emails: str = ""
+    admin_email_headers: str = (
+        "cf-access-authenticated-user-email,"
+        "x-forwarded-email,"
+        "x-authenticated-user-email"
+    )
+    app_secret_key: str | None = None
 
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
 

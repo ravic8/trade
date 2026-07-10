@@ -7,6 +7,7 @@ import {
   DatabaseZap,
   FlaskConical,
   GitBranch,
+  Settings,
   Search,
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
@@ -20,6 +21,7 @@ const navItems = [
   { to: "/research/factors", label: "Factors", icon: BarChart3 },
   { to: "/research/models", label: "Models", icon: BrainCircuit },
   { to: "/jobs", label: "Jobs", icon: Database },
+  { to: "/settings/providers", label: "Settings", icon: Settings },
 ];
 
 export function AppShell() {

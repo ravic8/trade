@@ -5,17 +5,32 @@ from math import cos, sin
 from time import monotonic
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
-from trade_research.api.security import ChatRateLimitMiddleware, cors_origins
+from trade_research.api.security import (
+    ChatRateLimitMiddleware,
+    cors_origins,
+    require_admin_request,
+)
 from trade_research.chat import ChatLLMClient, ChatOrchestrator, ChatPolicy, ChatToolGateway
 from trade_research.config import Settings, get_settings
+from trade_research.credentials import (
+    CredentialEncryptionError,
+    encrypt_secret,
+    provider_credential_status,
+    resolve_provider_token,
+)
 from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
 from trade_research.data.on_demand import run_daily_ohlcv_request
 from trade_research.data.provider_capabilities import provider_capability
-from trade_research.market_calendar import ExchangeHolidays, expected_trading_dates
+from trade_research.data.upstox import validate_upstox_access_token
+from trade_research.market_calendar import (
+    ExchangeHolidays,
+    expected_trading_dates,
+    fetch_exchange_holidays,
+)
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.research.ml_artifacts import MLArtifactReader
@@ -28,11 +43,18 @@ from trade_research.schemas import (
     DataAvailabilityResponse,
     DataCoveragePreviewRequest,
     DataCoveragePreviewResponse,
+    DataInstrumentSearchRow,
     DataPipelineHealthResponse,
     DataPipelineRequest,
     DataPipelineRunDetail,
     DataPipelineRunSummary,
+    DataUniverseMemberRow,
+    DataUniverseRow,
     ProviderCapabilityResponse,
+    ProviderCredentialStatusResponse,
+    ProviderCredentialTestRequest,
+    ProviderCredentialTestResponse,
+    ProviderCredentialTokenRequest,
     ScreenerResult,
     SourcesPayload,
 )
@@ -51,6 +73,10 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.add_middleware(ChatRateLimitMiddleware, settings_getter=get_settings)
+
+
+def _require_admin(request: Request) -> str:
+    return require_admin_request(request, get_settings())
 
 
 @app.middleware("http")
@@ -102,11 +128,101 @@ def upstox_provider_capabilities() -> ProviderCapabilityResponse:
     )
 
 
+@app.get(
+    "/api/admin/provider-credentials/upstox/status",
+    response_model=ProviderCredentialStatusResponse,
+)
+def upstox_credential_status(
+    _admin_email: Annotated[str, Depends(_require_admin)],
+) -> ProviderCredentialStatusResponse:
+    settings = get_settings()
+    try:
+        status = provider_credential_status(
+            _initialized_store(),
+            provider="upstox",
+            fallback_token=settings.upstox_access_token,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return ProviderCredentialStatusResponse(**status.__dict__)
+
+
+@app.post(
+    "/api/admin/provider-credentials/upstox/test",
+    response_model=ProviderCredentialTestResponse,
+)
+def test_upstox_credential(
+    request: ProviderCredentialTestRequest,
+    _admin_email: Annotated[str, Depends(_require_admin)],
+) -> ProviderCredentialTestResponse:
+    settings = get_settings()
+    try:
+        token = request.access_token or _stored_upstox_access_token(_initialized_store(), settings)
+    except CredentialEncryptionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    if not token:
+        raise HTTPException(status_code=400, detail="No Upstox access token is configured.")
+
+    valid, message = validate_upstox_access_token(token)
+    return ProviderCredentialTestResponse(
+        provider="upstox",
+        valid=valid,
+        checked_at=datetime.now(UTC),
+        message=message,
+    )
+
+
+@app.post(
+    "/api/admin/provider-credentials/upstox/token",
+    response_model=ProviderCredentialStatusResponse,
+)
+def save_upstox_credential(
+    request: ProviderCredentialTokenRequest,
+    admin_email: Annotated[str, Depends(_require_admin)],
+) -> ProviderCredentialStatusResponse:
+    settings = get_settings()
+    checked_at = None
+    validation_status = "skipped"
+    validation_message = "Validation skipped."
+    if request.validate_token:
+        valid, validation_message = validate_upstox_access_token(request.access_token)
+        checked_at = datetime.now(UTC)
+        validation_status = "valid" if valid else "invalid"
+        if not valid:
+            raise HTTPException(status_code=400, detail=validation_message)
+
+    try:
+        store = _initialized_store()
+        store.upsert_provider_credential(
+            provider="upstox",
+            credential_type="access_token",
+            encrypted_value=encrypt_secret(request.access_token, settings.app_secret_key),
+            updated_by=admin_email,
+            validation_status=validation_status,
+            validation_message=validation_message,
+            last_validated_at=checked_at,
+        )
+        status = provider_credential_status(
+            store,
+            provider="upstox",
+            fallback_token=settings.upstox_access_token,
+        )
+    except CredentialEncryptionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return ProviderCredentialStatusResponse(**status.__dict__)
+
+
 @app.post("/api/data/coverage/preview", response_model=DataCoveragePreviewResponse)
 def data_coverage_preview(
     request: DataCoveragePreviewRequest,
 ) -> DataCoveragePreviewResponse:
     try:
+        store = _store()
+        _ensure_exchange_holidays(store, request.exchange, request.start_date, request.end_date)
         preview = build_daily_coverage_preview(
             CoveragePreviewInput(
                 provider=request.provider,
@@ -117,7 +233,7 @@ def data_coverage_preview(
                 start_date=request.start_date,
                 end_date=request.end_date,
             ),
-            store=_store(),
+            store=store,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -139,6 +255,8 @@ def data_coverage(
     if start_date is None or end_date is None:
         raise HTTPException(status_code=400, detail="start_date and end_date are required")
     try:
+        store = _store()
+        _ensure_exchange_holidays(store, exchange, start_date, end_date)
         preview = build_daily_coverage_preview(
             CoveragePreviewInput(
                 provider=provider,
@@ -149,7 +267,7 @@ def data_coverage(
                 start_date=start_date,
                 end_date=end_date,
             ),
-            store=_store(),
+            store=store,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -188,6 +306,8 @@ def data_availability(
 
     try:
         store = _store()
+        if start_date and end_date:
+            _ensure_exchange_holidays(store, exchange, start_date, end_date)
         expected_rows = _expected_daily_rows(store, exchange, start_date, end_date)
         payload = store.daily_ohlcv_availability(
             source=provider.lower(),
@@ -222,14 +342,79 @@ def data_availability(
     )
 
 
+@app.get("/api/data/instruments/search", response_model=list[DataInstrumentSearchRow])
+def data_instruments_search(
+    query: Annotated[str, Query(min_length=1, max_length=80)],
+    provider: str = "upstox",
+    exchange: str = "NSE",
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+) -> list[DataInstrumentSearchRow]:
+    if provider.lower() != "upstox":
+        raise HTTPException(status_code=400, detail="Only provider=upstox is supported.")
+    if exchange.upper() != "NSE":
+        raise HTTPException(status_code=400, detail="Only exchange=NSE is supported.")
+    try:
+        rows = _store().search_provider_instruments(
+            query_text=query,
+            source=provider.lower(),
+            exchange=exchange.upper(),
+            limit=limit,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [DataInstrumentSearchRow(**row) for row in rows]
+
+
+@app.get("/api/data/universes", response_model=list[DataUniverseRow])
+def data_universes(
+    exchange: str = "NSE",
+    source: str | None = None,
+) -> list[DataUniverseRow]:
+    if exchange.upper() != "NSE":
+        raise HTTPException(status_code=400, detail="Only exchange=NSE is supported.")
+    try:
+        rows = _store().tradable_universes(exchange=exchange.upper(), source=source)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [DataUniverseRow(**row) for row in rows]
+
+
+@app.get(
+    "/api/data/universes/{universe_id}/members",
+    response_model=list[DataUniverseMemberRow],
+)
+def data_universe_members(
+    universe_id: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 500,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[DataUniverseMemberRow]:
+    try:
+        rows = _store().tradable_universe_members(
+            universe_id=universe_id,
+            limit=limit,
+            offset=offset,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [DataUniverseMemberRow(**row) for row in rows]
+
+
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
 def data_pipeline_health() -> DataPipelineHealthResponse:
     settings = get_settings()
+    try:
+        token_configured = provider_credential_status(
+            _store(),
+            provider="upstox",
+            fallback_token=settings.upstox_access_token,
+        ).configured
+    except SQLAlchemyError:
+        token_configured = bool(settings.upstox_access_token)
     return DataPipelineHealthResponse(
         provider="upstox",
         exchange="NSE",
         daily_ohlcv_enabled=True,
-        upstox_access_token_configured=bool(settings.upstox_access_token),
+        upstox_access_token_configured=token_configured,
         max_concurrent_fetches=settings.data_pipeline_max_concurrent_fetches,
         checked_at=datetime.now(UTC),
     )
@@ -286,6 +471,8 @@ def create_data_pipeline_request(request: DataPipelineRequest) -> DataPipelineRu
     settings = get_settings()
     try:
         store = _store()
+        _ensure_exchange_holidays(store, request.exchange, request.start_date, request.end_date)
+        access_token = _upstox_access_token(store, settings)
         result = run_daily_ohlcv_request(
             CoveragePreviewInput(
                 provider=request.provider,
@@ -297,7 +484,7 @@ def create_data_pipeline_request(request: DataPipelineRequest) -> DataPipelineRu
                 end_date=request.end_date,
             ),
             store=store,
-            access_token=settings.upstox_access_token,
+            access_token=access_token,
             throttle_seconds=settings.data_pipeline_throttle_seconds,
             max_concurrent_fetches=settings.data_pipeline_max_concurrent_fetches,
         )
@@ -311,7 +498,7 @@ def create_data_pipeline_request(request: DataPipelineRequest) -> DataPipelineRu
         )
     except HTTPException:
         raise
-    except ValueError as exc:
+    except (CredentialEncryptionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
@@ -746,6 +933,35 @@ def _expected_daily_rows(
     return len(expected_trading_dates(exchange, start_date, end_date, holidays=holidays))
 
 
+def _ensure_exchange_holidays(
+    store: TimescaleStore,
+    exchange: str,
+    start_date: date,
+    end_date: date,
+) -> None:
+    for year in range(start_date.year, end_date.year + 1):
+        cached = store.exchange_holidays(exchange, year)
+        if cached is not None and cached.get("closed_dates"):
+            continue
+        try:
+            holidays = fetch_exchange_holidays(exchange, year)
+        except Exception as exc:
+            logger.warning(
+                "exchange holiday fetch failed exchange=%s year=%s error=%s",
+                exchange,
+                year,
+                exc,
+            )
+            continue
+        store.upsert_exchange_holidays(
+            exchange=exchange,
+            year=year,
+            closed_dates=holidays.closed_dates,
+            early_close_dates=holidays.early_close_dates,
+            source_url=holidays.source_url,
+        )
+
+
 def _stored_exchange_holidays(
     store: TimescaleStore,
     exchange: str,
@@ -794,6 +1010,26 @@ def _to_screener_result(row: dict) -> dict:
 def _store() -> TimescaleStore:
     settings = get_settings()
     return TimescaleStore(settings.database_url)
+
+
+def _initialized_store() -> TimescaleStore:
+    store = _store()
+    if hasattr(store, "initialize"):
+        store.initialize()
+    return store
+
+
+def _stored_upstox_access_token(store: TimescaleStore, settings: Settings) -> str | None:
+    return resolve_provider_token(
+        store=store,
+        provider="upstox",
+        fallback_token=settings.upstox_access_token,
+        app_secret_key=settings.app_secret_key,
+    )
+
+
+def _upstox_access_token(store: TimescaleStore, settings: Settings) -> str | None:
+    return _stored_upstox_access_token(store, settings)
 
 
 @lru_cache(maxsize=1)

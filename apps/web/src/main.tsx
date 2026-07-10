@@ -9,6 +9,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { FactorResearchPage } from "./pages/FactorResearchPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MLResearchPage } from "./pages/MLResearchPage";
+import { ProviderSettingsPage } from "./pages/ProviderSettingsPage";
 import { ResearchPage } from "./pages/ResearchPage";
 import { ResearchProgressPage } from "./pages/ResearchProgressPage";
 import { ScreenersPage } from "./pages/ScreenersPage";
@@ -38,6 +39,7 @@ const router = createBrowserRouter([
       { path: "/research/factors", element: <FactorResearchPage /> },
       { path: "/research/models", element: <MLResearchPage /> },
       { path: "/jobs", element: <JobsPage /> },
+      { path: "/settings/providers", element: <ProviderSettingsPage /> },
     ],
   },
 ]);

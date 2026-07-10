@@ -5,7 +5,7 @@ import {
   ShieldCheck,
   Trophy,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   useMLBacktests,
@@ -78,32 +78,14 @@ export function MLResearchPage() {
   const summaryQuery = useMLSummary();
   const metricsQuery = useMLModelMetrics(metricRun);
   const backtestsQuery = useMLBacktests(backtestGroup);
-  const candidatesQuery = useMLCandidates({
-    run: candidateRun,
-    modelId: selectedModel,
-    topN: selectedTopN,
-    limit: 120,
-  });
   const baselineLatestQuery = useMLLatestCandidates({ run: "baselines", topN: 5 });
   const lightgbmLatestQuery = useMLLatestCandidates({ run: "lightgbm", topN: 5 });
-  const equityQuery = useMLEquityCurve({
-    group: candidateRun,
-    modelId: selectedModel,
-    topN: selectedTopN,
-  });
-  const robustnessQuery = useMLRobustness({
-    group: candidateRun,
-    modelId: selectedModel,
-    topN: selectedTopN,
-  });
 
   const summary = summaryQuery.data;
   const dataset = summary?.dataset ?? null;
   const winner = summary?.current_winner ?? null;
-  const metricRows = metricsQuery.data?.rows ?? [];
-  const backtestRows = backtestsQuery.data?.rows ?? [];
-  const candidateRows = candidatesQuery.data?.rows ?? [];
-  const equityRows = equityQuery.data?.rows ?? [];
+  const metricRows = useMemo(() => metricsQuery.data?.rows ?? [], [metricsQuery.data?.rows]);
+  const backtestRows = useMemo(() => backtestsQuery.data?.rows ?? [], [backtestsQuery.data?.rows]);
 
   const modelOptions = useMemo(() => {
     const fromMetrics = metricRows
@@ -116,12 +98,25 @@ export function MLResearchPage() {
     return options.length ? options : [selectedModel];
   }, [backtestRows, candidateRun, metricRows, selectedModel]);
 
-  useEffect(() => {
-    const compatible = modelOptions.includes(selectedModel);
-    if (!compatible && modelOptions.length) {
-      setSelectedModel(modelOptions[0]);
-    }
-  }, [modelOptions, selectedModel]);
+  const activeModel = modelOptions.includes(selectedModel) ? selectedModel : modelOptions[0];
+  const candidatesQuery = useMLCandidates({
+    run: candidateRun,
+    modelId: activeModel,
+    topN: selectedTopN,
+    limit: 120,
+  });
+  const equityQuery = useMLEquityCurve({
+    group: candidateRun,
+    modelId: activeModel,
+    topN: selectedTopN,
+  });
+  const robustnessQuery = useMLRobustness({
+    group: candidateRun,
+    modelId: activeModel,
+    topN: selectedTopN,
+  });
+  const candidateRows = candidatesQuery.data?.rows ?? [];
+  const equityRows = equityQuery.data?.rows ?? [];
 
   return (
     <>
@@ -258,7 +253,7 @@ export function MLResearchPage() {
             <label>
               Model
               <select
-                value={selectedModel}
+                value={activeModel}
                 onChange={(event) => setSelectedModel(event.target.value)}
               >
                 {modelOptions.map((modelId) => (
@@ -341,7 +336,7 @@ export function MLResearchPage() {
           <h2>Robustness</h2>
           <div className="inline-summary">
             <span>{runLabel(candidateRun)}</span>
-            <span>{selectedModel}</span>
+            <span>{activeModel}</span>
             <span>top {selectedTopN}</span>
           </div>
         </div>

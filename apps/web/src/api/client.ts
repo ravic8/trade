@@ -6,12 +6,18 @@ import type {
   ChatQueryRequest,
   ChatQueryResponse,
   ChatSourcesResponse,
+  DataAvailabilityParams,
+  DataAvailabilityResponse,
   DataCoveragePreviewRequest,
   DataCoveragePreviewResponse,
+  DataInstrumentSearchParams,
+  DataInstrumentSearchRow,
   DataPipelineHealthResponse,
   DataPipelineRequest,
   DataPipelineRunDetail,
   DataPipelineRunSummary,
+  DataUniverseMemberRow,
+  DataUniverseRow,
   FactorICResponse,
   FactorSummaryResponse,
   JobRun,
@@ -26,6 +32,10 @@ import type {
   MLSummaryResponse,
   MarketStatus,
   ProviderCapabilityResponse,
+  ProviderCredentialStatusResponse,
+  ProviderCredentialTestRequest,
+  ProviderCredentialTestResponse,
+  ProviderCredentialTokenRequest,
   ResearchProgressResponse,
   ResearchNote,
   ScreenerResult,
@@ -48,14 +58,31 @@ async function strictFetchJson<T>(path: string, init?: RequestInit): Promise<T> 
   if (!response.ok) {
     let message = `Request failed: ${response.status}`;
     try {
-      const payload = (await response.json()) as { detail?: string };
-      if (payload.detail) message = payload.detail;
+      const payload = (await response.json()) as { detail?: unknown };
+      if (payload.detail) message = formatApiError(payload.detail);
     } catch {
       // Keep the HTTP status fallback.
     }
     throw new Error(message);
   }
   return (await response.json()) as T;
+}
+
+function formatApiError(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (!item || typeof item !== "object") return String(item);
+        const record = item as { loc?: unknown[]; msg?: unknown };
+        const loc = Array.isArray(record.loc) ? record.loc.join(".") : "";
+        const msg = typeof record.msg === "string" ? record.msg : JSON.stringify(item);
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .join("; ");
+  }
+  if (detail && typeof detail === "object") return JSON.stringify(detail);
+  return String(detail);
 }
 
 export function getMarketStatus(): Promise<MarketStatus[]> {
@@ -244,8 +271,75 @@ export function getUpstoxProviderCapabilities(): Promise<ProviderCapabilityRespo
   return strictFetchJson("/api/data/provider-capabilities/upstox");
 }
 
+export function getUpstoxCredentialStatus(): Promise<ProviderCredentialStatusResponse> {
+  return strictFetchJson("/api/admin/provider-credentials/upstox/status");
+}
+
+export function testUpstoxCredential(
+  payload: ProviderCredentialTestRequest,
+): Promise<ProviderCredentialTestResponse> {
+  return strictFetchJson("/api/admin/provider-credentials/upstox/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveUpstoxCredential(
+  payload: ProviderCredentialTokenRequest,
+): Promise<ProviderCredentialStatusResponse> {
+  return strictFetchJson("/api/admin/provider-credentials/upstox/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getDataPipelineHealth(): Promise<DataPipelineHealthResponse> {
   return strictFetchJson("/api/data/pipeline-health");
+}
+
+export function getDataAvailability(
+  params: DataAvailabilityParams,
+): Promise<DataAvailabilityResponse> {
+  const query = new URLSearchParams();
+  query.set("provider", params.provider ?? "upstox");
+  query.set("exchange", params.exchange ?? "NSE");
+  query.set("interval", params.interval ?? "1d");
+  if (params.start_date) query.set("start_date", params.start_date);
+  if (params.end_date) query.set("end_date", params.end_date);
+  if (params.query) query.set("query", params.query);
+  if (params.universe_id) query.set("universe_id", params.universe_id);
+  if (params.coverage_status) query.set("coverage_status", params.coverage_status);
+  if (params.limit) query.set("limit", params.limit.toString());
+  if (params.offset) query.set("offset", params.offset.toString());
+  if (params.sort) query.set("sort", params.sort);
+  return strictFetchJson(`/api/data/availability?${query.toString()}`);
+}
+
+export function searchDataInstruments(
+  params: DataInstrumentSearchParams,
+): Promise<DataInstrumentSearchRow[]> {
+  const query = new URLSearchParams();
+  query.set("provider", params.provider ?? "upstox");
+  query.set("exchange", params.exchange ?? "NSE");
+  query.set("query", params.query);
+  if (params.limit) query.set("limit", params.limit.toString());
+  return strictFetchJson(`/api/data/instruments/search?${query.toString()}`);
+}
+
+export function getDataUniverses(): Promise<DataUniverseRow[]> {
+  return strictFetchJson("/api/data/universes?exchange=NSE");
+}
+
+export function getDataUniverseMembers(
+  universeId: string,
+  limit = 500,
+): Promise<DataUniverseMemberRow[]> {
+  const query = new URLSearchParams({ limit: limit.toString() });
+  return strictFetchJson(
+    `/api/data/universes/${encodeURIComponent(universeId)}/members?${query.toString()}`,
+  );
 }
 
 export function previewDataCoverage(

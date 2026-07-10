@@ -7,6 +7,37 @@ from trade_research.api.app import app
 
 
 class FakeCoverageStore:
+    def __init__(self) -> None:
+        self.credentials: dict[tuple[str, str], dict] = {}
+
+    def provider_credential(
+        self,
+        provider: str,
+        credential_type: str = "access_token",
+    ) -> dict | None:
+        return self.credentials.get((provider, credential_type))
+
+    def upsert_provider_credential(
+        self,
+        provider: str,
+        credential_type: str,
+        encrypted_value: str,
+        updated_by: str,
+        validation_status: str,
+        validation_message: str | None = None,
+        last_validated_at: datetime | None = None,
+    ) -> None:
+        self.credentials[(provider, credential_type)] = {
+            "provider": provider,
+            "credential_type": credential_type,
+            "encrypted_value": encrypted_value,
+            "updated_at": datetime(2026, 1, 6, 11, tzinfo=UTC),
+            "updated_by": updated_by,
+            "last_validated_at": last_validated_at,
+            "validation_status": validation_status,
+            "validation_message": validation_message,
+        }
+
     def resolve_provider_instruments(
         self,
         symbols: list[str],
@@ -152,6 +183,110 @@ class FakeCoverageStore:
             },
         }
 
+    def search_provider_instruments(
+        self,
+        query_text: str,
+        source: str = "upstox",
+        exchange: str = "NSE",
+        limit: int = 20,
+    ) -> list[dict]:
+        assert query_text == "rel"
+        assert source == "upstox"
+        assert exchange == "NSE"
+        assert limit == 5
+        return [
+            {
+                "symbol": "RELIANCE",
+                "name": "Reliance Industries Limited",
+                "instrument_key": "NSE_EQ|INE002A01018",
+                "provider": "upstox",
+                "exchange": "NSE",
+                "isin": "INE002A01018",
+                "segment": "NSE_EQ",
+                "asset_type": "EQ",
+            }
+        ]
+
+    def tradable_universes(
+        self,
+        exchange: str = "NSE",
+        source: str | None = None,
+    ) -> list[dict]:
+        assert exchange == "NSE"
+        assert source is None
+        return [
+            {
+                "universe_id": "nse_liquid_adt_100cr",
+                "name": "NSE liquid equities ADT >= Rs 100 crore",
+                "description": "Liquid mapped universe",
+                "exchange": "NSE",
+                "source": "liquidity_plus_upstox_mapping",
+                "criteria": {"lookback": "6 months"},
+                "created_at": datetime(2026, 1, 1, 9, tzinfo=UTC),
+                "member_count": 2,
+            }
+        ]
+
+    def tradable_universe_members(
+        self,
+        universe_id: str,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict]:
+        assert universe_id == "nse_liquid_adt_100cr"
+        assert limit == 100
+        assert offset == 0
+        return [
+            {
+                "universe_id": universe_id,
+                "symbol": "AAA",
+                "instrument_key": "NSE_EQ|AAA",
+                "rank": 1,
+                "avg_daily_volume": 1000.0,
+                "avg_daily_turnover": 1_000_000_000.0,
+                "trading_days": 120,
+                "zero_volume_ratio": 0.0,
+                "start_date": date(2025, 1, 1),
+                "end_date": date(2025, 6, 30),
+                "included_at": datetime(2026, 1, 1, 9, tzinfo=UTC),
+            }
+        ]
+
+
+class ColdHolidayStore(FakeCoverageStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.upserted_years: list[int] = []
+
+    def exchange_holidays(
+        self,
+        exchange: str,
+        year: int,
+        max_age_days: int | None = None,
+    ) -> dict | None:
+        if year in self.upserted_years:
+            return {
+                "source_url": "fetched",
+                "closed_dates": ["2026-01-05"],
+                "early_close_dates": [],
+                "year": year,
+            }
+        return None
+
+    def upsert_exchange_holidays(
+        self,
+        exchange: str,
+        year: int,
+        closed_dates,
+        early_close_dates,
+        source_url: str,
+    ) -> int:
+        assert exchange == "NSE"
+        assert date(2026, 1, 5) in closed_dates
+        assert source_url == "fetched"
+        self.upserted_years.append(year)
+        return 1
+
 
 def _run_row() -> dict:
     return {
@@ -189,6 +324,110 @@ def test_upstox_provider_capabilities_endpoint() -> None:
     assert daily["max_window"] == "10 years"
 
 
+def test_admin_provider_credential_status_requires_admin(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "trade_research.api.app.get_settings",
+        lambda: SimpleNamespace(
+            admin_emails="admin@example.com",
+            admin_email_headers="cf-access-authenticated-user-email",
+            upstox_access_token=None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/admin/provider-credentials/upstox/status")
+
+    assert response.status_code == 403
+
+
+def test_admin_provider_credential_status_reports_env_fallback(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr(
+        "trade_research.api.app.get_settings",
+        lambda: SimpleNamespace(
+            admin_emails="admin@example.com",
+            admin_email_headers="cf-access-authenticated-user-email",
+            upstox_access_token="env-token",
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/admin/provider-credentials/upstox/status",
+            headers={"cf-access-authenticated-user-email": "admin@example.com"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["configured"] is True
+    assert payload["source"] == "env"
+    assert "access_token" not in payload
+
+
+def test_admin_upstox_token_save_encrypts_and_masks_secret(monkeypatch) -> None:
+    store = FakeCoverageStore()
+    monkeypatch.setattr("trade_research.api.app._store", lambda: store)
+    monkeypatch.setattr(
+        "trade_research.api.app.get_settings",
+        lambda: SimpleNamespace(
+            admin_emails="admin@example.com",
+            admin_email_headers="cf-access-authenticated-user-email",
+            upstox_access_token=None,
+            app_secret_key="test-secret-key",
+        ),
+    )
+    monkeypatch.setattr(
+        "trade_research.api.app.validate_upstox_access_token",
+        lambda token: (True, "ok"),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/admin/provider-credentials/upstox/token",
+            headers={"cf-access-authenticated-user-email": "ADMIN@example.com"},
+            json={"access_token": "x" * 40, "validate": True},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["configured"] is True
+    assert payload["source"] == "database"
+    assert payload["updated_by"] == "admin@example.com"
+    saved = store.provider_credential("upstox", "access_token")
+    assert saved is not None
+    assert saved["encrypted_value"] != "x" * 40
+
+
+def test_admin_upstox_token_test_uses_supplied_token(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "trade_research.api.app.get_settings",
+        lambda: SimpleNamespace(
+            admin_emails="admin@example.com",
+            admin_email_headers="cf-access-authenticated-user-email",
+            upstox_access_token=None,
+            app_secret_key="test-secret-key",
+        ),
+    )
+    seen = {}
+
+    def fake_validate(token: str) -> tuple[bool, str]:
+        seen["token"] = token
+        return True, "ok"
+
+    monkeypatch.setattr("trade_research.api.app.validate_upstox_access_token", fake_validate)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/admin/provider-credentials/upstox/test",
+            headers={"cf-access-authenticated-user-email": "admin@example.com"},
+            json={"access_token": "y" * 40},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+    assert seen["token"] == "y" * 40
+
+
 def test_data_coverage_preview_endpoint(monkeypatch) -> None:
     monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
 
@@ -215,6 +454,39 @@ def test_data_coverage_preview_endpoint(monkeypatch) -> None:
     assert payload["missing_rows"] == 3
     assert payload["estimated_provider_calls"] == 3
     assert payload["tasks"][0]["fetch_start"] == "2026-01-06"
+
+
+def test_data_coverage_preview_fetches_missing_holiday_calendar(monkeypatch) -> None:
+    store = ColdHolidayStore()
+    monkeypatch.setattr("trade_research.api.app._store", lambda: store)
+    monkeypatch.setattr(
+        "trade_research.api.app.fetch_exchange_holidays",
+        lambda exchange, year: SimpleNamespace(
+            closed_dates=frozenset({date(2026, 1, 5)}),
+            early_close_dates=frozenset(),
+            source_url="fetched",
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/data/coverage/preview",
+            json={
+                "provider": "upstox",
+                "exchange": "NSE",
+                "symbols": ["AAA"],
+                "unit": "days",
+                "interval": 1,
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-06",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["expected_rows"] == 3
+    assert "No stored exchange holiday calendar found" not in " ".join(payload["warnings"])
+    assert store.upserted_years == [2026]
 
 
 def test_data_coverage_get_endpoint(monkeypatch) -> None:
@@ -273,7 +545,58 @@ def test_data_availability_requires_date_pair() -> None:
     assert response.json()["detail"] == "start_date and end_date must be supplied together."
 
 
+def test_data_instruments_search_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get("/api/data/instruments/search?query=rel&limit=5")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == [
+        {
+            "symbol": "RELIANCE",
+            "name": "Reliance Industries Limited",
+            "instrument_key": "NSE_EQ|INE002A01018",
+            "provider": "upstox",
+            "exchange": "NSE",
+            "isin": "INE002A01018",
+            "segment": "NSE_EQ",
+            "asset_type": "EQ",
+        }
+    ]
+
+
+def test_data_universes_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get("/api/data/universes")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["universe_id"] == "nse_liquid_adt_100cr"
+    assert payload[0]["member_count"] == 2
+    assert payload[0]["criteria"] == {"lookback": "6 months"}
+
+
+def test_data_universe_members_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/universes/nse_liquid_adt_100cr/members?limit=100"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["symbol"] == "AAA"
+    assert payload[0]["rank"] == 1
+    assert payload[0]["avg_daily_turnover"] == 1_000_000_000.0
+
+
 def test_data_pipeline_health_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
     monkeypatch.setattr(
         "trade_research.api.app.get_settings",
         lambda: SimpleNamespace(

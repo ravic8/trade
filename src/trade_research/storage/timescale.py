@@ -17,6 +17,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     create_engine,
     func,
     select,
@@ -150,6 +151,19 @@ provider_instruments_table = Table(
     Column("active", Boolean, nullable=False, default=True),
     Column("fetched_at", DateTime(timezone=True), nullable=False),
     Column("raw", JSON, nullable=False, default=dict),
+)
+
+provider_credentials_table = Table(
+    "provider_credentials",
+    metadata,
+    Column("provider", String, primary_key=True),
+    Column("credential_type", String, primary_key=True),
+    Column("encrypted_value", Text, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("updated_by", String),
+    Column("last_validated_at", DateTime(timezone=True)),
+    Column("validation_status", String),
+    Column("validation_message", String),
 )
 
 tradable_universes_table = Table(
@@ -420,6 +434,12 @@ class TimescaleStore:
             )
             connection.execute(
                 text(
+                    "CREATE INDEX IF NOT EXISTS idx_provider_credentials_updated "
+                    "ON provider_credentials (provider, updated_at DESC)"
+                )
+            )
+            connection.execute(
+                text(
                     "CREATE INDEX IF NOT EXISTS idx_ohlcv_daily_symbol_date "
                     "ON ohlcv_daily (symbol, date DESC)"
                 )
@@ -649,6 +669,53 @@ class TimescaleStore:
         )
         with self.engine.begin() as connection:
             return connection.execute(query).scalar_one_or_none()
+
+    def provider_credential(
+        self,
+        provider: str,
+        credential_type: str = "access_token",
+    ) -> dict[str, Any] | None:
+        query = select(provider_credentials_table).where(
+            provider_credentials_table.c.provider == provider.lower(),
+            provider_credentials_table.c.credential_type == credential_type,
+        )
+        with self.engine.begin() as connection:
+            row = connection.execute(query).mappings().first()
+        return dict(row) if row else None
+
+    def upsert_provider_credential(
+        self,
+        provider: str,
+        credential_type: str,
+        encrypted_value: str,
+        updated_by: str,
+        validation_status: str,
+        validation_message: str | None = None,
+        last_validated_at: datetime | None = None,
+    ) -> None:
+        row = {
+            "provider": provider.lower(),
+            "credential_type": credential_type,
+            "encrypted_value": encrypted_value,
+            "updated_at": datetime.now(UTC),
+            "updated_by": updated_by,
+            "last_validated_at": last_validated_at,
+            "validation_status": validation_status,
+            "validation_message": validation_message,
+        }
+        statement = insert(provider_credentials_table).values(row)
+        update_columns = {
+            column.name: getattr(statement.excluded, column.name)
+            for column in provider_credentials_table.columns
+            if column.name not in {"provider", "credential_type"}
+        }
+        with self.engine.begin() as connection:
+            connection.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["provider", "credential_type"],
+                    set_=update_columns,
+                )
+            )
 
     def upsert_symbols(self, symbols: Iterable[Symbol], fetched_at: datetime | None = None) -> int:
         fetched = fetched_at or datetime.now(UTC)
@@ -1423,7 +1490,8 @@ class TimescaleStore:
         filters = [
             "pi.source = :source",
             "pi.active = true",
-            "(pi.exchange = :exchange OR pi.segment = (:exchange || '_EQ'))",
+            "(upper(coalesce(pi.segment, '')) = (:exchange || '_EQ'))",
+            "(upper(coalesce(pi.asset_type, '')) IN ('EQ', 'EQUITY', ''))",
         ]
         universe_join = ""
         if universe_id:
@@ -1631,6 +1699,136 @@ class TimescaleStore:
                 }
             )
         return {"total": total, "rows": clean_rows, "summary": summary}
+
+    def search_provider_instruments(
+        self,
+        query_text: str,
+        source: str = "upstox",
+        exchange: str = "NSE",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        normalized = query_text.strip().upper()
+        if not normalized:
+            return []
+        params = {
+            "source": source,
+            "exchange": exchange.upper(),
+            "exact": normalized,
+            "prefix": f"{normalized}%",
+            "query": f"%{normalized}%",
+            "limit": int(limit),
+        }
+        statement = text(
+            """
+            SELECT
+                pi.trading_symbol AS symbol,
+                pi.name,
+                pi.instrument_key,
+                pi.source AS provider,
+                :exchange AS exchange,
+                pi.isin,
+                pi.segment,
+                pi.asset_type
+            FROM provider_instruments pi
+            WHERE pi.source = :source
+              AND pi.active = true
+              AND upper(coalesce(pi.segment, '')) = (:exchange || '_EQ')
+              AND upper(coalesce(pi.asset_type, '')) IN ('EQ', 'EQUITY', '')
+              AND (
+                    upper(pi.trading_symbol) LIKE :query OR
+                    upper(coalesce(pi.name, '')) LIKE :query OR
+                    upper(coalesce(pi.isin, '')) LIKE :query OR
+                    upper(pi.instrument_key) LIKE :query
+              )
+            ORDER BY
+                CASE
+                    WHEN upper(pi.trading_symbol) = :exact THEN 0
+                    WHEN upper(pi.trading_symbol) LIKE :prefix THEN 1
+                    WHEN upper(coalesce(pi.name, '')) LIKE :prefix THEN 2
+                    ELSE 3
+                END,
+                pi.trading_symbol,
+                pi.instrument_key
+            LIMIT :limit
+            """
+        )
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(statement, params).mappings()]
+        return [
+            {
+                "symbol": row["symbol"],
+                "name": row.get("name"),
+                "instrument_key": row["instrument_key"],
+                "provider": row["provider"],
+                "exchange": row["exchange"],
+                "isin": row.get("isin"),
+                "segment": row.get("segment"),
+                "asset_type": row.get("asset_type"),
+            }
+            for row in rows
+        ]
+
+    def tradable_universes(
+        self,
+        exchange: str = "NSE",
+        source: str | None = None,
+    ) -> list[dict[str, Any]]:
+        member_counts = (
+            select(
+                tradable_universe_members_table.c.universe_id,
+                func.count(tradable_universe_members_table.c.symbol).label("member_count"),
+            )
+            .group_by(tradable_universe_members_table.c.universe_id)
+            .subquery()
+        )
+        query = (
+            select(
+                tradable_universes_table.c.universe_id,
+                tradable_universes_table.c.name,
+                tradable_universes_table.c.description,
+                tradable_universes_table.c.exchange,
+                tradable_universes_table.c.source,
+                tradable_universes_table.c.criteria_json.label("criteria"),
+                tradable_universes_table.c.created_at,
+                func.coalesce(member_counts.c.member_count, 0).label("member_count"),
+            )
+            .select_from(
+                tradable_universes_table.outerjoin(
+                    member_counts,
+                    member_counts.c.universe_id
+                    == tradable_universes_table.c.universe_id,
+                )
+            )
+            .where(tradable_universes_table.c.exchange == exchange.upper())
+            .order_by(tradable_universes_table.c.name)
+        )
+        if source:
+            query = query.where(tradable_universes_table.c.source == source)
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        for row in rows:
+            row["criteria"] = row.get("criteria") if isinstance(row.get("criteria"), dict) else {}
+            row["member_count"] = int(row.get("member_count") or 0)
+        return rows
+
+    def tradable_universe_members(
+        self,
+        universe_id: str,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        query = (
+            tradable_universe_members_table.select()
+            .where(tradable_universe_members_table.c.universe_id == universe_id)
+            .order_by(
+                tradable_universe_members_table.c.rank.asc().nulls_last(),
+                tradable_universe_members_table.c.symbol,
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
 
     def daily_ohlcv_frame(
         self,

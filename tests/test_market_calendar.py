@@ -2,6 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from trade_research.market_calendar import (
+    NSE_FALLBACK_CLOSED_DATES,
     ExchangeHolidays,
     expected_trading_dates,
     fetch_exchange_holidays,
@@ -50,6 +51,14 @@ def test_expected_trading_dates_skip_weekends_and_holidays() -> None:
         datetime(2026, 1, 2).date(),
         datetime(2026, 1, 6).date(),
     ]
+
+
+def test_nse_fallback_holidays_include_2025_trading_closures() -> None:
+    holidays = NSE_FALLBACK_CLOSED_DATES[2025]
+    assert datetime(2025, 8, 15).date() in holidays
+    assert datetime(2025, 8, 27).date() in holidays
+    assert datetime(2025, 10, 2).date() in holidays
+    assert datetime(2025, 12, 25).date() in holidays
 
 
 def test_session_decision_skips_exchange_holiday(monkeypatch) -> None:
