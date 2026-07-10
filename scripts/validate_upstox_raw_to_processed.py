@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PROCESSED_PATH = ROOT / "data/processed/equities/nse_daily_ohlcv_upstox.parquet"
 AUDIT_PATH = ROOT / "data/processed/equities/nse_daily_ohlcv_upstox_audit.csv"
@@ -350,6 +349,8 @@ def _build_report(
     missing_symbols = symbol_health[~symbol_health["has_processed_rows"]]
     ended_early = symbol_health[symbol_health["ends_before_dataset_latest_date"]]
     low_coverage = date_coverage[date_coverage["unusually_low_coverage"]]
+    mapped_keys = set(symbol_health["InstrumentKey"])
+    rows_missing_from_mapping = int((~normalized["InstrumentKey"].isin(mapped_keys)).sum())
 
     lines = [
         "# Raw to Processed Upstox OHLCV Validation",
@@ -375,10 +376,19 @@ def _build_report(
         "",
         "## Conversion Code Inspected",
         "",
-        "- `src/trade_research/data/upstox.py`: `UpstoxHistoricalDataProvider.fetch_daily_candles` calls the v3 `/historical-candle/.../days/1` endpoint and passes `payload['data']['candles']` to `_daily_candles_to_frame`.",
-        "- `_daily_candles_to_frame` maps candle `[0]` to `Date`, `[1]` to `Open`, `[2]` to `High`, `[3]` to `Low`, `[4]` to `Close`, `[5]` to `Volume`, and `[6]` to `OpenInterest` when present.",
-        "- `src/trade_research/cli.py`: `fetch-upstox-nse-daily` concatenates per-symbol DataFrames and writes `nse_daily_ohlcv_upstox.parquet`; it writes failures and audit CSVs but not raw JSON payloads.",
-        "- `src/trade_research/storage/timescale.py`: DB conversion preserves `Date`, `InstrumentKey`, `Symbol`, OHLCV, and `OpenInterest`, while dropping rows only when one of `Date/Open/High/Low/Close/Volume` is null.",
+        "- `src/trade_research/data/upstox.py`: "
+        "`UpstoxHistoricalDataProvider.fetch_daily_candles` calls the v3 "
+        "`/historical-candle/.../days/1` endpoint and passes "
+        "`payload['data']['candles']` to `_daily_candles_to_frame`.",
+        "- `_daily_candles_to_frame` maps candle `[0]` to `Date`, `[1]` to "
+        "`Open`, `[2]` to `High`, `[3]` to `Low`, `[4]` to `Close`, `[5]` to "
+        "`Volume`, and `[6]` to `OpenInterest` when present.",
+        "- `src/trade_research/cli.py`: `fetch-upstox-nse-daily` concatenates "
+        "per-symbol DataFrames and writes `nse_daily_ohlcv_upstox.parquet`; it "
+        "writes failures and audit CSVs but not raw JSON payloads.",
+        "- `src/trade_research/storage/timescale.py`: DB conversion preserves "
+        "`Date`, `InstrumentKey`, `Symbol`, OHLCV, and `OpenInterest`, while "
+        "dropping rows only when one of `Date/Open/High/Low/Close/Volume` is null.",
         "",
         "## Processed Dataset",
         "",
@@ -392,11 +402,12 @@ def _build_report(
         "",
         "## Row Reconciliation",
         "",
-        "- Raw candle count vs processed row count: not replay-verifiable because raw responses were not saved.",
+        "- Raw candle count vs processed row count: not replay-verifiable because "
+        "raw responses were not saved.",
         f"- Processed total rows: {len(normalized)}",
         f"- Sum of processed rows per instrument: {int(row_counts['processed_rows'].sum())}",
         f"- Per-instrument duplicate/date count mismatches: {len(count_mismatches)}",
-        f"- Processed rows missing from mapped universe: {int((~normalized['InstrumentKey'].isin(set(symbol_health['InstrumentKey']))).sum())}",
+        f"- Processed rows missing from mapped universe: {rows_missing_from_mapping}",
         "",
         "## Invalid Rows",
         "",
@@ -418,7 +429,8 @@ def _build_report(
         f"- Existing audit false passes: {audit_compare['false_passes']}",
         f"- Existing audit false warnings: {audit_compare['false_warnings']}",
         f"- Existing audit false failures: {audit_compare['false_failures']}",
-        "- Note: the existing audit warns on zero volume but does not separately flag negative volume; this validation treats negative volume as invalid.",
+        "- Note: the existing audit warns on zero volume but does not separately "
+        "flag negative volume; this validation treats negative volume as invalid.",
         "",
         "## Outputs",
         "",

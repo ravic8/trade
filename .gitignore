@@ -14,12 +14,18 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.prod.example
 
 /data/
 /backups/
 /artifacts/
 /output/
 /tmp/
+
+dagster_home/.logs_queue/
+dagster_home/.telemetry/
+dagster_home/history/
+dagster_home/schedules/
 
 node_modules/
 dist/

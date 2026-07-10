@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from trade_research.config import get_settings
+from trade_research.credentials import resolve_provider_token
 from trade_research.data import UpstoxHistoricalDataProvider, audit_daily_ohlcv
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.storage import ParquetStore, TimescaleStore
@@ -35,9 +36,6 @@ def run_upstox_daily_ohlcv_pipeline(
     trigger: str = "pipeline",
 ) -> PipelineRunResult:
     settings = get_settings()
-    token = access_token or settings.upstox_access_token
-    if not token:
-        raise ValueError("Set UPSTOX_ACCESS_TOKEN or pass access_token.")
 
     end = (
         _parse_pipeline_date(to_date, "to_date")
@@ -55,6 +53,18 @@ def run_upstox_daily_ohlcv_pipeline(
     db = TimescaleStore(settings.database_url) if store_db else None
     if db is not None:
         db.initialize()
+    token = access_token or (
+        resolve_provider_token(
+            db,
+            provider="upstox",
+            fallback_token=settings.upstox_access_token,
+            app_secret_key=settings.app_secret_key,
+        )
+        if db is not None
+        else settings.upstox_access_token
+    )
+    if not token:
+        raise ValueError("Set UPSTOX_ACCESS_TOKEN or pass access_token.")
     latest_dates = (
         {}
         if db is None or full_refresh or from_date
@@ -250,7 +260,12 @@ def run_upstox_daily_ohlcv_retry_pipeline(
         statuses=statuses,
         limit=limit,
     )
-    token = access_token or settings.upstox_access_token
+    token = access_token or resolve_provider_token(
+        db,
+        provider="upstox",
+        fallback_token=settings.upstox_access_token,
+        app_secret_key=settings.app_secret_key,
+    )
     if not candidates.empty and not token:
         raise ValueError("Set UPSTOX_ACCESS_TOKEN or pass access_token.")
     source_run_id = (

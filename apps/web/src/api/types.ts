@@ -70,6 +70,34 @@ export type ProviderCapabilityResponse = {
   notes: string[];
 };
 
+export type ProviderCredentialStatusResponse = {
+  provider: string;
+  credential_type: string;
+  configured: boolean;
+  source: "database" | "env" | "missing";
+  updated_at: string | null;
+  updated_by: string | null;
+  last_validated_at: string | null;
+  validation_status: string | null;
+  validation_message: string | null;
+};
+
+export type ProviderCredentialTestResponse = {
+  provider: string;
+  valid: boolean;
+  checked_at: string;
+  message: string;
+};
+
+export type ProviderCredentialTokenRequest = {
+  access_token: string;
+  validate: boolean;
+};
+
+export type ProviderCredentialTestRequest = {
+  access_token?: string | null;
+};
+
 export type DataCoveragePreviewRequest = {
   provider: "upstox";
   exchange: "NSE";
@@ -121,6 +149,106 @@ export type DataCoveragePreviewResponse = {
   estimated_provider_calls: number;
   tasks: DataCoveragePreviewTask[];
   warnings: string[];
+};
+
+export type DataAvailabilityRow = {
+  symbol: string;
+  name: string | null;
+  instrument_key: string;
+  provider: string;
+  exchange: string;
+  interval: "1d";
+  first_stored_date: string | null;
+  latest_stored_date: string | null;
+  stored_rows: number;
+  expected_rows: number;
+  coverage_pct: number;
+  missing_rows: number;
+  coverage_status: "complete" | "partial" | "empty";
+  last_successful_run: string | null;
+  last_fetch_status: string | null;
+};
+
+export type DataAvailabilitySummary = {
+  symbols_total: number;
+  symbols_complete: number;
+  symbols_partial: number;
+  symbols_empty: number;
+  expected_rows: number;
+  stored_rows: number;
+  missing_rows: number;
+  estimated_provider_calls_for_missing: number;
+};
+
+export type DataAvailabilityResponse = {
+  provider: string;
+  exchange: string;
+  interval: "1d";
+  start_date: string | null;
+  end_date: string | null;
+  limit: number;
+  offset: number;
+  sort: string;
+  total: number;
+  rows: DataAvailabilityRow[];
+  summary: DataAvailabilitySummary;
+};
+
+export type DataAvailabilityParams = {
+  provider?: "upstox";
+  exchange?: "NSE";
+  interval?: "1d";
+  start_date?: string;
+  end_date?: string;
+  query?: string;
+  universe_id?: string;
+  coverage_status?: "complete" | "partial" | "empty" | "";
+  limit?: number;
+  offset?: number;
+  sort?: string;
+};
+
+export type DataInstrumentSearchRow = {
+  symbol: string;
+  name: string | null;
+  instrument_key: string;
+  provider: string;
+  exchange: string;
+  isin: string | null;
+  segment: string | null;
+  asset_type: string | null;
+};
+
+export type DataInstrumentSearchParams = {
+  provider?: "upstox";
+  exchange?: "NSE";
+  query: string;
+  limit?: number;
+};
+
+export type DataUniverseRow = {
+  universe_id: string;
+  name: string;
+  description: string | null;
+  exchange: string;
+  source: string;
+  criteria: Record<string, unknown>;
+  created_at: string;
+  member_count: number;
+};
+
+export type DataUniverseMemberRow = {
+  universe_id: string;
+  symbol: string;
+  instrument_key: string | null;
+  rank: number | null;
+  avg_daily_volume: number | null;
+  avg_daily_turnover: number | null;
+  trading_days: number | null;
+  zero_volume_ratio: number | null;
+  start_date: string | null;
+  end_date: string | null;
+  included_at: string;
 };
 
 export type DataPipelineRunSummary = {

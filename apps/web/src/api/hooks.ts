@@ -6,9 +6,12 @@ import {
   getChatSources,
   getCandles,
   createDataPipelineRequest,
+  getDataAvailability,
   getDataPipelineHealth,
   getDataPipelineRunDetail,
   getDataPipelineRuns,
+  getDataUniverseMembers,
+  getDataUniverses,
   getFactorIC,
   getFactorSummary,
   getJobRuns,
@@ -23,16 +26,24 @@ import {
   getResearchProgress,
   getResearchNotes,
   getScreenerResults,
+  getUpstoxCredentialStatus,
   getUpstoxProviderCapabilities,
   previewDataCoverage,
   postChatQuery,
+  saveUpstoxCredential,
+  searchDataInstruments,
+  testUpstoxCredential,
 } from "./client";
 import type {
   ChatQueryRequest,
+  DataAvailabilityParams,
   DataCoveragePreviewRequest,
+  DataInstrumentSearchParams,
   DataPipelineRequest,
   MLConcreteRunId,
   MLRunId,
+  ProviderCredentialTestRequest,
+  ProviderCredentialTokenRequest,
 } from "./types";
 
 export function useMarketStatus() {
@@ -144,12 +155,39 @@ export function useUpstoxProviderCapabilities() {
   });
 }
 
+export function useUpstoxCredentialStatus() {
+  return useQuery({
+    queryKey: ["admin-provider-credentials", "upstox"],
+    queryFn: getUpstoxCredentialStatus,
+    retry: false,
+  });
+}
+
+export function useTestUpstoxCredential() {
+  return useMutation({
+    mutationFn: (payload: ProviderCredentialTestRequest) => testUpstoxCredential(payload),
+  });
+}
+
+export function useSaveUpstoxCredential() {
+  return useMutation({
+    mutationFn: (payload: ProviderCredentialTokenRequest) => saveUpstoxCredential(payload),
+  });
+}
+
 export function useDataPipelineRuns() {
   return useQuery({ queryKey: ["data-pipeline-runs"], queryFn: getDataPipelineRuns });
 }
 
 export function useDataPipelineHealth() {
   return useQuery({ queryKey: ["data-pipeline-health"], queryFn: getDataPipelineHealth });
+}
+
+export function useDataAvailability(params: DataAvailabilityParams) {
+  return useQuery({
+    queryKey: ["data-availability", params],
+    queryFn: () => getDataAvailability(params),
+  });
 }
 
 export function useDataPipelineRunDetail(runId: string | null) {
@@ -163,6 +201,29 @@ export function useDataPipelineRunDetail(runId: string | null) {
 export function useDataCoveragePreview() {
   return useMutation({
     mutationFn: (payload: DataCoveragePreviewRequest) => previewDataCoverage(payload),
+  });
+}
+
+export function useDataInstrumentSearch(
+  params: DataInstrumentSearchParams,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["data-instruments-search", params],
+    queryFn: () => searchDataInstruments(params),
+    enabled,
+  });
+}
+
+export function useDataUniverses() {
+  return useQuery({ queryKey: ["data-universes"], queryFn: getDataUniverses });
+}
+
+export function useDataUniverseMembers(universeId: string | null, limit: number) {
+  return useQuery({
+    queryKey: ["data-universe-members", universeId, limit],
+    queryFn: () => getDataUniverseMembers(universeId as string, limit),
+    enabled: Boolean(universeId),
   });
 }
 

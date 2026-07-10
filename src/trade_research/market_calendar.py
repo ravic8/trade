@@ -12,6 +12,27 @@ NSE_HOLIDAYS_PAGE_URL = "https://www.nseindia.com/resources/exchange-communicati
 NSE_TIMINGS_URL = "https://www.nseindia.com/static/market-data/market-timings"
 TMX_CALENDAR_URL = "https://www.tsx.com/en/trading/calendars-and-trading-hours/calendar"
 
+NSE_FALLBACK_CLOSED_DATES = {
+    2025: frozenset(
+        {
+            date(2025, 2, 26),
+            date(2025, 3, 14),
+            date(2025, 3, 31),
+            date(2025, 4, 10),
+            date(2025, 4, 14),
+            date(2025, 4, 18),
+            date(2025, 5, 1),
+            date(2025, 8, 15),
+            date(2025, 8, 27),
+            date(2025, 10, 2),
+            date(2025, 10, 21),
+            date(2025, 10, 22),
+            date(2025, 11, 5),
+            date(2025, 12, 25),
+        }
+    ),
+}
+
 
 @dataclass(frozen=True)
 class ExchangeSessionConfig:
@@ -164,6 +185,8 @@ def fetch_nse_holidays(year: int) -> ExchangeHolidays:
         for row in rows
         if (parsed := _parse_holiday_date(str(row.get("tradingDate", "")))) and parsed.year == year
     }
+    if not closed_dates:
+        closed_dates = set(NSE_FALLBACK_CLOSED_DATES.get(year, frozenset()))
     return ExchangeHolidays(
         closed_dates=frozenset(closed_dates),
         early_close_dates=frozenset(),

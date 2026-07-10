@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class Symbol(BaseModel):
@@ -176,10 +176,40 @@ class ProviderCapabilityResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class ProviderCredentialStatusResponse(BaseModel):
+    provider: str
+    credential_type: str
+    configured: bool
+    source: Literal["database", "env", "missing"]
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+    last_validated_at: datetime | None = None
+    validation_status: str | None = None
+    validation_message: str | None = None
+
+
+class ProviderCredentialTokenRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    access_token: str = Field(min_length=20, max_length=5000)
+    validate_token: bool = Field(default=True, alias="validate")
+
+
+class ProviderCredentialTestRequest(BaseModel):
+    access_token: str | None = Field(default=None, min_length=20, max_length=5000)
+
+
+class ProviderCredentialTestResponse(BaseModel):
+    provider: str
+    valid: bool
+    checked_at: datetime
+    message: str
+
+
 class DataCoveragePreviewRequest(BaseModel):
     provider: Literal["upstox"] = "upstox"
     exchange: Literal["NSE"] = "NSE"
-    symbols: list[str] = Field(min_length=1, max_length=200)
+    symbols: list[str] = Field(min_length=1, max_length=500)
     unit: Literal["days"] = "days"
     interval: int = Field(default=1, ge=1)
     start_date: date
@@ -272,6 +302,42 @@ class DataAvailabilityResponse(BaseModel):
     total: int = Field(ge=0)
     rows: list[DataAvailabilityRow] = Field(default_factory=list)
     summary: DataAvailabilitySummary
+
+
+class DataInstrumentSearchRow(BaseModel):
+    symbol: str
+    name: str | None = None
+    instrument_key: str
+    provider: str
+    exchange: str
+    isin: str | None = None
+    segment: str | None = None
+    asset_type: str | None = None
+
+
+class DataUniverseRow(BaseModel):
+    universe_id: str
+    name: str
+    description: str | None = None
+    exchange: str
+    source: str
+    criteria: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    member_count: int = Field(ge=0)
+
+
+class DataUniverseMemberRow(BaseModel):
+    universe_id: str
+    symbol: str
+    instrument_key: str | None = None
+    rank: int | None = None
+    avg_daily_volume: float | None = None
+    avg_daily_turnover: float | None = None
+    trading_days: int | None = None
+    zero_volume_ratio: float | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    included_at: datetime
 
 
 class DataPipelineRunSummary(BaseModel):

@@ -80,6 +80,36 @@ class UpstoxInstrumentMasterProvider:
         return normalize_instruments(payload)
 
 
+def validate_upstox_access_token(
+    access_token: str,
+    base_url: str = "https://api.upstox.com",
+    timeout_seconds: float = 15.0,
+    client: httpx.Client | None = None,
+) -> tuple[bool, str]:
+    """Validate an Upstox token with a lightweight authenticated profile call."""
+    owned_client = client is None
+    http_client = client or httpx.Client(timeout=timeout_seconds)
+    try:
+        response = http_client.get(
+            f"{base_url.rstrip('/')}/v2/user/profile",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {access_token}",
+            },
+        )
+        if response.status_code >= 400:
+            return False, f"Upstox rejected token with HTTP {response.status_code}."
+        payload = response.json()
+        if payload.get("status") not in {None, "success"}:
+            return False, "Upstox token validation did not return success."
+        return True, "Upstox token validated successfully."
+    except Exception as exc:
+        return False, f"Upstox token validation failed: {exc}"
+    finally:
+        if owned_client:
+            http_client.close()
+
+
 class UpstoxHistoricalDataProvider:
     """Fetch batch historical candles from Upstox v3."""
 
