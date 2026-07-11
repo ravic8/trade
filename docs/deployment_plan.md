@@ -16,6 +16,7 @@ deploy/caddy/Caddyfile
 deploy/deploy.sh
 deploy/backup.sh
 .github/workflows/ci.yml
+.github/workflows/deploy.yml
 ```
 
 The production compose project is named `trade-prod` so it can run separately
@@ -89,7 +90,7 @@ deploy/caddy/Caddyfile         implemented
 deploy/deploy.sh               implemented
 deploy/backup.sh               implemented
 .github/workflows/ci.yml       implemented
-.github/workflows/deploy.yml   planned
+.github/workflows/deploy.yml   implemented
 ```
 
 Production services:
@@ -179,10 +180,12 @@ Use Tailscale for private admin access:
 GitHub Secrets should store deployment credentials only:
 
 ```text
-TAILSCALE_AUTHKEY
+TS_OAUTH_CLIENT_ID
+TS_OAUTH_SECRET
 DEPLOY_HOST
 DEPLOY_USER
 DEPLOY_PATH
+DEPLOY_SSH_PRIVATE_KEY
 ```
 
 Optional GitHub Secrets if Cloudflare automation is added later:
@@ -303,7 +306,7 @@ all pass before merge.
 After a PR is merged to `main`:
 
 ```text
-GitHub Actions
+GitHub Actions CI succeeds on main
   -> joins Tailscale
   -> SSHes to Ubuntu
   -> runs deploy/deploy.sh
@@ -322,6 +325,10 @@ curl -f http://localhost:8080/api/health
 
 If the health check fails, the deployment should fail loudly. A later iteration
 can add image tagging and automatic rollback.
+
+The deploy workflow is implemented in `.github/workflows/deploy.yml`. It runs
+after the `CI` workflow succeeds on `main`, and it can also be started manually
+with `workflow_dispatch`.
 
 The implemented script defaults to:
 
@@ -428,9 +435,10 @@ when those directories exist.
 
 ### Phase 7: Auto Deploy On Merge
 
-- Add GitHub Actions deploy workflow.
-- Use Tailscale SSH to run `deploy/deploy.sh`.
-- Deploy only from merged `main`.
+- Implemented: GitHub Actions deploy workflow.
+- Implemented: use Tailscale plus SSH to run `deploy/deploy.sh`.
+- Implemented: deploy only after CI succeeds on merged `main`; manual dispatch
+  is available for operator-controlled retries.
 
 ### Phase 8: Backups
 
