@@ -180,8 +180,7 @@ Use Tailscale for private admin access:
 GitHub Secrets should store deployment credentials only:
 
 ```text
-TS_OAUTH_CLIENT_ID
-TS_OAUTH_SECRET
+TAILSCALE_AUTHKEY
 DEPLOY_HOST
 DEPLOY_USER
 DEPLOY_PATH
