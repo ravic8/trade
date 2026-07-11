@@ -1,12 +1,32 @@
 # Deployment Plan
 
 This document captures the deployment direction for the Trade Research app.
-The repo is still local-first for development, but production packaging,
-admin token management, CI, and first-pass server scripts are now in place.
+The repo remains local-first for development, and production is now deployed on
+the maintainer's Ubuntu machine behind Cloudflare Tunnel and Cloudflare Access.
 
 ## Current Deployment Status
 
-Phase 1 production packaging is implemented:
+Production is live:
+
+```text
+Public URL:       https://trade.chain8.org
+Public access:    Cloudflare Access
+Tunnel target:    http://localhost:8081
+Ubuntu app path:  /opt/trade/app
+Server env file:  /opt/trade/.env
+Compose project:  trade-prod
+```
+
+The production compose project is named `trade-prod` so it can run separately
+from the local development stack. It exposes only the web entrypoint on
+`127.0.0.1:${PROD_WEB_PORT:-8080}`; the deployed Ubuntu host currently sets
+`PROD_WEB_PORT=8081`. Internal services are reachable only inside
+the Docker network unless an admin profile or tunnel exposes them.
+
+Production compose variables use a `PROD_` prefix to avoid accidentally loading
+local development secrets from `.env` during validation.
+
+Implemented deployment files:
 
 ```text
 Dockerfile.web
@@ -19,15 +39,7 @@ deploy/backup.sh
 .github/workflows/deploy.yml
 ```
 
-The production compose project is named `trade-prod` so it can run separately
-from the local development stack. It exposes only the web entrypoint on
-`127.0.0.1:${PROD_WEB_PORT:-8080}`; internal services are reachable only inside
-the Docker network unless an admin profile or tunnel exposes them.
-
-Production compose variables use a `PROD_` prefix to avoid accidentally loading
-local development secrets from `.env` during validation.
-
-Phase 2 admin Upstox token management is implemented:
+Admin Upstox token management is implemented and verified in production:
 
 ```text
 /settings/providers
@@ -40,6 +52,22 @@ provider_credentials table
 Admin access is controlled by `ADMIN_EMAILS` / `PROD_ADMIN_EMAILS` and trusted
 identity headers such as `cf-access-authenticated-user-email`. The Upstox token
 is encrypted before it is stored, and the raw token is never returned by the API.
+The production token source shows as `database` after saving through the
+provider settings page.
+
+Production recovery after power loss is configured:
+
+```text
+BIOS AC BACK: Always On
+docker.service: enabled
+tailscaled.service: enabled
+cloudflared.service: enabled
+trade-prod.service: enabled
+```
+
+The `trade-prod.service` systemd unit runs `docker compose up -d` from
+`/opt/trade/app`. It is expected to show `active (exited)` because it is a
+oneshot service that starts containers and then exits successfully.
 
 ## Goals
 
@@ -59,10 +87,11 @@ is encrypted before it is stored, and the raw token is never returned by the API
 
 ```text
 External users
-  -> https://trade.example.com
+  -> https://trade.chain8.org
   -> Cloudflare Access
   -> Cloudflare Tunnel
-  -> Caddy on Ubuntu
+  -> http://localhost:8081 on Ubuntu
+  -> Caddy
   -> React app and /api reverse proxy
   -> FastAPI
   -> TimescaleDB, Redis, Qdrant, data/, artifacts/
@@ -149,23 +178,26 @@ CloudBeaver or other database admin tools
 The public surface should be only:
 
 ```text
-https://trade.example.com
+https://trade.chain8.org
 ```
 
 All application API traffic should go through the reverse proxy:
 
 ```text
-https://trade.example.com/api/...
+https://trade.chain8.org/api/...
 ```
 
 ## Access Model
 
 Use Cloudflare Access for the public app:
 
-- Allow the maintainer email.
-- Allow the engineer contributor email.
-- Allow the external research user email.
+- Allow the configured maintainer/admin emails.
+- Allow the configured engineer/research user emails.
 - Block everyone else.
+
+Unauthenticated terminal requests to `https://trade.chain8.org` are expected to
+return a Cloudflare Access redirect such as `302 Found`. Authenticated browser
+sessions should reach the app.
 
 Use Tailscale for private admin access:
 
@@ -210,7 +242,7 @@ PROD_GEMINI_API_KEY=...
 PROD_UPSTOX_ACCESS_TOKEN=...
 PROD_APP_SECRET_KEY=...
 PROD_ADMIN_EMAILS=you@example.com
-PROD_API_CORS_ORIGINS=https://trade.example.com
+PROD_API_CORS_ORIGINS=https://trade.chain8.org
 ```
 
 The committed `.env.prod.example` must stay secret-free.
@@ -319,7 +351,7 @@ git checkout main
 git pull --ff-only
 docker compose -f docker-compose.prod.yml build
 docker compose -f docker-compose.prod.yml up -d
-curl -f http://localhost:8080/api/health
+curl -f http://localhost:${PROD_WEB_PORT:-8080}/api/health
 ```
 
 If the health check fails, the deployment should fail loudly. A later iteration
@@ -342,6 +374,13 @@ It loads `/opt/trade/.env`, creates the configured persistent directories,
 validates compose config, builds images, starts the stack, and checks
 `http://localhost:${PROD_WEB_PORT:-8080}/api/health`.
 
+The deployed Ubuntu host currently uses:
+
+```text
+PROD_WEB_PORT=8081
+PROD_API_CORS_ORIGINS=https://trade.chain8.org
+```
+
 ## Persistent Server Paths
 
 Use stable server-owned paths outside the git checkout:
@@ -359,6 +398,14 @@ Use stable server-owned paths outside the git checkout:
 
 Generated datasets and artifacts should not be committed to git. They should be
 mounted into containers as persistent server data.
+
+The deployed Dagster home also contains runtime config files required by the
+daemon:
+
+```text
+/opt/trade/dagster_home/workspace.yaml
+/opt/trade/dagster_home/dagster.yaml
+```
 
 ## Backup Plan
 
@@ -420,17 +467,19 @@ when those directories exist.
 
 ### Phase 5: Manual Ubuntu Deployment
 
-- Install Docker, Tailscale, and Cloudflared on Ubuntu.
-- Create `/opt/trade` paths.
-- Add server `.env`.
-- Run the first production deployment manually with `deploy/deploy.sh`.
-- Verify `/api/health` through localhost and through the Cloudflare URL.
+- Implemented: installed Docker, Tailscale, and Cloudflared on Ubuntu.
+- Implemented: created `/opt/trade` paths.
+- Implemented: added server `.env`.
+- Implemented: ran first production deployment manually with `deploy/deploy.sh`.
+- Implemented: verified `/api/health` through localhost and through the
+  Cloudflare URL.
 
 ### Phase 6: Cloudflare And Tailscale
 
-- Configure Cloudflare Tunnel from `trade.example.com` to local Caddy.
-- Configure Cloudflare Access allowed users.
-- Configure Tailscale for private admin access.
+- Implemented: Cloudflare Tunnel routes `trade.chain8.org` to
+  `http://localhost:8081`.
+- Implemented: Cloudflare Access protects `trade.chain8.org`.
+- Implemented: Tailscale private access supports deploy/admin SSH.
 
 ### Phase 7: Auto Deploy On Merge
 
@@ -445,13 +494,26 @@ when those directories exist.
 - Schedule backups.
 - Test restore on a non-production path before relying on backups.
 
+### Phase 9: Power-Loss Recovery
+
+- Implemented: BIOS `AC BACK` set to `Always On`.
+- Implemented: Docker, Tailscale, Cloudflared, and `trade-prod.service` enabled
+  at boot.
+- Verified: after service startup, local health passes at
+  `http://localhost:8081/api/health`.
+- Verified: public unauthenticated `https://trade.chain8.org/api/health`
+  returns Cloudflare Access redirect, which confirms the app is protected.
+
 ## Open Decisions
 
-- Final domain name.
-- Whether Cloudflare Access email headers should be trusted directly by the app
-  for admin authorization, or whether the app should have its own auth layer.
+- Whether Cloudflare Access email headers remain sufficient for admin
+  authorization long term, or whether the app should add its own auth layer.
 - Whether Dagster webserver should run continuously or only be started when
   admin access is needed.
 - Whether backups should remain local-only first or include offsite storage
   immediately.
-- Whether deploys should build images on the Ubuntu server or in GitHub Actions.
+- Whether deploys should keep building images on the Ubuntu server or move image
+  builds into GitHub Actions later.
+- Whether to migrate the GitHub deploy workflow from Tailscale auth key to
+  Tailscale OAuth client credentials. The current auth-key workflow works, but
+  GitHub Actions shows a Tailscale deprecation warning recommending OAuth.
