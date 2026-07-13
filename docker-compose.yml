@@ -10,6 +10,7 @@ services:
       APP_ENV: docker
       DATA_DIR: /app/data
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
+      REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       API_CORS_ORIGINS: http://localhost:5173,http://localhost:8000
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
@@ -71,6 +72,7 @@ services:
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
+      REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -84,6 +86,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
       qdrant:
         condition: service_started
 
@@ -100,6 +104,7 @@ services:
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
+      REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -111,6 +116,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
       qdrant:
         condition: service_started
 

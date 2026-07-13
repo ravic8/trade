@@ -110,3 +110,60 @@ def test_daily_ohlcv_fetch_coverage_rows_normalize_for_storage() -> None:
     assert row["symbol"] == "TEST"
     assert row["status"] == "failed"
     assert row["error_message"] == "rate limited"
+
+
+def test_provider_request_log_rows_normalize_for_storage() -> None:
+    rows = TimescaleStore._provider_request_log_rows(
+        [
+            {
+                "run_id": "run-1",
+                "provider": "UPSTOX",
+                "endpoint_group": "historical",
+                "request_key": "NSE_EQ|TEST:1d:2026-06-21:2026-06-25",
+                "instrument_key": "NSE_EQ|TEST",
+                "symbol": "test",
+                "interval": "1d",
+                "window_start": "2026-06-21",
+                "window_end": date(2026, 6, 25),
+                "status": "success",
+                "retry_count": 0,
+                "rate_limited": True,
+                "wait_seconds": 0.25,
+                "duration_ms": 123.4,
+                "created_at": datetime(2026, 6, 28, tzinfo=UTC),
+            }
+        ]
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["run_id"] == "run-1"
+    assert row["provider"] == "upstox"
+    assert row["endpoint_group"] == "historical"
+    assert row["instrument_key"] == "NSE_EQ|TEST"
+    assert row["symbol"] == "test"
+    assert row["window_start"] == date(2026, 6, 21)
+    assert row["window_end"] == date(2026, 6, 25)
+    assert row["rate_limited"] is True
+    assert row["wait_seconds"] == 0.25
+
+
+def test_provider_request_log_rows_skip_incomplete_records() -> None:
+    rows = TimescaleStore._provider_request_log_rows(
+        [
+            {
+                "provider": "upstox",
+                "endpoint_group": "historical",
+                "status": "success",
+            },
+            {
+                "provider": "upstox",
+                "endpoint_group": "historical",
+                "request_key": "key",
+                "status": "success",
+            },
+        ]
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["request_key"] == "key"

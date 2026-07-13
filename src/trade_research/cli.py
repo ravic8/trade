@@ -104,6 +104,106 @@ def init_db() -> None:
     console.print("Initialized TimescaleDB schema")
 
 
+@app.command("provider-request-log")
+def provider_request_log(
+    run_id: Annotated[
+        str | None,
+        typer.Option(help="Ingestion run id to inspect. Defaults to the latest matching run."),
+    ] = None,
+    provider: Annotated[
+        str,
+        typer.Option(help="Provider/source filter."),
+    ] = "upstox",
+    exchange: Annotated[
+        str,
+        typer.Option(help="Exchange filter when resolving the latest run."),
+    ] = "NSE",
+    endpoint_group: Annotated[
+        str | None,
+        typer.Option(help="Optional endpoint group filter, for example historical."),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option(min=1, max=500, help="Recent request rows to show."),
+    ] = 20,
+) -> None:
+    settings = get_settings()
+    db = TimescaleStore(settings.database_url)
+    selected_run_id = run_id
+    if selected_run_id is None:
+        runs = db.latest_runs(limit=1, source=provider, exchange=exchange)
+        if not runs:
+            raise typer.Exit(
+                f"No ingestion runs found for provider={provider} exchange={exchange}."
+            )
+        selected_run_id = str(runs[0]["run_id"])
+
+    run = db.ingestion_run(selected_run_id)
+    if run is None:
+        raise typer.Exit(f"Ingestion run not found: {selected_run_id}")
+
+    summary = db.provider_request_log_summary(
+        selected_run_id,
+        provider=provider,
+        endpoint_group=endpoint_group,
+    )
+    logs = db.provider_request_logs_for_run(
+        selected_run_id,
+        provider=provider,
+        endpoint_group=endpoint_group,
+        limit=limit,
+    )
+
+    console.print(f"Run: {selected_run_id}")
+    console.print(
+        "Job: "
+        f"{run['job_name']} | status={run['status']} | "
+        f"source={run['source']} | exchange={run['exchange']}"
+    )
+
+    summary_table = Table(title="Provider Request Summary")
+    summary_table.add_column("Provider")
+    summary_table.add_column("Endpoint")
+    summary_table.add_column("Status")
+    summary_table.add_column("Requests", justify="right")
+    summary_table.add_column("Rate limited", justify="right")
+    summary_table.add_column("Wait seconds", justify="right")
+    summary_table.add_column("Avg ms", justify="right")
+    for row in summary:
+        summary_table.add_row(
+            str(row["provider"]),
+            str(row["endpoint_group"]),
+            str(row["status"]),
+            str(int(row["requests"] or 0)),
+            str(int(row["rate_limited_requests"] or 0)),
+            f"{float(row['wait_seconds'] or 0.0):.3f}",
+            f"{float(row['avg_duration_ms'] or 0.0):.1f}",
+        )
+    console.print(summary_table)
+
+    recent_table = Table(title=f"Recent Provider Requests (latest {limit})")
+    recent_table.add_column("Created")
+    recent_table.add_column("Status")
+    recent_table.add_column("Symbol")
+    recent_table.add_column("Window")
+    recent_table.add_column("Wait", justify="right")
+    recent_table.add_column("Ms", justify="right")
+    recent_table.add_column("Error")
+    for row in logs:
+        recent_table.add_row(
+            row["created_at"].isoformat() if row.get("created_at") else "",
+            str(row["status"]),
+            str(row.get("symbol") or ""),
+            f"{row.get('window_start') or ''} -> {row.get('window_end') or ''}",
+            f"{float(row.get('wait_seconds') or 0.0):.3f}",
+            f"{float(row.get('duration_ms') or 0.0):.1f}",
+            str(row.get("error_message") or "")[:80],
+        )
+    console.print(recent_table)
+    if not summary:
+        console.print("[yellow]No provider request logs found for this run.[/yellow]")
+
+
 @app.command("fetch-nifty-futures-history")
 def fetch_nifty_futures_history(
     from_date: Annotated[
