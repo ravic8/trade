@@ -1720,6 +1720,15 @@ class TimescaleStore:
         }
         statement = text(
             """
+            WITH universe_rank AS (
+                SELECT
+                    instrument_key,
+                    symbol,
+                    min(rank) AS rank
+                FROM tradable_universe_members
+                WHERE instrument_key IS NOT NULL
+                GROUP BY instrument_key, symbol
+            )
             SELECT
                 pi.trading_symbol AS symbol,
                 pi.name,
@@ -1730,6 +1739,9 @@ class TimescaleStore:
                 pi.segment,
                 pi.asset_type
             FROM provider_instruments pi
+            LEFT JOIN universe_rank ur
+                ON ur.instrument_key = pi.instrument_key
+               AND ur.symbol = pi.trading_symbol
             WHERE pi.source = :source
               AND pi.active = true
               AND upper(coalesce(pi.segment, '')) = (:exchange || '_EQ')
@@ -1743,10 +1755,15 @@ class TimescaleStore:
             ORDER BY
                 CASE
                     WHEN upper(pi.trading_symbol) = :exact THEN 0
-                    WHEN upper(pi.trading_symbol) LIKE :prefix THEN 1
-                    WHEN upper(coalesce(pi.name, '')) LIKE :prefix THEN 2
-                    ELSE 3
+                    WHEN ur.rank IS NOT NULL
+                        AND upper(pi.trading_symbol) LIKE :prefix THEN 1
+                    WHEN ur.rank IS NOT NULL
+                        AND upper(coalesce(pi.name, '')) LIKE :prefix THEN 2
+                    WHEN upper(pi.trading_symbol) LIKE :prefix THEN 3
+                    WHEN upper(coalesce(pi.name, '')) LIKE :prefix THEN 4
+                    ELSE 5
                 END,
+                ur.rank ASC NULLS LAST,
                 pi.trading_symbol,
                 pi.instrument_key
             LIMIT :limit

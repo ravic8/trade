@@ -1,8 +1,10 @@
 import {
   ChevronLeft,
   ChevronRight,
+  CheckCircle2,
   DatabaseZap,
   History,
+  Info,
   Play,
   RefreshCw,
   Search,
@@ -234,11 +236,12 @@ export function DataPipelinePage() {
   }
 
   return (
-    <>
+    <div className="data-console-page">
       <PageHeader
         eyebrow="Data Pipelines"
         title="Data Console"
         subtitle="Request NSE daily candles, inspect stored coverage, and review Upstox fetch runs."
+        actions={<SystemStatusPill />}
       />
 
       <DataTabs activeTab={activeTab} onChange={setActiveTab} />
@@ -360,7 +363,15 @@ export function DataPipelinePage() {
               </form>
             </section>
 
-            <ProviderLimitsPanel capabilities={capabilitiesQuery.data?.historical ?? []} />
+            <aside className="data-side-rail">
+              <ProviderLimitsPanel capabilities={capabilitiesQuery.data?.historical ?? []} />
+              <MarketDataNotice />
+              <ReadinessPanel
+                blockers={runBlockers}
+                tokenConfigured={Boolean(healthQuery.data?.upstox_access_token_configured)}
+                preview={preview}
+              />
+            </aside>
           </div>
 
           {preview ? <PreviewSection preview={preview} /> : null}
@@ -417,7 +428,7 @@ export function DataPipelinePage() {
           <RunDetailPanel detail={runDetail} isLoading={selectedRunQuery.isLoading} />
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -450,6 +461,15 @@ function DataTabs({
         );
       })}
     </div>
+  );
+}
+
+function SystemStatusPill() {
+  return (
+    <span className="system-status-pill">
+      <span aria-hidden="true" />
+      System Active
+    </span>
   );
 }
 
@@ -940,22 +960,22 @@ function AvailableDataPanel({
                 <tbody>
                   {availability.rows.map((row) => (
                     <tr key={row.instrument_key}>
-                      <td>
+                      <td data-label="Symbol">
                         <strong>{row.symbol}</strong>
                       </td>
-                      <td className="text-cell">{row.name ?? "n/a"}</td>
-                      <td className="mono-cell">{row.instrument_key}</td>
-                      <td>{row.first_stored_date ?? "n/a"}</td>
-                      <td>{row.latest_stored_date ?? "n/a"}</td>
-                      <td>{formatNumber(row.stored_rows)}</td>
-                      <td>{formatNumber(row.expected_rows)}</td>
-                      <td>
+                      <td data-label="Name" className="text-cell">{row.name ?? "n/a"}</td>
+                      <td data-label="Instrument" className="mono-cell">{row.instrument_key}</td>
+                      <td data-label="First Stored">{row.first_stored_date ?? "n/a"}</td>
+                      <td data-label="Latest Stored">{row.latest_stored_date ?? "n/a"}</td>
+                      <td data-label="Stored">{formatNumber(row.stored_rows)}</td>
+                      <td data-label="Expected">{formatNumber(row.expected_rows)}</td>
+                      <td data-label="Coverage">
                         <span className={`status-pill ${statusClass(row.coverage_status)}`}>
                           {formatPercent(row.coverage_pct)}
                         </span>
                       </td>
-                      <td>{formatNumber(row.missing_rows)}</td>
-                      <td>
+                      <td data-label="Missing">{formatNumber(row.missing_rows)}</td>
+                      <td data-label="Last Fetch">
                         {row.last_fetch_status ? (
                           <span className={`status-pill ${statusClass(row.last_fetch_status)}`}>
                             {row.last_fetch_status}
@@ -1055,6 +1075,59 @@ function SafetyChecklist({
   );
 }
 
+function MarketDataNotice() {
+  return (
+    <section className="panel notice-panel">
+      <div className="notice-heading">
+        <Info size={16} />
+        <span>Notice</span>
+      </div>
+      <p>End-of-day candles for NSE are generally available after 18:30 IST.</p>
+    </section>
+  );
+}
+
+function ReadinessPanel({
+  blockers,
+  tokenConfigured,
+  preview,
+}: {
+  blockers: string[];
+  tokenConfigured: boolean;
+  preview: DataCoveragePreviewResponse | null;
+}) {
+  const rows = [
+    {
+      label: tokenConfigured ? "Upstox token configured" : "Upstox token missing",
+      ready: tokenConfigured,
+    },
+    {
+      label: preview ? "Coverage preview is available" : "Coverage preview pending",
+      ready: Boolean(preview),
+    },
+    {
+      label: blockers.length
+        ? `${blockers.length} blocker${blockers.length === 1 ? "" : "s"} to clear`
+        : "Ready to run",
+      ready: blockers.length === 0,
+    },
+  ];
+
+  return (
+    <section className="panel readiness-panel">
+      <h2>Readiness</h2>
+      <ul>
+        {rows.map((row) => (
+          <li key={row.label} className={row.ready ? "ready" : "pending"}>
+            <CheckCircle2 size={16} />
+            <span>{row.label}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function ProviderLimitsPanel({ capabilities }: { capabilities: ProviderHistoricalCapability[] }) {
   const daily = capabilities.find((item) => item.unit === "days");
   const intraday = capabilities.filter((item) => item.unit === "minutes" || item.unit === "hours");
@@ -1139,11 +1212,11 @@ function PreviewSection({ preview }: { preview: DataCoveragePreviewResponse }) {
               <tbody>
                 {preview.tasks.map((task) => (
                   <tr key={`${task.instrument_key}-${task.fetch_start}-${task.fetch_end}`}>
-                    <td>{task.symbol}</td>
-                    <td>{task.instrument_key}</td>
-                    <td>{task.fetch_start}</td>
-                    <td>{task.fetch_end}</td>
-                    <td>{task.missing_rows.toLocaleString()}</td>
+                    <td data-label="Symbol">{task.symbol}</td>
+                    <td data-label="Instrument">{task.instrument_key}</td>
+                    <td data-label="Fetch Start">{task.fetch_start}</td>
+                    <td data-label="Fetch End">{task.fetch_end}</td>
+                    <td data-label="Missing Rows">{task.missing_rows.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1219,12 +1292,12 @@ function RunHistoryPanel({
                   className={selectedRunId === run.id ? "selected-row" : ""}
                   onClick={() => onSelect(run.id)}
                 >
-                  <td>{run.name}</td>
-                  <td>
+                  <td data-label="Run">{run.name}</td>
+                  <td data-label="Status">
                     <span className={`status-pill ${statusClass(run.status)}`}>{run.status}</span>
                   </td>
-                  <td>{formatDateTime(run.started_at)}</td>
-                  <td>{run.items_processed.toLocaleString()}</td>
+                  <td data-label="Started">{formatDateTime(run.started_at)}</td>
+                  <td data-label="Items">{run.items_processed.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -1295,13 +1368,13 @@ function RunDetailPanel({
             <tbody>
               {detail.fetch_coverage.map((row) => (
                 <tr key={`${row.run_id}-${row.instrument_key}`}>
-                  <td>{row.symbol}</td>
-                  <td>
+                  <td data-label="Symbol">{row.symbol}</td>
+                  <td data-label="Status">
                     <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
                   </td>
-                  <td>{row.fetch_start ?? "n/a"}</td>
-                  <td>{row.fetch_end}</td>
-                  <td>{row.rows_fetched.toLocaleString()}</td>
+                  <td data-label="Fetch Start">{row.fetch_start ?? "n/a"}</td>
+                  <td data-label="Fetch End">{row.fetch_end}</td>
+                  <td data-label="Rows">{row.rows_fetched.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
