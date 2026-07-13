@@ -6,6 +6,12 @@ complete part of the system today; chat, UI, and modeling are present but not
 all complete production workflows. The repo is intentionally local-first and no
 longer carries deployment packaging.
 
+The next ingestion architecture is tracked in
+`docs/provider_ingestion_v2_plan.md`. It keeps Dagster as the scheduled
+orchestrator, adds provider API rate limiting below every execution surface,
+and introduces local/prod parallelism profiles before adding yfinance and
+Dukascopy data sources.
+
 ```text
 apps/web/              React UI
 src/trade_research/    Python package for API, data, storage, features, targets, chat, and jobs

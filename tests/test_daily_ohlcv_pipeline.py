@@ -2,11 +2,57 @@ from datetime import date
 
 import pandas as pd
 
+from trade_research.data.rate_limits import RateLimitDecision
 from trade_research.pipelines.daily_ohlcv import (
+    _fetch_upstox_daily_with_controls,
     _retry_candidates_to_fetch_plan,
     build_daily_fetch_coverage,
     plan_daily_fetch_windows,
 )
+
+
+class _RecordingLimiter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def acquire(self, provider: str, endpoint_group: str) -> RateLimitDecision:
+        self.calls.append((provider, endpoint_group))
+        return RateLimitDecision(backend="memory", wait_seconds=0.1, rate_limited=True)
+
+
+class _RecordingStore:
+    def __init__(self) -> None:
+        self.logs: list[dict] = []
+
+    def insert_provider_request_logs(self, logs) -> int:
+        self.logs.extend(logs)
+        return len(logs)
+
+
+class _DailyProvider:
+    def fetch_daily_candles(
+        self,
+        instrument_key: str,
+        start: date,
+        end: date,
+        symbol: str,
+        trading_symbol: str | None = None,
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "InstrumentKey": instrument_key,
+                    "Symbol": symbol,
+                    "TradingSymbol": trading_symbol,
+                    "Date": start,
+                    "Open": 100.0,
+                    "High": 101.0,
+                    "Low": 99.0,
+                    "Close": 100.5,
+                    "Volume": 1000,
+                }
+            ]
+        )
 
 
 def test_plan_daily_fetch_windows_skips_current_symbols() -> None:
@@ -31,6 +77,37 @@ def test_plan_daily_fetch_windows_skips_current_symbols() -> None:
     assert aaa["skip_reason"] == "already_current"
     assert bool(bbb["should_fetch"]) is True
     assert bbb["fetch_start"] == "2026-06-21"
+
+
+def test_fetch_upstox_daily_with_controls_limits_and_logs_request() -> None:
+    limiter = _RecordingLimiter()
+    store = _RecordingStore()
+
+    frame = _fetch_upstox_daily_with_controls(
+        provider=_DailyProvider(),
+        limiter=limiter,
+        db=store,
+        run_id="run-1",
+        row={
+            "instrument_key": "NSE_EQ|TEST",
+            "symbol": "TEST",
+            "trading_symbol": "TEST",
+        },
+        start=date(2026, 6, 21),
+        end=date(2026, 6, 25),
+    )
+
+    assert len(frame) == 1
+    assert limiter.calls == [("upstox", "historical")]
+    assert len(store.logs) == 1
+    log = store.logs[0]
+    assert log["run_id"] == "run-1"
+    assert log["provider"] == "upstox"
+    assert log["endpoint_group"] == "historical"
+    assert log["request_key"] == "NSE_EQ|TEST:1d:2026-06-21:2026-06-25"
+    assert log["rate_limited"] is True
+    assert log["wait_seconds"] == 0.1
+    assert log["status"] == "success"
 
 
 def test_build_daily_fetch_coverage_classifies_retry_candidates() -> None:

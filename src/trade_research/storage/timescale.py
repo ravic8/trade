@@ -79,6 +79,29 @@ ingestion_runs_table = Table(
     Column("run_metadata", JSON, nullable=False, default=dict),
 )
 
+provider_request_log_table = Table(
+    "provider_request_log",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("run_id", String),
+    Column("provider", String, nullable=False),
+    Column("endpoint_group", String, nullable=False),
+    Column("request_key", String, nullable=False),
+    Column("instrument_key", String),
+    Column("symbol", String),
+    Column("interval", String),
+    Column("window_start", Date),
+    Column("window_end", Date),
+    Column("status_code", BigInteger),
+    Column("status", String, nullable=False),
+    Column("error_message", Text),
+    Column("retry_count", BigInteger, nullable=False, default=0),
+    Column("rate_limited", Boolean, nullable=False, default=False),
+    Column("wait_seconds", Float, nullable=False, default=0.0),
+    Column("duration_ms", Float, nullable=False, default=0.0),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 exchange_holidays_table = Table(
     "exchange_holidays",
     metadata,
@@ -416,6 +439,18 @@ class TimescaleStore:
             )
             connection.execute(
                 text(
+                    "CREATE INDEX IF NOT EXISTS idx_provider_request_log_run "
+                    "ON provider_request_log (run_id, created_at DESC)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_provider_request_log_provider "
+                    "ON provider_request_log (provider, endpoint_group, created_at DESC)"
+                )
+            )
+            connection.execute(
+                text(
                     "CREATE INDEX IF NOT EXISTS idx_feed_health_exchange_status "
                     "ON feed_health (exchange, status, next_retry_at)"
                 )
@@ -619,6 +654,15 @@ class TimescaleStore:
             )
             for chunk in _chunks(rows, size=1_000):
                 connection.execute(daily_ohlcv_fetch_coverage_table.insert().values(chunk))
+        return len(rows)
+
+    def insert_provider_request_logs(self, logs: Iterable[Mapping[str, Any]]) -> int:
+        rows = self._provider_request_log_rows(logs)
+        if not rows:
+            return 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(provider_request_log_table.insert().values(chunk))
         return len(rows)
 
     def daily_ohlcv_fetch_retry_candidates(
@@ -2225,6 +2269,59 @@ class TimescaleStore:
         with self.engine.begin() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 
+    def provider_request_logs_for_run(
+        self,
+        run_id: str,
+        provider: str | None = None,
+        endpoint_group: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = (
+            provider_request_log_table.select()
+            .where(provider_request_log_table.c.run_id == run_id)
+            .order_by(provider_request_log_table.c.created_at.desc())
+            .limit(max(limit, 1))
+        )
+        if provider:
+            query = query.where(provider_request_log_table.c.provider == provider.lower())
+        if endpoint_group:
+            query = query.where(provider_request_log_table.c.endpoint_group == endpoint_group)
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def provider_request_log_summary(
+        self,
+        run_id: str,
+        provider: str | None = None,
+        endpoint_group: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = select(
+            provider_request_log_table.c.provider,
+            provider_request_log_table.c.endpoint_group,
+            provider_request_log_table.c.status,
+            func.count().label("requests"),
+            func.sum(provider_request_log_table.c.wait_seconds).label("wait_seconds"),
+            func.avg(provider_request_log_table.c.duration_ms).label("avg_duration_ms"),
+            func.sum(
+                provider_request_log_table.c.rate_limited.cast(BigInteger)
+            ).label("rate_limited_requests"),
+        ).where(provider_request_log_table.c.run_id == run_id)
+        if provider:
+            query = query.where(provider_request_log_table.c.provider == provider.lower())
+        if endpoint_group:
+            query = query.where(provider_request_log_table.c.endpoint_group == endpoint_group)
+        query = query.group_by(
+            provider_request_log_table.c.provider,
+            provider_request_log_table.c.endpoint_group,
+            provider_request_log_table.c.status,
+        ).order_by(
+            provider_request_log_table.c.provider,
+            provider_request_log_table.c.endpoint_group,
+            provider_request_log_table.c.status,
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
     def market_status(self) -> list[dict[str, Any]]:
         query = text(
             """
@@ -2819,6 +2916,40 @@ class TimescaleStore:
                     "skip_reason": _clean_string(record.get("skip_reason")),
                     "error_message": _clean_string(record.get("error")),
                     "created_at": created_at,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _provider_request_log_rows(logs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        rows = []
+        for record in logs:
+            provider = _clean_string(record.get("provider"))
+            endpoint_group = _clean_string(record.get("endpoint_group"))
+            request_key = _clean_string(record.get("request_key"))
+            status = _clean_string(record.get("status"))
+            if not provider or not endpoint_group or not request_key or not status:
+                continue
+            rows.append(
+                {
+                    "id": _clean_string(record.get("id")) or str(uuid4()),
+                    "run_id": _clean_string(record.get("run_id")),
+                    "provider": provider.lower(),
+                    "endpoint_group": endpoint_group,
+                    "request_key": request_key,
+                    "instrument_key": _clean_string(record.get("instrument_key")),
+                    "symbol": _clean_string(record.get("symbol")),
+                    "interval": _clean_string(record.get("interval")),
+                    "window_start": _nullable_date(record.get("window_start")),
+                    "window_end": _nullable_date(record.get("window_end")),
+                    "status_code": _nullable_int(record.get("status_code")),
+                    "status": status,
+                    "error_message": _clean_string(record.get("error_message")),
+                    "retry_count": int(record.get("retry_count") or 0),
+                    "rate_limited": bool(record.get("rate_limited")),
+                    "wait_seconds": float(record.get("wait_seconds") or 0.0),
+                    "duration_ms": float(record.get("duration_ms") or 0.0),
+                    "created_at": _as_utc(record.get("created_at") or datetime.now(UTC)),
                 }
             )
         return rows

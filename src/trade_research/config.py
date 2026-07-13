@@ -51,11 +51,24 @@ class Settings(BaseSettings):
     app_secret_key: str | None = None
 
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
+    redis_url: str = "redis://localhost:6379/0"
 
     polygon_api_key: str | None = None
     upstox_access_token: str | None = None
     data_pipeline_max_concurrent_fetches: int = Field(default=1, ge=1, le=16)
     data_pipeline_throttle_seconds: float = Field(default=0.0, ge=0, le=10)
+    ingestion_profile: str = "local"
+    provider_rate_limit_backend: str = "auto"
+    provider_rate_limit_require_redis: bool = False
+    upstox_historical_concurrency: int = Field(default=4, ge=1, le=32)
+    upstox_rate_per_second: int = Field(default=40, ge=1, le=50)
+    upstox_rate_per_minute: int = Field(default=400, ge=1, le=500)
+    upstox_rate_per_30_minutes: int = Field(default=1600, ge=1, le=2000)
+    yfinance_batch_concurrency: int = Field(default=1, ge=1, le=8)
+    yfinance_rate_per_minute: int = Field(default=30, ge=1, le=600)
+    dukascopy_historical_concurrency: int = Field(default=2, ge=1, le=16)
+    dukascopy_rate_per_minute: int = Field(default=60, ge=1, le=600)
+    timescale_write_chunk_rows: int = Field(default=1000, ge=100, le=10000)
 
     hourly_realtime_lookback_days: int = Field(default=1, ge=1, le=60)
     hourly_history_lookback_days: int = Field(default=10, ge=1, le=60)

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import time
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
+from typing import Any
 
 import pandas as pd
 
 from trade_research.config import get_settings
 from trade_research.credentials import resolve_provider_token
 from trade_research.data import UpstoxHistoricalDataProvider, audit_daily_ohlcv
+from trade_research.data.rate_limits import ProviderRateLimiter, build_provider_rate_limiter
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.storage import ParquetStore, TimescaleStore
 
@@ -106,16 +109,19 @@ def run_upstox_daily_ohlcv_pipeline(
 
     frames: list[pd.DataFrame] = []
     failures: list[dict[str, str]] = []
+    limiter = build_provider_rate_limiter(settings)
     try:
         with UpstoxHistoricalDataProvider(token) as provider:
             for row in fetch_plan.to_dict(orient="records"):
                 try:
-                    frame = provider.fetch_daily_candles(
-                        instrument_key=str(row["instrument_key"]),
+                    frame = _fetch_upstox_daily_with_controls(
+                        provider=provider,
+                        limiter=limiter,
+                        db=db,
+                        run_id=str(run_id) if run_id is not None else None,
+                        row=row,
                         start=_parse_pipeline_date(str(row["fetch_start"]), "fetch_start"),
                         end=end,
-                        symbol=str(row["symbol"]),
-                        trading_symbol=str(row.get("trading_symbol") or row["symbol"]),
                     )
                     if not frame.empty:
                         frames.append(frame)
@@ -288,17 +294,20 @@ def run_upstox_daily_ohlcv_retry_pipeline(
 
     frames: list[pd.DataFrame] = []
     failures: list[dict[str, str]] = []
+    limiter = build_provider_rate_limiter(settings)
     try:
         if not candidates.empty:
             with UpstoxHistoricalDataProvider(token) as provider:
                 for row in candidates.to_dict(orient="records"):
                     try:
-                        frame = provider.fetch_daily_candles(
-                            instrument_key=str(row["instrument_key"]),
+                        frame = _fetch_upstox_daily_with_controls(
+                            provider=provider,
+                            limiter=limiter,
+                            db=db,
+                            run_id=str(run_id),
+                            row=row,
                             start=_parse_pipeline_date(str(row["fetch_start"]), "fetch_start"),
                             end=_parse_pipeline_date(str(row["fetch_end"]), "fetch_end"),
-                            symbol=str(row["symbol"]),
-                            trading_symbol=str(row["symbol"]),
                         )
                         if not frame.empty:
                             frames.append(frame)
@@ -421,6 +430,101 @@ def _retry_candidates_to_fetch_plan(candidates: pd.DataFrame) -> pd.DataFrame:
             for record in candidates.to_dict(orient="records")
         ]
     )
+
+
+def _fetch_upstox_daily_with_controls(
+    provider: UpstoxHistoricalDataProvider,
+    limiter: ProviderRateLimiter,
+    db: TimescaleStore | None,
+    run_id: str | None,
+    row: dict[str, Any],
+    start: date,
+    end: date,
+) -> pd.DataFrame:
+    instrument_key = str(row["instrument_key"])
+    symbol = str(row["symbol"])
+    trading_symbol = str(row.get("trading_symbol") or symbol)
+    decision = limiter.acquire("upstox", "historical")
+    started = perf_counter()
+    status = "success"
+    error_message = ""
+    try:
+        return provider.fetch_daily_candles(
+            instrument_key=instrument_key,
+            start=start,
+            end=end,
+            symbol=symbol,
+            trading_symbol=trading_symbol,
+        )
+    except Exception as exc:
+        status = "error"
+        error_message = str(exc)
+        raise
+    finally:
+        duration_ms = (perf_counter() - started) * 1000
+        _record_provider_request(
+            db=db,
+            run_id=run_id,
+            provider="upstox",
+            endpoint_group="historical",
+            request_key=f"{instrument_key}:1d:{start.isoformat()}:{end.isoformat()}",
+            instrument_key=instrument_key,
+            symbol=symbol,
+            interval="1d",
+            window_start=start,
+            window_end=end,
+            status=status,
+            error_message=error_message,
+            rate_limited=decision.rate_limited,
+            wait_seconds=decision.wait_seconds,
+            duration_ms=duration_ms,
+        )
+
+
+def _record_provider_request(
+    db: TimescaleStore | None,
+    run_id: str | None,
+    provider: str,
+    endpoint_group: str,
+    request_key: str,
+    instrument_key: str,
+    symbol: str,
+    interval: str,
+    window_start: date,
+    window_end: date,
+    status: str,
+    error_message: str,
+    rate_limited: bool,
+    wait_seconds: float,
+    duration_ms: float,
+) -> None:
+    if db is None:
+        return
+    try:
+        db.insert_provider_request_logs(
+            [
+                {
+                    "run_id": run_id,
+                    "provider": provider,
+                    "endpoint_group": endpoint_group,
+                    "request_key": request_key,
+                    "instrument_key": instrument_key,
+                    "symbol": symbol,
+                    "interval": interval,
+                    "window_start": window_start,
+                    "window_end": window_end,
+                    "status": status,
+                    "error_message": error_message,
+                    "retry_count": 0,
+                    "rate_limited": rate_limited,
+                    "wait_seconds": wait_seconds,
+                    "duration_ms": duration_ms,
+                    "created_at": datetime.now(UTC),
+                }
+            ]
+        )
+    except Exception:
+        return
 
 
 def build_daily_fetch_coverage(

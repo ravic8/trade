@@ -20,6 +20,14 @@ services:
       APP_ENV: production
       DATA_DIR: /app/data
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
+      REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
+      INGESTION_PROFILE: prod
+      PROVIDER_RATE_LIMIT_BACKEND: redis
+      PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
+      UPSTOX_HISTORICAL_CONCURRENCY: ${PROD_UPSTOX_HISTORICAL_CONCURRENCY:-10}
+      UPSTOX_RATE_PER_SECOND: ${PROD_UPSTOX_RATE_PER_SECOND:-40}
+      UPSTOX_RATE_PER_MINUTE: ${PROD_UPSTOX_RATE_PER_MINUTE:-400}
+      UPSTOX_RATE_PER_30_MINUTES: ${PROD_UPSTOX_RATE_PER_30_MINUTES:-1600}
       QDRANT_URL: http://qdrant:6333
       API_CORS_ORIGINS: ${PROD_API_CORS_ORIGINS:-http://localhost:8080}
       CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR: ${PROD_CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR:-true}
@@ -71,6 +79,14 @@ services:
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
+      REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
+      INGESTION_PROFILE: prod
+      PROVIDER_RATE_LIMIT_BACKEND: redis
+      PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
+      UPSTOX_HISTORICAL_CONCURRENCY: ${PROD_UPSTOX_HISTORICAL_CONCURRENCY:-10}
+      UPSTOX_RATE_PER_SECOND: ${PROD_UPSTOX_RATE_PER_SECOND:-40}
+      UPSTOX_RATE_PER_MINUTE: ${PROD_UPSTOX_RATE_PER_MINUTE:-400}
+      UPSTOX_RATE_PER_30_MINUTES: ${PROD_UPSTOX_RATE_PER_30_MINUTES:-1600}
       QDRANT_URL: http://qdrant:6333
       UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
       OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
@@ -87,6 +103,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
       qdrant:
         condition: service_started
     restart: unless-stopped
@@ -112,6 +130,14 @@ services:
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
+      REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
+      INGESTION_PROFILE: prod
+      PROVIDER_RATE_LIMIT_BACKEND: redis
+      PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
+      UPSTOX_HISTORICAL_CONCURRENCY: ${PROD_UPSTOX_HISTORICAL_CONCURRENCY:-10}
+      UPSTOX_RATE_PER_SECOND: ${PROD_UPSTOX_RATE_PER_SECOND:-40}
+      UPSTOX_RATE_PER_MINUTE: ${PROD_UPSTOX_RATE_PER_MINUTE:-400}
+      UPSTOX_RATE_PER_30_MINUTES: ${PROD_UPSTOX_RATE_PER_30_MINUTES:-1600}
       QDRANT_URL: http://qdrant:6333
       UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
       OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
@@ -128,6 +154,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
       qdrant:
         condition: service_started
     restart: unless-stopped
