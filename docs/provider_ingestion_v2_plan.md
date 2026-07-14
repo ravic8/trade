@@ -652,8 +652,8 @@ Deliverables:
 - Fixed Dukascopy 5-minute FX/crypto instrument registry.
 - `ohlcv_intraday` hypertable.
 - CLI backfill/smoke command for 5-minute candles.
-- FX intraday scheduled asset.
-- Gap validation by pair/interval/window.
+- Dagster `fx_intraday_dukascopy_job` with a stopped-by-default schedule.
+- Gap validation by instrument/interval/window.
 
 Acceptance:
 
@@ -675,6 +675,10 @@ trade-research fetch-dukascopy-intraday \
   --timeout-seconds 5 \
   --no-store-db
 ```
+
+Production smoke should first use the same one-hour command with `--store-db`,
+then inspect `provider_request_log` for `provider=dukascopy` before attempting
+larger one-day windows.
 
 ### Phase 5: APIs And UI
 

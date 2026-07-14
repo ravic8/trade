@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -187,6 +188,153 @@ def run_dukascopy_intraday_ohlcv_pipeline(
     )
 
 
+def run_dukascopy_intraday_gap_validation_pipeline(
+    input_path: Path | None = None,
+    input_name: str = f"processed/intraday/{DUKASCOPY_INTRADAY_UNIVERSE_ID}_5m_ohlcv",
+    interval: str = DUKASCOPY_INTERVAL_5M,
+    expected_start: str | None = None,
+    expected_end: str | None = None,
+    output_path: Path = Path(
+        f"data/processed/intraday/{DUKASCOPY_INTRADAY_UNIVERSE_ID}_5m_gap_validation.csv"
+    ),
+    summary_output: Path = Path(
+        f"data/processed/intraday/{DUKASCOPY_INTRADAY_UNIVERSE_ID}_5m_gap_validation_summary.json"
+    ),
+) -> PipelineRunResult:
+    if interval != DUKASCOPY_INTERVAL_5M:
+        raise ValueError("Only interval=5m is supported for Dukascopy gap validation.")
+
+    settings = get_settings()
+    store = ParquetStore(settings.data_dir)
+    if input_path is not None:
+        frame = pd.read_parquet(input_path)
+    else:
+        frame = store.read_frame(input_name)
+
+    validation = build_dukascopy_intraday_gap_validation(
+        frame,
+        interval=interval,
+        expected_start=_parse_optional_datetime(expected_start, "expected_start"),
+        expected_end=_parse_optional_datetime(expected_end, "expected_end"),
+    )
+    summary = _intraday_gap_validation_summary(validation)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_output.parent.mkdir(parents=True, exist_ok=True)
+    validation.to_csv(output_path, index=False)
+    summary_output.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+    warnings = []
+    blocking = []
+    if summary["symbols_with_missing_rows"]:
+        warnings.append(
+            f"{summary['symbols_with_missing_rows']} Dukascopy symbols have missing 5m rows."
+        )
+    if summary["invalid_ohlcv_rows"]:
+        blocking.append(
+            f"{summary['invalid_ohlcv_rows']} Dukascopy rows have invalid OHLC values."
+        )
+    status = "fail" if blocking else "warn" if warnings else "pass"
+    return PipelineRunResult(
+        name=f"{DUKASCOPY_INTRADAY_UNIVERSE_ID}_{interval}_gap_validation",
+        status=status,
+        rows=int(len(validation)),
+        artifacts={
+            "gap_validation": output_path,
+            "summary": summary_output,
+        },
+        metrics=summary,
+        warnings=warnings,
+        blocking_issues=blocking,
+    )
+
+
+def build_dukascopy_intraday_gap_validation(
+    frame: pd.DataFrame,
+    interval: str = DUKASCOPY_INTERVAL_5M,
+    expected_start: datetime | None = None,
+    expected_end: datetime | None = None,
+) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(
+            columns=[
+                "instrument_key",
+                "symbol",
+                "exchange",
+                "asset_class",
+                "interval",
+                "start_ts",
+                "end_ts",
+                "expected_rows",
+                "observed_rows",
+                "missing_rows",
+                "duplicate_rows",
+                "invalid_ohlcv_rows",
+                "coverage_pct",
+                "status",
+            ]
+        )
+    required = {"InstrumentKey", "Symbol", "Timestamp", "Open", "High", "Low", "Close"}
+    missing_columns = required.difference(frame.columns)
+    if missing_columns:
+        raise ValueError(f"Missing Dukascopy intraday columns: {sorted(missing_columns)}")
+
+    delta = _interval_delta(interval)
+    data = frame.copy()
+    data["Timestamp"] = pd.to_datetime(data["Timestamp"], utc=True)
+    rows = []
+    for instrument_key, group in data.groupby("InstrumentKey"):
+        group = group.sort_values("Timestamp")
+        symbol = str(group["Symbol"].iloc[0])
+        exchange = str(group.get("Exchange", pd.Series([""])).iloc[0] or "")
+        asset_class = str(group.get("AssetClass", pd.Series([""])).iloc[0] or "")
+        start = expected_start or group["Timestamp"].min().to_pydatetime()
+        end_exclusive = expected_end or (group["Timestamp"].max().to_pydatetime() + delta)
+        expected_index = pd.date_range(
+            start=pd.Timestamp(start).tz_convert("UTC"),
+            end=pd.Timestamp(end_exclusive - delta).tz_convert("UTC"),
+            freq=delta,
+        )
+        observed = set(group["Timestamp"])
+        expected = set(expected_index)
+        duplicate_rows = int(group.duplicated(subset=["Timestamp"]).sum())
+        invalid_rows = int(
+            (
+                (group["Close"] <= 0)
+                | (group["High"] < group["Low"])
+                | group[["Open", "High", "Low", "Close"]].isna().any(axis=1)
+            ).sum()
+        )
+        expected_rows = len(expected)
+        observed_rows = len(observed.intersection(expected))
+        missing_rows = max(expected_rows - observed_rows, 0)
+        coverage_pct = min(observed_rows / expected_rows, 1.0) if expected_rows else 0.0
+        status = "pass"
+        if invalid_rows:
+            status = "fail"
+        elif missing_rows or duplicate_rows:
+            status = "warn"
+        rows.append(
+            {
+                "instrument_key": str(instrument_key),
+                "symbol": symbol,
+                "exchange": exchange,
+                "asset_class": asset_class,
+                "interval": interval,
+                "start_ts": pd.Timestamp(start).isoformat(),
+                "end_ts": pd.Timestamp(end_exclusive - delta).isoformat(),
+                "expected_rows": expected_rows,
+                "observed_rows": observed_rows,
+                "missing_rows": missing_rows,
+                "duplicate_rows": duplicate_rows,
+                "invalid_ohlcv_rows": invalid_rows,
+                "coverage_pct": coverage_pct,
+                "status": status,
+            }
+        )
+    return pd.DataFrame(rows).sort_values("instrument_key").reset_index(drop=True)
+
+
 def _fetch_dukascopy_tick_hours(
     instrument: DukascopyInstrument,
     hours: list[datetime],
@@ -321,3 +469,53 @@ def _parse_pipeline_date(value: str, field_name: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} must be YYYY-MM-DD: {value}") from exc
+
+
+def _parse_optional_datetime(value: str | None, field_name: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be ISO datetime: {value}") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _interval_delta(interval: str) -> timedelta:
+    if interval == DUKASCOPY_INTERVAL_5M:
+        return timedelta(minutes=5)
+    raise ValueError(f"Unsupported Dukascopy interval: {interval}")
+
+
+def _intraday_gap_validation_summary(validation: pd.DataFrame) -> dict[str, int | float]:
+    if validation.empty:
+        return {
+            "symbols_total": 0,
+            "symbols_pass": 0,
+            "symbols_warn": 0,
+            "symbols_fail": 0,
+            "expected_rows": 0,
+            "observed_rows": 0,
+            "missing_rows": 0,
+            "duplicate_rows": 0,
+            "invalid_ohlcv_rows": 0,
+            "symbols_with_missing_rows": 0,
+            "coverage_pct": 0.0,
+        }
+    expected_rows = int(validation["expected_rows"].sum())
+    observed_rows = int(validation["observed_rows"].sum())
+    return {
+        "symbols_total": int(len(validation)),
+        "symbols_pass": int(validation["status"].eq("pass").sum()),
+        "symbols_warn": int(validation["status"].eq("warn").sum()),
+        "symbols_fail": int(validation["status"].eq("fail").sum()),
+        "expected_rows": expected_rows,
+        "observed_rows": observed_rows,
+        "missing_rows": int(validation["missing_rows"].sum()),
+        "duplicate_rows": int(validation["duplicate_rows"].sum()),
+        "invalid_ohlcv_rows": int(validation["invalid_ohlcv_rows"].sum()),
+        "symbols_with_missing_rows": int((validation["missing_rows"] > 0).sum()),
+        "coverage_pct": min(observed_rows / expected_rows, 1.0) if expected_rows else 0.0,
+    }

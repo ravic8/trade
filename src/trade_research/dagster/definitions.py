@@ -4,7 +4,9 @@ from trade_research.dagster.daily_assets import (
     daily_features_v1,
     daily_pipeline_health,
     daily_targets_v1,
+    dukascopy_fx_intraday_ohlcv,
     factor_research_v1,
+    fx_intraday_gap_validation,
     ml_dataset_v1,
     processed_dataset_validation,
     upstox_daily_ohlcv,
@@ -45,6 +47,14 @@ north_america_daily_yfinance_job = define_asset_job(
     ],
 )
 
+fx_intraday_dukascopy_job = define_asset_job(
+    name="fx_intraday_dukascopy_job",
+    selection=[
+        dukascopy_fx_intraday_ohlcv,
+        fx_intraday_gap_validation,
+    ],
+)
+
 daily_research_schedule = ScheduleDefinition(
     name="daily_research_schedule",
     job=daily_research_pipeline_job,
@@ -61,11 +71,21 @@ north_america_daily_yfinance_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+fx_intraday_dukascopy_schedule = ScheduleDefinition(
+    name="fx_intraday_dukascopy_schedule",
+    job=fx_intraday_dukascopy_job,
+    cron_schedule="15 * * * 1-5",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 defs = Definitions(
     assets=[
         upstox_daily_ohlcv,
         yfinance_us_daily_ohlcv,
         yfinance_canada_daily_ohlcv,
+        dukascopy_fx_intraday_ohlcv,
+        fx_intraday_gap_validation,
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
@@ -77,6 +97,11 @@ defs = Definitions(
         daily_research_pipeline_job,
         factor_research_job,
         north_america_daily_yfinance_job,
+        fx_intraday_dukascopy_job,
     ],
-    schedules=[daily_research_schedule, north_america_daily_yfinance_schedule],
+    schedules=[
+        daily_research_schedule,
+        north_america_daily_yfinance_schedule,
+        fx_intraday_dukascopy_schedule,
+    ],
 )

@@ -5,6 +5,7 @@ import pandas as pd
 import trade_research.pipelines.dukascopy_intraday as dukascopy_pipeline
 from trade_research.config import Settings
 from trade_research.pipelines.dukascopy_intraday import (
+    run_dukascopy_intraday_gap_validation_pipeline,
     run_dukascopy_intraday_ohlcv_pipeline,
 )
 from trade_research.universe import DukascopyInstrument
@@ -180,3 +181,60 @@ def test_run_dukascopy_intraday_pipeline_rejects_unknown_instrument(
         assert "USD/CNH" in str(exc)
     else:
         raise AssertionError("Expected invalid instrument to raise ValueError")
+
+
+def test_run_dukascopy_intraday_gap_validation_flags_missing_rows(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    input_path = tmp_path / "intraday.parquet"
+    pd.DataFrame(
+        [
+            {
+                "Timestamp": "2026-07-01T00:00:00Z",
+                "Open": 1.1,
+                "High": 1.2,
+                "Low": 1.0,
+                "Close": 1.15,
+                "Volume": 10.0,
+                "InstrumentKey": "DUKAS|EURUSD",
+                "Symbol": "EUR/USD",
+                "Exchange": "FX",
+                "AssetClass": "fx",
+                "Interval": "5m",
+            },
+            {
+                "Timestamp": "2026-07-01T00:10:00Z",
+                "Open": 1.2,
+                "High": 1.3,
+                "Low": 1.1,
+                "Close": 1.25,
+                "Volume": 11.0,
+                "InstrumentKey": "DUKAS|EURUSD",
+                "Symbol": "EUR/USD",
+                "Exchange": "FX",
+                "AssetClass": "fx",
+                "Interval": "5m",
+            },
+        ]
+    ).to_parquet(input_path, index=False)
+    monkeypatch.setattr(
+        dukascopy_pipeline,
+        "get_settings",
+        lambda: Settings(data_dir=tmp_path, provider_rate_limit_backend="none"),
+    )
+
+    result = run_dukascopy_intraday_gap_validation_pipeline(
+        input_path=input_path,
+        expected_start="2026-07-01T00:00:00+00:00",
+        expected_end="2026-07-01T00:15:00+00:00",
+        output_path=tmp_path / "gap.csv",
+        summary_output=tmp_path / "gap.json",
+    )
+
+    assert result.status == "warn"
+    assert result.metrics["expected_rows"] == 3
+    assert result.metrics["observed_rows"] == 2
+    assert result.metrics["missing_rows"] == 1
+    assert result.artifacts["gap_validation"].exists()
+    assert result.artifacts["summary"].exists()

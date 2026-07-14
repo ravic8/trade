@@ -11,6 +11,7 @@ from trade_research.pipelines.daily_ohlcv import (
 from trade_research.pipelines.daily_pipeline_health import run_daily_pipeline_health_pipeline
 from trade_research.pipelines.daily_targets import run_daily_target_pipeline
 from trade_research.pipelines.dukascopy_intraday import (
+    run_dukascopy_intraday_gap_validation_pipeline,
     run_dukascopy_intraday_ohlcv_pipeline,
 )
 from trade_research.pipelines.factor_research import run_factor_research_pipeline
@@ -34,6 +35,7 @@ __all__ = [
     "run_daily_feature_pipeline",
     "run_daily_pipeline_health_pipeline",
     "run_daily_target_pipeline",
+    "run_dukascopy_intraday_gap_validation_pipeline",
     "run_dukascopy_intraday_ohlcv_pipeline",
     "run_factor_research_pipeline",
     "run_latest_predictions_v1_pipeline",
