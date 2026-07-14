@@ -51,17 +51,20 @@ from trade_research.schemas import (
     DataPipelineRunSummary,
     DataUniverseMemberRow,
     DataUniverseRow,
+    PipelineScheduleStatusRow,
     ProviderCapabilityResponse,
     ProviderCredentialStatusResponse,
     ProviderCredentialTestRequest,
     ProviderCredentialTestResponse,
     ProviderCredentialTokenRequest,
+    ProviderRequestLogRow,
+    ProviderRequestSummaryRow,
     ScreenerResult,
     SourcesPayload,
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
-from trade_research.universe import yfinance_universe
+from trade_research.universe import yfinance_intraday_universe, yfinance_universe
 
 app = FastAPI(title="Trade Research API", version="0.1.0")
 logger = logging.getLogger(__name__)
@@ -301,13 +304,26 @@ def data_availability(
         )
     if provider_normalized == "upstox" and exchange_normalized != "NSE":
         raise HTTPException(status_code=400, detail="provider=upstox supports only exchange=NSE.")
-    if provider_normalized == "yfinance" and exchange_normalized not in {"US", "CA"}:
+    if provider_normalized == "yfinance" and exchange_normalized not in {"US", "CA", "GLOBAL"}:
         raise HTTPException(
             status_code=400,
-            detail="provider=yfinance supports only exchange=US or exchange=CA.",
+            detail="provider=yfinance supports only exchange=US, exchange=CA, or exchange=GLOBAL.",
         )
-    if interval not in {"1d", "daily"}:
-        raise HTTPException(status_code=400, detail="Only interval=1d is supported.")
+    interval_normalized = "1d" if interval == "daily" else interval
+    if interval_normalized not in {"1d", "5m"}:
+        raise HTTPException(status_code=400, detail="Only interval=1d or interval=5m is supported.")
+    if interval_normalized == "5m" and (
+        provider_normalized != "yfinance" or exchange_normalized != "GLOBAL"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="interval=5m is supported only for provider=yfinance exchange=GLOBAL.",
+        )
+    if interval_normalized == "1d" and exchange_normalized == "GLOBAL":
+        raise HTTPException(
+            status_code=400,
+            detail="exchange=GLOBAL is supported only with interval=5m.",
+        )
     if (start_date is None) != (end_date is None):
         raise HTTPException(
             status_code=400,
@@ -318,6 +334,46 @@ def data_availability(
 
     try:
         store = _store()
+        if interval_normalized == "5m":
+            start_ts, end_ts = _intraday_bounds(start_date, end_date)
+            expected_rows = _expected_intraday_rows(start_ts, end_ts, minutes=5)
+            symbols = yfinance_intraday_universe(universe_id or "yfinance_fx_crypto_5m")
+            payload = store.seeded_intraday_ohlcv_availability(
+                symbols=[
+                    {
+                        "symbol": symbol.symbol,
+                        "name": symbol.name,
+                        "instrument_key": symbol.instrument_key,
+                        "asset_class": symbol.asset_class,
+                    }
+                    for symbol in symbols
+                ],
+                source=provider_normalized,
+                exchange=exchange_normalized,
+                interval=interval_normalized,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                query_text=query,
+                coverage_status=coverage_status,
+                expected_rows_per_symbol=expected_rows,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+            )
+            return DataAvailabilityResponse(
+                provider=provider_normalized,
+                exchange=exchange_normalized,
+                interval=interval_normalized,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+                total=payload["total"],
+                rows=payload["rows"],
+                summary=payload["summary"],
+            )
+
         if start_date and end_date:
             _ensure_exchange_holidays(store, exchange, start_date, end_date)
         expected_rows = _expected_daily_rows(store, exchange, start_date, end_date)
@@ -387,6 +443,135 @@ def data_availability(
         rows=payload["rows"],
         summary=payload["summary"],
     )
+
+
+@app.get("/api/data/provider-runs", response_model=list[DataPipelineRunSummary])
+def provider_runs(
+    provider: str | None = None,
+    exchange: str | None = None,
+    job: str | None = None,
+    status: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[DataPipelineRunSummary]:
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+    try:
+        rows = _store().provider_runs(
+            limit=limit,
+            offset=offset,
+            source=provider,
+            exchange=exchange,
+            job_name=job,
+            status=status,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [_to_data_pipeline_run_summary(row) for row in rows]
+
+
+@app.get("/api/data/provider-request-summary", response_model=list[ProviderRequestSummaryRow])
+def provider_request_summary(
+    run_id: str | None = None,
+    provider: str | None = None,
+    exchange: str | None = None,
+    job: str | None = None,
+    endpoint_group: str | None = None,
+    status: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[ProviderRequestSummaryRow]:
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+    try:
+        rows = _store().provider_request_summary(
+            run_id=run_id,
+            provider=provider,
+            endpoint_group=endpoint_group,
+            status=status,
+            exchange=exchange,
+            job_name=job,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [_to_provider_request_summary_row(row) for row in rows]
+
+
+@app.get("/api/data/provider-request-logs", response_model=list[ProviderRequestLogRow])
+def provider_request_logs(
+    run_id: str | None = None,
+    provider: str | None = None,
+    exchange: str | None = None,
+    job: str | None = None,
+    endpoint_group: str | None = None,
+    status: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ProviderRequestLogRow]:
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+    try:
+        rows = _store().provider_request_logs(
+            limit=limit,
+            offset=offset,
+            run_id=run_id,
+            provider=provider,
+            endpoint_group=endpoint_group,
+            status=status,
+            exchange=exchange,
+            job_name=job,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [_to_provider_request_log_row(row) for row in rows]
+
+
+@app.get("/api/data/schedules/status", response_model=list[PipelineScheduleStatusRow])
+def data_schedule_status() -> list[PipelineScheduleStatusRow]:
+    return [
+        PipelineScheduleStatusRow(
+            schedule_name="daily_research_schedule",
+            job_name="daily_research_pipeline_job",
+            cron_schedule="30 19 * * 1-5",
+            execution_timezone="Asia/Kolkata",
+            intended_status="stopped",
+            notes="Read-only status; Dagster remains private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="north_america_daily_yfinance_schedule",
+            job_name="north_america_daily_yfinance_job",
+            cron_schedule="30 3 * * 2-6",
+            execution_timezone="Asia/Kolkata",
+            intended_status="stopped",
+            notes="Read-only status; cadence is controlled in private Dagster.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="fx_intraday_dukascopy_schedule",
+            job_name="fx_intraday_dukascopy_job",
+            cron_schedule="15 * * * 1-5",
+            execution_timezone="UTC",
+            intended_status="stopped",
+            notes="Keep stopped because Dukascopy datafeed times out.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="yfinance_fx_intraday_schedule",
+            job_name="yfinance_fx_intraday_job",
+            cron_schedule="20 * * * *",
+            execution_timezone="UTC",
+            intended_status="stopped",
+            notes="Keep stopped until intraday cadence is explicitly chosen.",
+        ),
+    ]
 
 
 @app.get("/api/data/bulk-fetch-preview", response_model=DataBulkFetchPreviewResponse)
@@ -1026,6 +1211,41 @@ def _to_data_pipeline_run_summary(row: dict) -> DataPipelineRunSummary:
     )
 
 
+def _to_provider_request_summary_row(row: dict) -> ProviderRequestSummaryRow:
+    return ProviderRequestSummaryRow(
+        provider=str(row["provider"]),
+        endpoint_group=str(row["endpoint_group"]),
+        status=str(row["status"]),
+        requests=int(row.get("requests") or 0),
+        rate_limited_requests=int(row.get("rate_limited_requests") or 0),
+        wait_seconds=float(row.get("wait_seconds") or 0.0),
+        avg_duration_ms=float(row.get("avg_duration_ms") or 0.0),
+    )
+
+
+def _to_provider_request_log_row(row: dict) -> ProviderRequestLogRow:
+    return ProviderRequestLogRow(
+        id=str(row["id"]),
+        run_id=row.get("run_id"),
+        provider=str(row["provider"]),
+        endpoint_group=str(row["endpoint_group"]),
+        request_key=str(row["request_key"]),
+        instrument_key=row.get("instrument_key"),
+        symbol=row.get("symbol"),
+        interval=row.get("interval"),
+        window_start=row.get("window_start"),
+        window_end=row.get("window_end"),
+        status_code=row.get("status_code"),
+        status=str(row["status"]),
+        error_message=row.get("error_message"),
+        retry_count=int(row.get("retry_count") or 0),
+        rate_limited=bool(row.get("rate_limited")),
+        wait_seconds=float(row.get("wait_seconds") or 0.0),
+        duration_ms=float(row.get("duration_ms") or 0.0),
+        created_at=row["created_at"],
+    )
+
+
 def _expected_daily_rows(
     store: TimescaleStore,
     exchange: str,
@@ -1036,6 +1256,29 @@ def _expected_daily_rows(
         return 0
 
     return len(_expected_daily_dates(store, exchange, start_date, end_date))
+
+
+def _intraday_bounds(
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[datetime | None, datetime | None]:
+    if start_date is None or end_date is None:
+        return None, None
+    start_ts = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=UTC)
+    exclusive_end = datetime.combine(end_date + timedelta(days=1), datetime.min.time()).replace(
+        tzinfo=UTC
+    )
+    return start_ts, exclusive_end - timedelta(minutes=5)
+
+
+def _expected_intraday_rows(
+    start_ts: datetime | None,
+    end_ts: datetime | None,
+    minutes: int,
+) -> int:
+    if start_ts is None or end_ts is None or start_ts > end_ts:
+        return 0
+    return int((end_ts - start_ts).total_seconds() // (minutes * 60)) + 1
 
 
 def _expected_daily_dates(

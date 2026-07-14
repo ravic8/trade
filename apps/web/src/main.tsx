@@ -32,6 +32,8 @@ const router = createBrowserRouter([
       { path: "/", element: <Navigate to="/dashboard" replace /> },
       { path: "/dashboard", element: <DashboardPage /> },
       { path: "/data", element: <DataPipelinePage /> },
+      { path: "/data/availability", element: <Navigate to="/data" replace /> },
+      { path: "/data/observability", element: <Navigate to="/data" replace /> },
       { path: "/screeners", element: <ScreenersPage /> },
       { path: "/symbols/:ticker", element: <SymbolPage /> },
       { path: "/research", element: <ResearchPage /> },

@@ -23,6 +23,10 @@ import {
   getMLRobustness,
   getMLSummary,
   getMarketStatus,
+  getPipelineScheduleStatus,
+  getProviderRequestLogs,
+  getProviderRequestSummary,
+  getProviderRuns,
   getResearchProgress,
   getResearchNotes,
   getScreenerResults,
@@ -42,6 +46,7 @@ import type {
   DataPipelineRequest,
   MLConcreteRunId,
   MLRunId,
+  ProviderObservabilityParams,
   ProviderCredentialTestRequest,
   ProviderCredentialTokenRequest,
 } from "./types";
@@ -177,6 +182,34 @@ export function useSaveUpstoxCredential() {
 
 export function useDataPipelineRuns() {
   return useQuery({ queryKey: ["data-pipeline-runs"], queryFn: getDataPipelineRuns });
+}
+
+export function useProviderRuns(params: ProviderObservabilityParams) {
+  return useQuery({
+    queryKey: ["provider-runs", params],
+    queryFn: () => getProviderRuns(params),
+  });
+}
+
+export function useProviderRequestSummary(params: ProviderObservabilityParams) {
+  return useQuery({
+    queryKey: ["provider-request-summary", params],
+    queryFn: () => getProviderRequestSummary(params),
+  });
+}
+
+export function useProviderRequestLogs(params: ProviderObservabilityParams) {
+  return useQuery({
+    queryKey: ["provider-request-logs", params],
+    queryFn: () => getProviderRequestLogs(params),
+  });
+}
+
+export function usePipelineScheduleStatus() {
+  return useQuery({
+    queryKey: ["pipeline-schedule-status"],
+    queryFn: getPipelineScheduleStatus,
+  });
 }
 
 export function useDataPipelineHealth() {
