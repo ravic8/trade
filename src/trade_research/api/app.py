@@ -60,6 +60,7 @@ from trade_research.schemas import (
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
+from trade_research.universe import yfinance_seed_universe
 
 app = FastAPI(title="Trade Research API", version="0.1.0")
 logger = logging.getLogger(__name__)
@@ -290,10 +291,20 @@ def data_availability(
     offset: Annotated[int, Query(ge=0)] = 0,
     sort: str = "symbol",
 ) -> DataAvailabilityResponse:
-    if provider.lower() != "upstox":
-        raise HTTPException(status_code=400, detail="Only provider=upstox is supported.")
-    if exchange.upper() != "NSE":
-        raise HTTPException(status_code=400, detail="Only exchange=NSE is supported.")
+    provider_normalized = provider.lower()
+    exchange_normalized = exchange.upper()
+    if provider_normalized not in {"upstox", "yfinance"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only provider=upstox or provider=yfinance is supported.",
+        )
+    if provider_normalized == "upstox" and exchange_normalized != "NSE":
+        raise HTTPException(status_code=400, detail="provider=upstox supports only exchange=NSE.")
+    if provider_normalized == "yfinance" and exchange_normalized not in {"US", "CA"}:
+        raise HTTPException(
+            status_code=400,
+            detail="provider=yfinance supports only exchange=US or exchange=CA.",
+        )
     if interval not in {"1d", "daily"}:
         raise HTTPException(status_code=400, detail="Only interval=1d is supported.")
     if (start_date is None) != (end_date is None):
@@ -309,27 +320,62 @@ def data_availability(
         if start_date and end_date:
             _ensure_exchange_holidays(store, exchange, start_date, end_date)
         expected_rows = _expected_daily_rows(store, exchange, start_date, end_date)
-        payload = store.daily_ohlcv_availability(
-            source=provider.lower(),
-            exchange=exchange.upper(),
-            start_date=start_date,
-            end_date=end_date,
-            query_text=query,
-            universe_id=universe_id,
-            coverage_status=coverage_status,
-            expected_rows_per_symbol=expected_rows,
-            limit=limit,
-            offset=offset,
-            sort=sort,
-        )
+        if provider_normalized == "yfinance":
+            seed_universe = universe_id or (
+                "canada_seed" if exchange_normalized == "CA" else "us_seed"
+            )
+            symbols = yfinance_seed_universe(seed_universe)
+            invalid_symbols = [
+                symbol.symbol
+                for symbol in symbols
+                if symbol.exchange.upper() != exchange_normalized
+            ]
+            if invalid_symbols:
+                raise ValueError(
+                    f"universe_id={seed_universe} does not match exchange={exchange_normalized}."
+                )
+            payload = store.seeded_daily_ohlcv_availability(
+                symbols=[
+                    {
+                        "symbol": symbol.symbol,
+                        "name": symbol.name,
+                        "instrument_key": f"YF|{symbol.yahoo_symbol or symbol.symbol}",
+                    }
+                    for symbol in symbols
+                ],
+                source=provider_normalized,
+                exchange=exchange_normalized,
+                start_date=start_date,
+                end_date=end_date,
+                query_text=query,
+                coverage_status=coverage_status,
+                expected_rows_per_symbol=expected_rows,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+            )
+        else:
+            payload = store.daily_ohlcv_availability(
+                source=provider_normalized,
+                exchange=exchange_normalized,
+                start_date=start_date,
+                end_date=end_date,
+                query_text=query,
+                universe_id=universe_id,
+                coverage_status=coverage_status,
+                expected_rows_per_symbol=expected_rows,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
 
     return DataAvailabilityResponse(
-        provider=provider.lower(),
-        exchange=exchange.upper(),
+        provider=provider_normalized,
+        exchange=exchange_normalized,
         interval="1d",
         start_date=start_date,
         end_date=end_date,
@@ -929,6 +975,15 @@ def _expected_daily_rows(
     if start_date is None or end_date is None:
         return 0
 
+    if exchange.upper() not in {"NSE", "TSX"}:
+        current = start_date
+        trading_days = 0
+        while current <= end_date:
+            if current.weekday() < 5:
+                trading_days += 1
+            current += timedelta(days=1)
+        return trading_days
+
     holidays = _stored_exchange_holidays(store, exchange, start_date, end_date)
     return len(expected_trading_dates(exchange, start_date, end_date, holidays=holidays))
 
@@ -939,6 +994,9 @@ def _ensure_exchange_holidays(
     start_date: date,
     end_date: date,
 ) -> None:
+    if exchange.upper() not in {"NSE", "TSX"}:
+        return
+
     for year in range(start_date.year, end_date.year + 1):
         cached = store.exchange_holidays(exchange, year)
         if cached is not None and cached.get("closed_dates"):
