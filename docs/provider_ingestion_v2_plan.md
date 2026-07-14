@@ -556,6 +556,43 @@ Deliverables:
 - Daily storage into `ohlcv_daily`.
 - Daily validation and coverage artifacts.
 
+Phase 3A implemented contract:
+
+- Seed universes: `us_seed` and `canada_seed`, each with 20 large/liquid names.
+- CLI command: `trade-research fetch-yfinance-daily --universe us_seed|canada_seed`.
+- yfinance daily downloads are batched and pass through the shared provider
+  limiter as `provider=yfinance`, `endpoint_group=download`.
+- `provider_request_log` records one row per attempted yfinance download batch.
+- Raw daily OHLCV is stored in existing `ohlcv_daily` with `source=yfinance`
+  and `exchange=US` or `CA`.
+- Adjusted close storage is deliberately deferred because the current
+  `ohlcv_daily` contract stores one close column. The filter/preview phase
+  should decide whether to add adjusted close, raw close plus adjusted close, or
+  a separate adjustment table.
+- Dagster assets `yfinance_us_daily_ohlcv` and `yfinance_canada_daily_ohlcv`
+  are available through `north_america_daily_yfinance_job`, with the schedule
+  stopped by default.
+
+Smoke examples:
+
+```text
+trade-research fetch-yfinance-daily \
+  --universe us_seed \
+  --limit 5 \
+  --from-date 2026-07-01 \
+  --to-date 2026-07-03 \
+  --batch-size 5 \
+  --store-db
+
+trade-research fetch-yfinance-daily \
+  --universe canada_seed \
+  --limit 5 \
+  --from-date 2026-07-01 \
+  --to-date 2026-07-03 \
+  --batch-size 5 \
+  --store-db
+```
+
 Acceptance:
 
 - US/Canada daily rows are stored incrementally.

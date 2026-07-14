@@ -35,6 +35,7 @@ UPSTOX_V3_HISTORICAL_CANDLE_DOCS_URL = (
     "https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/"
 )
 UPSTOX_RATE_LIMIT_DOCS_URL = "https://upstox.com/developer/api-documentation/rate-limiting/"
+YFINANCE_SOURCE_URL = "https://pypi.org/project/yfinance/"
 
 
 UPSTOX_V3_CAPABILITY = ProviderCapability(
@@ -99,9 +100,36 @@ UPSTOX_V3_CAPABILITY = ProviderCapability(
     ),
 )
 
+YFINANCE_CAPABILITY = ProviderCapability(
+    provider="yfinance",
+    api_version="library",
+    source_url=YFINANCE_SOURCE_URL,
+    historical=(
+        HistoricalCapability(
+            unit="days",
+            interval_min=1,
+            interval_max=1,
+            available_from=date(1900, 1, 1),
+            max_window=None,
+            notes="Coverage varies by ticker and Yahoo Finance availability.",
+        ),
+    ),
+    rate_limits=RateLimits(
+        standard_api_per_second=0,
+        standard_api_per_minute=30,
+        standard_api_per_30_minutes=900,
+    ),
+    notes=(
+        "Unofficial Yahoo Finance library; use conservative batching and retries.",
+        "Phase 3A stores raw OHLCV into ohlcv_daily; adjusted close storage is deferred.",
+    ),
+)
+
 
 def provider_capability(provider: str) -> ProviderCapability:
     normalized = provider.strip().lower()
     if normalized == "upstox":
         return UPSTOX_V3_CAPABILITY
+    if normalized == "yfinance":
+        return YFINANCE_CAPABILITY
     raise ValueError(f"Unsupported provider: {provider}")

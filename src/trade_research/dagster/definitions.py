@@ -8,6 +8,8 @@ from trade_research.dagster.daily_assets import (
     ml_dataset_v1,
     processed_dataset_validation,
     upstox_daily_ohlcv,
+    yfinance_canada_daily_ohlcv,
+    yfinance_us_daily_ohlcv,
 )
 
 daily_research_pipeline_job = define_asset_job(
@@ -35,6 +37,14 @@ factor_research_job = define_asset_job(
     ],
 )
 
+north_america_daily_yfinance_job = define_asset_job(
+    name="north_america_daily_yfinance_job",
+    selection=[
+        yfinance_us_daily_ohlcv,
+        yfinance_canada_daily_ohlcv,
+    ],
+)
+
 daily_research_schedule = ScheduleDefinition(
     name="daily_research_schedule",
     job=daily_research_pipeline_job,
@@ -43,9 +53,19 @@ daily_research_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+north_america_daily_yfinance_schedule = ScheduleDefinition(
+    name="north_america_daily_yfinance_schedule",
+    job=north_america_daily_yfinance_job,
+    cron_schedule="30 3 * * 2-6",
+    execution_timezone="Asia/Kolkata",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 defs = Definitions(
     assets=[
         upstox_daily_ohlcv,
+        yfinance_us_daily_ohlcv,
+        yfinance_canada_daily_ohlcv,
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
@@ -56,6 +76,7 @@ defs = Definitions(
     jobs=[
         daily_research_pipeline_job,
         factor_research_job,
+        north_america_daily_yfinance_job,
     ],
-    schedules=[daily_research_schedule],
+    schedules=[daily_research_schedule, north_america_daily_yfinance_schedule],
 )

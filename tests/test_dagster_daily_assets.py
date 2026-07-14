@@ -117,6 +117,36 @@ def test_upstox_daily_asset_stores_to_timescale(monkeypatch) -> None:
     }
 
 
+def test_yfinance_daily_assets_store_seed_universes(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_pipeline(**kwargs) -> object:
+        calls.append(kwargs)
+        return _result(f"yfinance_{kwargs['universe']}_daily_ohlcv")
+
+    monkeypatch.setattr(daily_assets, "run_yfinance_daily_ohlcv_pipeline", fake_pipeline)
+
+    us_result = daily_assets.yfinance_us_daily_ohlcv(dagster.build_op_context())
+    canada_result = daily_assets.yfinance_canada_daily_ohlcv(dagster.build_op_context())
+
+    assert us_result.name == "yfinance_us_seed_daily_ohlcv"
+    assert canada_result.name == "yfinance_canada_seed_daily_ohlcv"
+    assert calls == [
+        {
+            "universe": "us_seed",
+            "store_db": True,
+            "export_db_snapshot": True,
+            "trigger": "dagster",
+        },
+        {
+            "universe": "canada_seed",
+            "store_db": True,
+            "export_db_snapshot": True,
+            "trigger": "dagster",
+        },
+    ]
+
+
 def test_daily_pipeline_health_skips_factor_research_rebuild(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
