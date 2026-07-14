@@ -62,6 +62,12 @@ class FakeCoverageStore:
         source: str = "upstox",
         exchange: str = "NSE",
     ) -> dict:
+        if source == "yfinance":
+            assert exchange == "US"
+            return {
+                "YF|AAPL": {start_date, start_date.replace(day=2)},
+                "YF|MSFT": {start_date, start_date.replace(day=2), start_date.replace(day=6)},
+            }
         return {
             "NSE_EQ|AAA": {start_date, start_date.replace(day=2)},
             "NSE_EQ|BBB": {start_date},
@@ -630,6 +636,48 @@ def test_data_availability_rejects_yfinance_exchange_mismatch() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "universe_id=us_seed does not match exchange=CA."
+
+
+def test_data_bulk_fetch_preview_supports_yfinance_filters(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/bulk-fetch-preview"
+            "?provider=yfinance&exchange=US"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+            "&query=AAPL&coverage_status=partial&limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "yfinance"
+    assert payload["exchange"] == "US"
+    assert payload["universe_id"] == "us_seed"
+    assert payload["total"] == 1
+    assert payload["summary"]["symbols_partial"] == 1
+    assert payload["summary"]["missing_rows"] == 2
+    assert payload["rows"][0]["symbol"] == "AAPL"
+    assert payload["rows"][0]["stored_rows"] == 2
+    assert payload["rows"][0]["expected_rows"] == 4
+    assert payload["rows"][0]["coverage_status"] == "partial"
+    assert payload["tasks"] == payload["rows"][0]["tasks"]
+    assert payload["tasks"][0]["fetch_start"] == "2026-01-05"
+    assert payload["tasks"][0]["fetch_end"] == "2026-01-06"
+
+
+def test_data_bulk_fetch_preview_rejects_non_yfinance() -> None:
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/bulk-fetch-preview"
+            "?provider=upstox&exchange=NSE"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Only provider=yfinance is supported for bulk fetch preview."
+    )
 
 
 def test_data_availability_requires_date_pair() -> None:

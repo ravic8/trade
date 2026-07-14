@@ -599,6 +599,25 @@ Acceptance:
 - yfinance requests are batched and rate-limited.
 - Existing NSE Upstox pipeline remains independent.
 
+### Phase 3B: yfinance Availability And Bulk Preview
+
+Deliverables:
+
+- `GET /api/data/availability` supports `provider=yfinance` for seeded US and
+  Canada daily coverage.
+- `GET /api/data/bulk-fetch-preview` previews seeded yfinance missing windows
+  by exchange, universe, date range, query, and coverage status before any
+  mutating fetch runs.
+- US/Canada expected-session counts use weekdays until exchange-specific
+  holiday calendars are added.
+
+Acceptance:
+
+- Seeded US/Canada symbols can be filtered as complete, partial, or empty.
+- Preview responses include queued fetch windows for missing daily candles.
+- Preview remains read-only; production fetches still go through
+  `trade-research fetch-yfinance-daily` or scheduled Dagster assets.
+
 ### Phase 4: Dukascopy FX Intraday Storage
 
 Deliverables:
