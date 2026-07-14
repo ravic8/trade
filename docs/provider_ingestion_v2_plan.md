@@ -664,6 +664,18 @@ Acceptance:
 - Each request is rate-limited and logged.
 - Backfills are chunked and resumable.
 
+Local smoke command:
+
+```text
+trade-research fetch-dukascopy-intraday \
+  --from-date 2026-07-01 \
+  --to-date 2026-07-01 \
+  --instrument EUR/USD \
+  --max-hours 1 \
+  --timeout-seconds 5 \
+  --no-store-db
+```
+
 ### Phase 5: APIs And UI
 
 Only after scheduled storage is stable:

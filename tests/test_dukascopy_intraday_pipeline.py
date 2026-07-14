@@ -72,8 +72,11 @@ class _FakeTimescaleStore:
         assert job_name == "dukascopy_fx_crypto_5m_5m_ohlcv"
         assert exchange == "GLOBAL"
         assert source == "dukascopy"
-        assert items_requested == 24
+        assert items_requested == 1
         assert run_metadata["mapped_symbols"] == 1
+        assert run_metadata["instrument"] == "EURUSD"
+        assert run_metadata["max_hours"] == 1
+        assert run_metadata["timeout_seconds"] == 5.0
         return "dukas-run"
 
     def insert_provider_request_logs(self, logs) -> int:
@@ -129,7 +132,9 @@ def test_run_dukascopy_intraday_pipeline_logs_and_upserts(tmp_path, monkeypatch)
     result = run_dukascopy_intraday_ohlcv_pipeline(
         from_date="2026-07-01",
         to_date="2026-07-01",
-        limit=1,
+        instrument="EURUSD",
+        max_hours=1,
+        timeout_seconds=5.0,
         store_db=True,
         provider=provider,
     )
@@ -137,13 +142,41 @@ def test_run_dukascopy_intraday_pipeline_logs_and_upserts(tmp_path, monkeypatch)
     store = _FakeTimescaleStore.instances[0]
     assert result.status == "pass"
     assert result.rows == 1
-    assert result.metrics["requested_hours"] == 24
+    assert result.metrics["instrument"] == "EURUSD"
+    assert result.metrics["requested_hours"] == 1
+    assert result.metrics["max_hours"] == 1
+    assert result.metrics["timeout_seconds"] == 5.0
     assert result.metrics["timescale_rows"] == 1
-    assert len(provider.calls) == 24
-    assert len(store.logs) == 24
+    assert len(provider.calls) == 1
+    assert len(store.logs) == 1
     assert store.logs[0]["provider"] == "dukascopy"
     assert store.logs[0]["endpoint_group"] == "historical"
     assert store.logs[0]["interval"] == "5m"
     assert store.finished_runs[0]["status"] == "completed"
     assert result.artifacts["ohlcv"].exists()
     assert result.artifacts["fetch_failures"].exists()
+
+
+def test_run_dukascopy_intraday_pipeline_rejects_unknown_instrument(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        dukascopy_pipeline,
+        "get_settings",
+        lambda: Settings(data_dir=tmp_path, provider_rate_limit_backend="none"),
+    )
+
+    try:
+        run_dukascopy_intraday_ohlcv_pipeline(
+            from_date="2026-07-01",
+            to_date="2026-07-01",
+            instrument="USD/CNY",
+            store_db=False,
+            provider=_FakeDukascopyProvider(),
+        )
+    except ValueError as exc:
+        assert "Unsupported Dukascopy instrument" in str(exc)
+        assert "USD/CNH" in str(exc)
+    else:
+        raise AssertionError("Expected invalid instrument to raise ValueError")

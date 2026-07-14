@@ -785,10 +785,22 @@ def fetch_dukascopy_intraday(
         str,
         typer.Option(help="End date in YYYY-MM-DD format."),
     ] = ...,
+    instrument: Annotated[
+        str | None,
+        typer.Option(help="Optional single instrument, e.g. EUR/USD, EURUSD, or BTC/USD."),
+    ] = None,
     limit: Annotated[
         int | None,
         typer.Option(min=1, help="Optional instrument limit for smoke tests."),
     ] = None,
+    max_hours: Annotated[
+        int | None,
+        typer.Option(min=1, help="Maximum hourly Dukascopy archive files to request."),
+    ] = None,
+    timeout_seconds: Annotated[
+        float,
+        typer.Option(min=1, max=60, help="Per-request Dukascopy HTTP timeout."),
+    ] = 15.0,
     store_db: Annotated[
         bool,
         typer.Option(help="Also upsert 5-minute candles into Timescale/Postgres."),
@@ -800,7 +812,10 @@ def fetch_dukascopy_intraday(
             interval=interval,
             from_date=from_date,
             to_date=to_date,
+            instrument=instrument,
             limit=limit,
+            max_hours=max_hours,
+            timeout_seconds=timeout_seconds,
             store_db=store_db,
             trigger="cli",
         )
@@ -817,6 +832,7 @@ def fetch_dukascopy_intraday(
     )
     console.print(f"Mapped symbols: {result.metrics['mapped_symbols']}")
     console.print(f"Requested hours: {result.metrics['requested_hours']}")
+    console.print(f"Timeout seconds: {result.metrics['timeout_seconds']}")
     console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
     if store_db:

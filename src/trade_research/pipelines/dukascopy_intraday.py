@@ -37,7 +37,10 @@ def run_dukascopy_intraday_ohlcv_pipeline(
     interval: str = DUKASCOPY_INTERVAL_5M,
     from_date: str | None = None,
     to_date: str | None = None,
+    instrument: str | None = None,
     limit: int | None = None,
+    max_hours: int | None = None,
+    timeout_seconds: float = 15.0,
     store_db: bool = True,
     output_name: str | None = None,
     failures_output: Path | None = None,
@@ -53,9 +56,10 @@ def run_dukascopy_intraday_ohlcv_pipeline(
     if start_date > end_date:
         raise ValueError("from_date must be on or before to_date.")
 
-    instruments = dukascopy_intraday_universe(universe)
+    instruments = _filter_instruments(dukascopy_intraday_universe(universe), instrument)
     if limit:
         instruments = instruments[:limit]
+    hours = _hourly_windows(start_date, end_date, max_hours=max_hours)
     output_name = output_name or f"processed/intraday/{universe}_{interval}_ohlcv"
     failures_output = failures_output or Path(
         f"data/processed/intraday/{universe}_{interval}_failures.csv"
@@ -66,7 +70,7 @@ def run_dukascopy_intraday_ohlcv_pipeline(
     if db is not None:
         db.initialize()
     run_id = None
-    request_count = len(instruments) * len(_hourly_windows(start_date, end_date))
+    request_count = len(instruments) * len(hours)
     if db is not None:
         run_id = db.start_ingestion_run(
             job_name=f"{universe}_{interval}_ohlcv",
@@ -79,19 +83,24 @@ def run_dukascopy_intraday_ohlcv_pipeline(
                 "interval": interval,
                 "from_date": start_date.isoformat(),
                 "to_date": end_date.isoformat(),
+                "instrument": instrument,
                 "mapped_symbols": len(instruments),
+                "max_hours": max_hours,
+                "timeout_seconds": timeout_seconds,
             },
         )
 
     limiter = build_provider_rate_limiter(settings)
-    candle_provider = provider or DukascopyHistoricalProvider()
+    candle_provider = provider or DukascopyHistoricalProvider(
+        timeout_seconds=timeout_seconds
+    )
     frames: list[pd.DataFrame] = []
     failures: list[dict[str, str]] = []
     try:
-        for instrument in instruments:
+        for dukascopy_instrument in instruments:
             tick_frames = _fetch_dukascopy_tick_hours(
-                instrument=instrument,
-                hours=_hourly_windows(start_date, end_date),
+                instrument=dukascopy_instrument,
+                hours=hours,
                 provider=candle_provider,
                 limiter=limiter,
                 db=db,
@@ -99,7 +108,11 @@ def run_dukascopy_intraday_ohlcv_pipeline(
                 interval=interval,
                 failures=failures,
             )
-            candles = combine_tick_frames(tick_frames, instrument=instrument, interval=interval)
+            candles = combine_tick_frames(
+                tick_frames,
+                instrument=dukascopy_instrument,
+                interval=interval,
+            )
             if not candles.empty:
                 frames.append(candles)
 
@@ -161,7 +174,10 @@ def run_dukascopy_intraday_ohlcv_pipeline(
             "mapped_symbols": int(len(instruments)),
             "from_date": start_date.isoformat(),
             "to_date": end_date.isoformat(),
+            "instrument": instrument,
             "requested_hours": int(request_count),
+            "max_hours": max_hours,
+            "timeout_seconds": float(timeout_seconds),
             "fetched_rows": int(len(ohlcv)),
             "failure_rows": int(len(failures)),
             "timescale_rows": int(rows_written),
@@ -262,12 +278,40 @@ def _record_dukascopy_request(
         return
 
 
-def _hourly_windows(start_date: date, end_date: date) -> list[datetime]:
+def _filter_instruments(
+    instruments: list[DukascopyInstrument],
+    instrument: str | None,
+) -> list[DukascopyInstrument]:
+    if not instrument:
+        return instruments
+    needle = instrument.strip().upper().replace("_", "/")
+    normalized = needle.replace("/", "")
+    selected = [
+        item
+        for item in instruments
+        if item.symbol.upper() == needle
+        or item.symbol.upper().replace("/", "") == normalized
+        or item.dukascopy_id.upper() == normalized
+        or item.instrument_key.upper().endswith(f"|{normalized}")
+    ]
+    if not selected:
+        supported = ", ".join(item.symbol for item in instruments)
+        raise ValueError(f"Unsupported Dukascopy instrument {instrument!r}. Supported: {supported}")
+    return selected
+
+
+def _hourly_windows(
+    start_date: date,
+    end_date: date,
+    max_hours: int | None = None,
+) -> list[datetime]:
     current = datetime.combine(start_date, time.min, tzinfo=UTC)
     end = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=UTC)
     hours = []
     while current < end:
         hours.append(current)
+        if max_hours is not None and len(hours) >= max_hours:
+            break
         current += timedelta(hours=1)
     return hours
 
