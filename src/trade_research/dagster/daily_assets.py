@@ -11,6 +11,8 @@ from trade_research.pipelines import (
     run_daily_feature_pipeline,
     run_daily_pipeline_health_pipeline,
     run_daily_target_pipeline,
+    run_dukascopy_intraday_gap_validation_pipeline,
+    run_dukascopy_intraday_ohlcv_pipeline,
     run_factor_research_pipeline,
     run_ml_dataset_v1_pipeline,
     run_processed_dataset_validation_pipeline,
@@ -66,6 +68,47 @@ def yfinance_canada_daily_ohlcv(context) -> PipelineRunResult:
         store_db=True,
         export_db_snapshot=True,
         trigger="dagster",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="fx_intraday",
+    compute_kind="dukascopy",
+    description="Fetch Dukascopy 5-minute FX/crypto OHLCV into TimescaleDB.",
+)
+def dukascopy_fx_intraday_ohlcv(context) -> PipelineRunResult:
+    result = run_dukascopy_intraday_ohlcv_pipeline(
+        store_db=True,
+        trigger="dagster",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="fx_intraday",
+    compute_kind="python",
+    ins={"intraday_ohlcv": AssetIn("dukascopy_fx_intraday_ohlcv")},
+    description="Validate Dukascopy 5-minute intraday gaps by instrument.",
+)
+def fx_intraday_gap_validation(
+    context,
+    intraday_ohlcv: PipelineRunResult,
+) -> PipelineRunResult:
+    _assert_upstream_not_failed(intraday_ohlcv)
+    input_path = intraday_ohlcv.artifacts.get("ohlcv")
+    if input_path is None:
+        result = PipelineRunResult(
+            name="dukascopy_fx_crypto_5m_gap_validation",
+            status="fail",
+            blocking_issues=["Dukascopy fetch produced no OHLCV artifact to validate."],
+        )
+        context.add_output_metadata(_result_metadata(result))
+        return result
+    result = run_dukascopy_intraday_gap_validation_pipeline(
+        input_path=input_path,
     )
     context.add_output_metadata(_result_metadata(result))
     return result

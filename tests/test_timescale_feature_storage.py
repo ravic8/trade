@@ -182,6 +182,52 @@ def test_corporate_action_rows_normalize_for_storage() -> None:
     assert row["raw"] == {"kind": "cash_dividend"}
 
 
+def test_intraday_ohlcv_rows_normalize_for_storage() -> None:
+    rows = TimescaleStore._intraday_ohlcv_rows(
+        pd.DataFrame(
+            [
+                {
+                    "Timestamp": datetime(2026, 7, 1, 9, 30, tzinfo=UTC),
+                    "InstrumentKey": "DUKAS|EURUSD",
+                    "Symbol": "eur/usd",
+                    "AssetClass": "fx",
+                    "Interval": "5m",
+                    "Open": 1.1,
+                    "High": 1.2,
+                    "Low": 1.0,
+                    "Close": 1.15,
+                    "Volume": 10.5,
+                },
+                {
+                    "Timestamp": None,
+                    "InstrumentKey": "DUKAS|GBPUSD",
+                    "Symbol": "gbp/usd",
+                    "AssetClass": "fx",
+                    "Interval": "5m",
+                    "Open": 1.1,
+                    "High": 1.2,
+                    "Low": 1.0,
+                    "Close": 1.15,
+                    "Volume": 10.5,
+                },
+            ]
+        ),
+        exchange="GLOBAL",
+        source="dukascopy",
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["instrument_key"] == "DUKAS|EURUSD"
+    assert row["source"] == "dukascopy"
+    assert row["interval"] == "5m"
+    assert row["symbol"] == "EUR/USD"
+    assert row["exchange"] == "GLOBAL"
+    assert row["asset_class"] == "fx"
+    assert row["volume"] == 10.5
+    assert row["quality_status"] == "ok"
+
+
 def test_provider_request_log_rows_normalize_for_storage() -> None:
     rows = TimescaleStore._provider_request_log_rows(
         [

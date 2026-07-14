@@ -236,6 +236,25 @@ ohlcv_daily_table = Table(
     Column("quality_status", String, nullable=False),
 )
 
+ohlcv_intraday_table = Table(
+    "ohlcv_intraday",
+    metadata,
+    Column("instrument_key", String, primary_key=True),
+    Column("source", String, primary_key=True),
+    Column("interval", String, primary_key=True),
+    Column("ts", DateTime(timezone=True), primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("asset_class", String, nullable=False),
+    Column("open", Float, nullable=False),
+    Column("high", Float, nullable=False),
+    Column("low", Float, nullable=False),
+    Column("close", Float, nullable=False),
+    Column("volume", Float, nullable=False),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+    Column("quality_status", String, nullable=False),
+)
+
 price_adjustments_daily_table = Table(
     "price_adjustments_daily",
     metadata,
@@ -511,6 +530,18 @@ class TimescaleStore:
             )
             connection.execute(
                 text(
+                    "CREATE INDEX IF NOT EXISTS idx_ohlcv_intraday_symbol_ts "
+                    "ON ohlcv_intraday (symbol, interval, ts DESC)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_ohlcv_intraday_exchange_ts "
+                    "ON ohlcv_intraday (exchange, asset_class, interval, ts DESC)"
+                )
+            )
+            connection.execute(
+                text(
                     "CREATE INDEX IF NOT EXISTS idx_data_quality_dataset "
                     "ON data_quality_audits (dataset_name, source, created_at DESC)"
                 )
@@ -594,6 +625,12 @@ class TimescaleStore:
                 text(
                     "SELECT create_hypertable("
                     "'ohlcv_daily', 'date', if_not_exists => TRUE, migrate_data => TRUE)"
+                )
+            )
+            connection.execute(
+                text(
+                    "SELECT create_hypertable("
+                    "'ohlcv_intraday', 'ts', if_not_exists => TRUE, migrate_data => TRUE)"
                 )
             )
             connection.execute(
@@ -1470,6 +1507,34 @@ class TimescaleStore:
                 connection.execute(
                     statement.on_conflict_do_update(
                         index_elements=["instrument_key", "source", "date"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def upsert_intraday_ohlcv(
+        self,
+        frame: pd.DataFrame,
+        exchange: str = "FX",
+        source: str = "dukascopy",
+    ) -> int:
+        rows = self._intraday_ohlcv_rows(frame, exchange=exchange, source=source)
+        if not rows:
+            return 0
+
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(ohlcv_intraday_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in ohlcv_intraday_table.columns
+                    if column.name not in {"instrument_key", "source", "interval", "ts"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["instrument_key", "source", "interval", "ts"],
                         set_=update_columns,
                     )
                 )
@@ -3129,6 +3194,48 @@ class TimescaleStore:
         return rows
 
     @staticmethod
+    def _intraday_ohlcv_rows(
+        frame: pd.DataFrame,
+        exchange: str,
+        source: str,
+    ) -> list[dict[str, Any]]:
+        if frame.empty:
+            return []
+
+        fetched_at = datetime.now(UTC)
+        rows = []
+        for record in frame.to_dict(orient="records"):
+            required_columns = ["Timestamp", "Open", "High", "Low", "Close", "Volume"]
+            if any(pd.isna(record.get(column)) for column in required_columns):
+                continue
+            timestamp = _nullable_datetime(record.get("Timestamp"))
+            instrument_key = _clean_string(record.get("InstrumentKey"))
+            symbol = _clean_string(record.get("Symbol"))
+            interval = _clean_string(record.get("Interval"))
+            asset_class = _clean_string(record.get("AssetClass"))
+            row_exchange = _clean_string(record.get("Exchange")) or exchange
+            if timestamp is None or not instrument_key or not symbol or not interval:
+                continue
+            row = {
+                "instrument_key": instrument_key,
+                "source": source,
+                "interval": interval,
+                "ts": timestamp,
+                "symbol": symbol.upper(),
+                "exchange": row_exchange.upper(),
+                "asset_class": (asset_class or "fx").lower(),
+                "open": float(record["Open"]),
+                "high": float(record["High"]),
+                "low": float(record["Low"]),
+                "close": float(record["Close"]),
+                "volume": float(record["Volume"]),
+                "fetched_at": fetched_at,
+            }
+            row["quality_status"] = _quality_status(row)
+            rows.append(row)
+        return rows
+
+    @staticmethod
     def _corporate_action_rows(
         frame: pd.DataFrame,
         exchange: str,
@@ -3506,6 +3613,21 @@ def _nullable_date(value: Any) -> date | None:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+def _nullable_datetime(value: Any) -> datetime | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, datetime):
+        return _as_utc(value)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = pd.to_datetime(value, utc=True).to_pydatetime()
+        except (TypeError, ValueError):
+            return None
+    return _as_utc(parsed)
 
 
 def _feed_health_can_fetch(health: Mapping[str, Any], now: datetime) -> bool:

@@ -147,6 +147,71 @@ def test_yfinance_daily_assets_store_seed_universes(monkeypatch) -> None:
     ]
 
 
+def test_dukascopy_intraday_asset_stores_to_timescale(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_pipeline(**kwargs) -> object:
+        captured.update(kwargs)
+        return _result("dukascopy_fx_crypto_5m_ohlcv")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_dukascopy_intraday_ohlcv_pipeline",
+        fake_pipeline,
+    )
+
+    result = daily_assets.dukascopy_fx_intraday_ohlcv(dagster.build_op_context())
+
+    assert result.name == "dukascopy_fx_crypto_5m_ohlcv"
+    assert captured == {
+        "store_db": True,
+        "trigger": "dagster",
+    }
+
+
+def test_fx_intraday_gap_validation_uses_fetch_artifact(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+    artifact = tmp_path / "dukas.parquet"
+    artifact.write_text("placeholder", encoding="utf-8")
+
+    def fake_pipeline(**kwargs) -> object:
+        captured.update(kwargs)
+        return _result("dukascopy_fx_crypto_5m_gap_validation")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_dukascopy_intraday_gap_validation_pipeline",
+        fake_pipeline,
+    )
+
+    result = daily_assets.fx_intraday_gap_validation(
+        dagster.build_op_context(),
+        intraday_ohlcv=daily_assets.PipelineRunResult(
+            name="dukascopy_fx_crypto_5m_ohlcv",
+            status="pass",
+            artifacts={"ohlcv": artifact},
+        ),
+    )
+
+    assert result.name == "dukascopy_fx_crypto_5m_gap_validation"
+    assert captured == {"input_path": artifact}
+
+
+def test_fx_intraday_gap_validation_fails_without_artifact() -> None:
+    result = daily_assets.fx_intraday_gap_validation(
+        dagster.build_op_context(),
+        intraday_ohlcv=daily_assets.PipelineRunResult(
+            name="dukascopy_fx_crypto_5m_ohlcv",
+            status="pass",
+        ),
+    )
+
+    assert result.status == "fail"
+    assert result.blocking_issues == [
+        "Dukascopy fetch produced no OHLCV artifact to validate."
+    ]
+
+
 def test_daily_pipeline_health_skips_factor_research_rebuild(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
