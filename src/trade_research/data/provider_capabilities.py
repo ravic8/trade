@@ -114,6 +114,14 @@ YFINANCE_CAPABILITY = ProviderCapability(
             max_window=None,
             notes="Coverage varies by ticker and Yahoo Finance availability.",
         ),
+        HistoricalCapability(
+            unit="minutes",
+            interval_min=5,
+            interval_max=5,
+            available_from=date(2020, 1, 1),
+            max_window="Yahoo Finance intraday retention limit",
+            notes="Phase 4 fallback for FX/crypto 5m intraday; not suitable for deep backfills.",
+        ),
     ),
     rate_limits=RateLimits(
         standard_api_per_second=0,
@@ -124,6 +132,8 @@ YFINANCE_CAPABILITY = ProviderCapability(
         "Unofficial Yahoo Finance library; use conservative batching and retries.",
         "Raw OHLCV is stored in ohlcv_daily; adjusted close is stored separately "
         "in price_adjustments_daily.",
+        "5-minute FX/crypto fallback rows are stored in ohlcv_intraday with "
+        "source=yfinance.",
     ),
 )
 
@@ -150,6 +160,7 @@ DUKASCOPY_CAPABILITY = ProviderCapability(
         "Initial universe: EUR/USD, USD/JPY, USD/CAD, USD/CNH, GBP/USD, BTC/USD.",
         "USD/CNH is used as the Dukascopy-supported offshore renminbi proxy for USD/CNY.",
         "Rows are stored in ohlcv_intraday with source=dukascopy and interval=5m.",
+        "Dukascopy datafeed timed out from local and production; schedule stays stopped.",
     ),
 )
 

@@ -43,8 +43,11 @@ def test_yfinance_capability_documents_daily_storage_scope() -> None:
     assert capability.api_version == "library"
     assert capability.historical[0].unit == "days"
     assert capability.historical[0].interval_min == 1
+    assert capability.historical[1].unit == "minutes"
+    assert capability.historical[1].interval_min == 5
     assert capability.rate_limits.standard_api_per_minute == 30
     assert any("price_adjustments_daily" in note for note in capability.notes)
+    assert any("ohlcv_intraday" in note for note in capability.notes)
 
 
 def test_dukascopy_capability_documents_5m_intraday_scope() -> None:
