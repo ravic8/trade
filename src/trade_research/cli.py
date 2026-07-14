@@ -42,7 +42,12 @@ from trade_research.storage import ParquetStore, TimescaleStore
 from trade_research.targets import (
     DAILY_FORWARD_TARGET_VERSION_V1_0,
 )
-from trade_research.universe import NSEUniverseProvider, TSXUniverseProvider
+from trade_research.universe import (
+    NSEUniverseProvider,
+    TSXUniverseProvider,
+    YFinanceCanadaUniverseProvider,
+    YFinanceUSUniverseProvider,
+)
 
 app = typer.Typer(help="Market research agent CLI.")
 console = Console()
@@ -54,12 +59,16 @@ def _universe_provider(exchange: str):
         return NSEUniverseProvider()
     if normalized == "TSX":
         return TSXUniverseProvider()
-    raise typer.BadParameter("exchange must be NSE or TSX")
+    if normalized == "US":
+        return YFinanceUSUniverseProvider()
+    if normalized == "CA":
+        return YFinanceCanadaUniverseProvider()
+    raise typer.BadParameter("exchange must be NSE, TSX, US, or CA")
 
 
 @app.command("universe")
 def universe(
-    exchange: Annotated[str, typer.Argument()],
+    exchange: Annotated[str, typer.Argument(help="Exchange to inspect: NSE, TSX, US, or CA.")],
     limit: Annotated[int | None, typer.Option()] = None,
 ) -> None:
     provider = _universe_provider(exchange)
@@ -601,7 +610,7 @@ def retry_upstox_nse_daily(
 def fetch_yfinance_daily(
     universe: Annotated[
         str,
-        typer.Option(help="Seed universe to fetch: us_seed or canada_seed."),
+        typer.Option(help="Universe to fetch: us_seed, canada_seed, us_all, or canada_all."),
     ] = "us_seed",
     years: Annotated[
         int,

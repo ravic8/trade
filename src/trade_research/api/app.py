@@ -61,7 +61,7 @@ from trade_research.schemas import (
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
-from trade_research.universe import yfinance_seed_universe
+from trade_research.universe import yfinance_universe
 
 app = FastAPI(title="Trade Research API", version="0.1.0")
 logger = logging.getLogger(__name__)
@@ -325,7 +325,7 @@ def data_availability(
             seed_universe = universe_id or (
                 "canada_seed" if exchange_normalized == "CA" else "us_seed"
             )
-            symbols = yfinance_seed_universe(seed_universe)
+            symbols = yfinance_universe(seed_universe)
             invalid_symbols = [
                 symbol.symbol
                 for symbol in symbols
@@ -1072,7 +1072,7 @@ def _build_yfinance_bulk_fetch_preview(
     sort: str,
 ) -> dict:
     seed_universe = universe_id or ("canada_seed" if exchange == "CA" else "us_seed")
-    symbols = yfinance_seed_universe(seed_universe)
+    symbols = yfinance_universe(seed_universe)
     if any(symbol.exchange.upper() != exchange for symbol in symbols):
         raise ValueError(f"universe_id={seed_universe} does not match exchange={exchange}.")
     if coverage_status and coverage_status.lower() not in {"complete", "partial", "empty"}:

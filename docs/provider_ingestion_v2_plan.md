@@ -559,7 +559,9 @@ Deliverables:
 Phase 3A implemented contract:
 
 - Seed universes: `us_seed` and `canada_seed`, each with 20 large/liquid names.
-- CLI command: `trade-research fetch-yfinance-daily --universe us_seed|canada_seed`.
+- Full universes: `us_all` from Nasdaq Trader symbol directory files and
+  `canada_all` from the configured TSX universe provider.
+- CLI command: `trade-research fetch-yfinance-daily --universe us_seed|canada_seed|us_all|canada_all`.
 - yfinance daily downloads are batched and pass through the shared provider
   limiter as `provider=yfinance`, `endpoint_group=download`.
 - `provider_request_log` records one row per attempted yfinance download batch.
@@ -662,7 +664,6 @@ use a separate queue. Do not add Celery before this decision point.
 
 ## Open Decisions
 
-- Exact yfinance universe source for US and Canada.
 - Dukascopy data format and supported coverage for `BTC/USD`.
 - Whether to keep provider rate-limit configs only in settings or promote them
   to a database table later.

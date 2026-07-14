@@ -17,7 +17,11 @@ from trade_research.pipelines.daily_ohlcv import (
     plan_daily_fetch_windows,
 )
 from trade_research.storage import ParquetStore, TimescaleStore
-from trade_research.universe import yfinance_seed_universe
+from trade_research.universe import (
+    yfinance_exchange_for_universe,
+    yfinance_universe,
+    yfinance_universe_id,
+)
 
 
 class YFinanceBatchProvider(Protocol):
@@ -352,7 +356,7 @@ def _record_yfinance_request(
 
 
 def _yfinance_mapping(universe: str) -> pd.DataFrame:
-    symbols = yfinance_seed_universe(universe)
+    symbols = yfinance_universe(universe)
     return pd.DataFrame(
         [
             {
@@ -382,21 +386,11 @@ def _yfinance_batches(rows: list[dict[str, Any]], batch_size: int) -> list[list[
 
 
 def _exchange_for_universe(universe: str) -> str:
-    universe_id = _universe_id(universe)
-    if universe_id == "us_seed":
-        return "US"
-    if universe_id == "canada_seed":
-        return "CA"
-    raise ValueError(f"Unsupported yfinance universe: {universe}")
+    return yfinance_exchange_for_universe(universe)
 
 
 def _universe_id(universe: str) -> str:
-    normalized = universe.strip().lower().replace("-", "_")
-    if normalized in {"us", "usa", "united_states", "us_seed"}:
-        return "us_seed"
-    if normalized in {"ca", "canada", "canada_seed", "tsx_seed"}:
-        return "canada_seed"
-    raise ValueError(f"Unsupported yfinance universe: {universe}")
+    return yfinance_universe_id(universe)
 
 
 def _parse_pipeline_date(value: str, field_name: str) -> date:
