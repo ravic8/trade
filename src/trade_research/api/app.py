@@ -399,6 +399,8 @@ def data_bulk_fetch_preview(
     end_date: date | None = None,
     query: str | None = None,
     coverage_status: str | None = None,
+    min_avg_daily_turnover: Annotated[float | None, Query(ge=0.0)] = None,
+    min_coverage_pct: Annotated[float | None, Query(ge=0.0, le=1.0)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
     sort: str = "-missing_rows",
@@ -432,6 +434,8 @@ def data_bulk_fetch_preview(
             end_date=end_date,
             query=query,
             coverage_status=coverage_status,
+            min_avg_daily_turnover=min_avg_daily_turnover,
+            min_coverage_pct=min_coverage_pct,
             limit=limit,
             offset=offset,
             sort=sort,
@@ -1061,6 +1065,8 @@ def _build_yfinance_bulk_fetch_preview(
     end_date: date,
     query: str | None,
     coverage_status: str | None,
+    min_avg_daily_turnover: float | None,
+    min_coverage_pct: float | None,
     limit: int,
     offset: int,
     sort: str,
@@ -1101,16 +1107,30 @@ def _build_yfinance_bulk_fetch_preview(
         source="yfinance",
         exchange=exchange,
     )
+    avg_turnover_by_key = store.daily_ohlcv_average_turnover_by_instrument(
+        [row["instrument_key"] for row in seed_rows],
+        start_date,
+        end_date,
+        source="yfinance",
+        exchange=exchange,
+    )
     rows = []
-    all_tasks = []
     for row in seed_rows:
         key = row["instrument_key"]
+        avg_turnover = avg_turnover_by_key.get(key)
+        if min_avg_daily_turnover is not None and (
+            avg_turnover is None or avg_turnover < min_avg_daily_turnover
+        ):
+            continue
         present_dates = expected_set.intersection(stored_dates.get(key, set()))
         missing_dates = sorted(expected_set.difference(present_dates))
         stored_count = len(present_dates)
         missing_count = len(missing_dates)
         status = _coverage_status(stored_count, expected_rows)
         if coverage_status and status != coverage_status.lower():
+            continue
+        coverage_pct = min(stored_count / expected_rows, 1.0) if expected_rows else 0.0
+        if min_coverage_pct is not None and coverage_pct < min_coverage_pct:
             continue
         tasks = [
             {
@@ -1124,7 +1144,6 @@ def _build_yfinance_bulk_fetch_preview(
             }
             for window_start, window_end, dates in _contiguous_date_windows(missing_dates)
         ]
-        all_tasks.extend(tasks)
         rows.append(
             {
                 "symbol": row["symbol"],
@@ -1137,13 +1156,12 @@ def _build_yfinance_bulk_fetch_preview(
                 "latest_stored_date": max(present_dates) if present_dates else None,
                 "stored_rows": stored_count,
                 "expected_rows": expected_rows,
-                "coverage_pct": (
-                    min(stored_count / expected_rows, 1.0) if expected_rows else 0.0
-                ),
+                "coverage_pct": coverage_pct,
                 "missing_rows": missing_count,
                 "coverage_status": status,
                 "last_successful_run": None,
                 "last_fetch_status": None,
+                "avg_daily_turnover": avg_turnover,
                 "tasks": tasks,
             }
         )
@@ -1167,6 +1185,8 @@ def _build_yfinance_bulk_fetch_preview(
         "end_date": end_date,
         "query": query,
         "coverage_status": coverage_status,
+        "min_avg_daily_turnover": min_avg_daily_turnover,
+        "min_coverage_pct": min_coverage_pct,
         "limit": limit,
         "offset": offset,
         "sort": sort,
@@ -1209,6 +1229,16 @@ def _sort_bulk_fetch_preview_rows(rows: list[dict], sort: str) -> list[dict]:
         "-coverage_pct": lambda row: (row["coverage_pct"], row["symbol"]),
         "missing_rows": lambda row: (row["missing_rows"], row["symbol"]),
         "-missing_rows": lambda row: (row["missing_rows"], row["symbol"]),
+        "avg_daily_turnover": lambda row: (
+            row["avg_daily_turnover"] is not None,
+            row["avg_daily_turnover"],
+            row["symbol"],
+        ),
+        "-avg_daily_turnover": lambda row: (
+            row["avg_daily_turnover"] is not None,
+            row["avg_daily_turnover"],
+            row["symbol"],
+        ),
         "latest_stored_date": lambda row: (
             row["latest_stored_date"] is not None,
             row["latest_stored_date"],

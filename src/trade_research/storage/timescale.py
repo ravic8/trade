@@ -1499,6 +1499,38 @@ class TimescaleStore:
                 dates_by_key.setdefault(str(instrument_key), set()).add(candle_date)
         return dates_by_key
 
+    def daily_ohlcv_average_turnover_by_instrument(
+        self,
+        instrument_keys: list[str],
+        start_date: date,
+        end_date: date,
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> dict[str, float]:
+        if not instrument_keys:
+            return {}
+        query = (
+            select(
+                ohlcv_daily_table.c.instrument_key,
+                func.avg(ohlcv_daily_table.c.close * ohlcv_daily_table.c.volume).label(
+                    "avg_daily_turnover"
+                ),
+            )
+            .where(ohlcv_daily_table.c.source == source)
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.instrument_key.in_(instrument_keys))
+            .where(ohlcv_daily_table.c.date >= start_date)
+            .where(ohlcv_daily_table.c.date <= end_date)
+            .group_by(ohlcv_daily_table.c.instrument_key)
+        )
+        with self.engine.begin() as connection:
+            rows = connection.execute(query).mappings().all()
+        return {
+            str(row["instrument_key"]): float(row["avg_daily_turnover"])
+            for row in rows
+            if row["avg_daily_turnover"] is not None
+        }
+
     def daily_ohlcv_availability(
         self,
         source: str = "upstox",
