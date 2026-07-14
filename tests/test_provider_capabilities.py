@@ -44,4 +44,4 @@ def test_yfinance_capability_documents_daily_storage_scope() -> None:
     assert capability.historical[0].unit == "days"
     assert capability.historical[0].interval_min == 1
     assert capability.rate_limits.standard_api_per_minute == 30
-    assert any("adjusted close storage is deferred" in note for note in capability.notes)
+    assert any("price_adjustments_daily" in note for note in capability.notes)

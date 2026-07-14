@@ -236,6 +236,35 @@ ohlcv_daily_table = Table(
     Column("quality_status", String, nullable=False),
 )
 
+price_adjustments_daily_table = Table(
+    "price_adjustments_daily",
+    metadata,
+    Column("instrument_key", String, primary_key=True),
+    Column("source", String, primary_key=True),
+    Column("date", Date, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("raw_close", Float, nullable=False),
+    Column("adjusted_close", Float, nullable=False),
+    Column("adjustment_factor", Float, nullable=False),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+)
+
+corporate_actions_table = Table(
+    "corporate_actions",
+    metadata,
+    Column("source", String, primary_key=True),
+    Column("instrument_key", String, primary_key=True),
+    Column("action_date", Date, primary_key=True),
+    Column("action_type", String, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("value", Float),
+    Column("currency", String),
+    Column("raw", JSON, nullable=False, default=dict),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+)
+
 data_quality_audits_table = Table(
     "data_quality_audits",
     metadata,
@@ -1413,6 +1442,68 @@ class TimescaleStore:
                 connection.execute(
                     statement.on_conflict_do_update(
                         index_elements=["instrument_key", "source", "date"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def upsert_daily_price_adjustments(
+        self,
+        frame: pd.DataFrame,
+        exchange: str = "NSE",
+        source: str = "upstox",
+    ) -> int:
+        rows = self._daily_price_adjustment_rows(frame, exchange=exchange, source=source)
+        if not rows:
+            return 0
+
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(price_adjustments_daily_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in price_adjustments_daily_table.columns
+                    if column.name not in {"instrument_key", "source", "date"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["instrument_key", "source", "date"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def upsert_corporate_actions(
+        self,
+        frame: pd.DataFrame,
+        exchange: str,
+        source: str,
+    ) -> int:
+        rows = self._corporate_action_rows(frame, exchange=exchange, source=source)
+        if not rows:
+            return 0
+
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(corporate_actions_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in corporate_actions_table.columns
+                    if column.name
+                    not in {"source", "instrument_key", "action_date", "action_type"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[
+                            "source",
+                            "instrument_key",
+                            "action_date",
+                            "action_type",
+                        ],
                         set_=update_columns,
                     )
                 )
@@ -2997,6 +3088,78 @@ class TimescaleStore:
             }
             row["quality_status"] = _quality_status(row)
             rows.append(row)
+        return rows
+
+    @staticmethod
+    def _daily_price_adjustment_rows(
+        frame: pd.DataFrame,
+        exchange: str,
+        source: str,
+    ) -> list[dict[str, Any]]:
+        if frame.empty or "AdjClose" not in frame.columns:
+            return []
+
+        fetched_at = datetime.now(UTC)
+        rows = []
+        for record in frame.to_dict(orient="records"):
+            raw_close = _nullable_float(record.get("Close"))
+            adjusted_close = _nullable_float(record.get("AdjClose"))
+            if raw_close is None or adjusted_close is None:
+                continue
+            if raw_close <= 0 or adjusted_close <= 0:
+                continue
+            candle_date = _nullable_date(record.get("Date"))
+            instrument_key = _clean_string(record.get("InstrumentKey"))
+            symbol = _clean_string(record.get("Symbol"))
+            if candle_date is None or not instrument_key or not symbol:
+                continue
+            rows.append(
+                {
+                    "instrument_key": instrument_key,
+                    "source": source,
+                    "date": candle_date,
+                    "symbol": symbol.upper(),
+                    "exchange": exchange,
+                    "raw_close": raw_close,
+                    "adjusted_close": adjusted_close,
+                    "adjustment_factor": adjusted_close / raw_close,
+                    "fetched_at": fetched_at,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _corporate_action_rows(
+        frame: pd.DataFrame,
+        exchange: str,
+        source: str,
+    ) -> list[dict[str, Any]]:
+        if frame.empty:
+            return []
+
+        fetched_at = datetime.now(UTC)
+        rows = []
+        for record in frame.to_dict(orient="records"):
+            instrument_key = _clean_string(record.get("InstrumentKey"))
+            symbol = _clean_string(record.get("Symbol"))
+            action_date = _nullable_date(record.get("ActionDate") or record.get("Date"))
+            action_type = _clean_string(record.get("ActionType"))
+            if not instrument_key or not symbol or action_date is None or not action_type:
+                continue
+            rows.append(
+                {
+                    "source": source,
+                    "instrument_key": instrument_key,
+                    "action_date": action_date,
+                    "action_type": action_type.lower(),
+                    "symbol": symbol.upper(),
+                    "exchange": exchange,
+                    "value": _nullable_float(record.get("Value")),
+                    "currency": _clean_string(record.get("Currency")),
+                    "raw": record.get("Raw") if isinstance(record.get("Raw"), dict) else {},
+                    "fetched_at": fetched_at,
+                }
+            )
         return rows
 
     @staticmethod

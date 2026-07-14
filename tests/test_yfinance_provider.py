@@ -22,11 +22,24 @@ def test_yfinance_seed_universe_returns_us_and_canada_symbols() -> None:
 
 def test_normalize_yfinance_daily_handles_multi_ticker_frame() -> None:
     columns = pd.MultiIndex.from_product(
-        [["AAPL", "MSFT"], ["Open", "High", "Low", "Close", "Volume"]]
+        [["AAPL", "MSFT"], ["Open", "High", "Low", "Close", "Adj Close", "Volume"]]
     )
     frame = pd.DataFrame(
         [
-            [100.0, 101.0, 99.0, 100.5, 1000, 200.0, 202.0, 198.0, 201.0, 2000],
+            [
+                100.0,
+                101.0,
+                99.0,
+                100.5,
+                95.25,
+                1000,
+                200.0,
+                202.0,
+                198.0,
+                201.0,
+                190.95,
+                2000,
+            ],
         ],
         index=pd.DatetimeIndex(["2026-07-01"], name="Date"),
         columns=columns,
@@ -43,6 +56,7 @@ def test_normalize_yfinance_daily_handles_multi_ticker_frame() -> None:
     assert normalized["InstrumentKey"].tolist() == ["YF|AAPL", "YF|MSFT"]
     assert normalized["Date"].tolist() == [date(2026, 7, 1), date(2026, 7, 1)]
     assert normalized["Close"].tolist() == [100.5, 201.0]
+    assert normalized["AdjClose"].tolist() == [95.25, 190.95]
     assert normalized["Volume"].tolist() == [1000, 2000]
 
 

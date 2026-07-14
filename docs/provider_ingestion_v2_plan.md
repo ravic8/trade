@@ -565,10 +565,9 @@ Phase 3A implemented contract:
 - `provider_request_log` records one row per attempted yfinance download batch.
 - Raw daily OHLCV is stored in existing `ohlcv_daily` with `source=yfinance`
   and `exchange=US` or `CA`.
-- Adjusted close storage is deliberately deferred because the current
-  `ohlcv_daily` contract stores one close column. The filter/preview phase
-  should decide whether to add adjusted close, raw close plus adjusted close, or
-  a separate adjustment table.
+- Raw close remains the only `ohlcv_daily.close` value. Adjusted close is stored
+  separately in `price_adjustments_daily`; future split/dividend events belong
+  in `corporate_actions`.
 - Dagster assets `yfinance_us_daily_ohlcv` and `yfinance_canada_daily_ohlcv`
   are available through `north_america_daily_yfinance_job`, with the schedule
   stopped by default.
@@ -664,7 +663,6 @@ use a separate queue. Do not add Celery before this decision point.
 ## Open Decisions
 
 - Exact yfinance universe source for US and Canada.
-- Whether yfinance stores adjusted close, raw close, or both.
 - Dukascopy data format and supported coverage for `BTC/USD`.
 - Whether to keep provider rate-limit configs only in settings or promote them
   to a database table later.

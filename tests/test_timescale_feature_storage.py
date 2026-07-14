@@ -112,6 +112,76 @@ def test_daily_ohlcv_fetch_coverage_rows_normalize_for_storage() -> None:
     assert row["error_message"] == "rate limited"
 
 
+def test_daily_price_adjustment_rows_normalize_for_storage() -> None:
+    rows = TimescaleStore._daily_price_adjustment_rows(
+        pd.DataFrame(
+            [
+                {
+                    "Date": date(2026, 7, 1),
+                    "InstrumentKey": "YF|AAPL",
+                    "Symbol": "aapl",
+                    "Close": 100.0,
+                    "AdjClose": 95.0,
+                },
+                {
+                    "Date": date(2026, 7, 2),
+                    "InstrumentKey": "YF|MSFT",
+                    "Symbol": "msft",
+                    "Close": 0.0,
+                    "AdjClose": 10.0,
+                },
+            ]
+        ),
+        exchange="US",
+        source="yfinance",
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["instrument_key"] == "YF|AAPL"
+    assert row["symbol"] == "AAPL"
+    assert row["date"] == date(2026, 7, 1)
+    assert row["raw_close"] == 100.0
+    assert row["adjusted_close"] == 95.0
+    assert row["adjustment_factor"] == 0.95
+
+
+def test_corporate_action_rows_normalize_for_storage() -> None:
+    rows = TimescaleStore._corporate_action_rows(
+        pd.DataFrame(
+            [
+                {
+                    "InstrumentKey": "YF|AAPL",
+                    "Symbol": "aapl",
+                    "ActionDate": date(2026, 8, 1),
+                    "ActionType": "Dividend",
+                    "Value": 0.25,
+                    "Currency": "USD",
+                    "Raw": {"kind": "cash_dividend"},
+                },
+                {
+                    "InstrumentKey": "YF|MSFT",
+                    "Symbol": "msft",
+                    "ActionDate": date(2026, 8, 1),
+                },
+            ]
+        ),
+        exchange="US",
+        source="yfinance",
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["source"] == "yfinance"
+    assert row["instrument_key"] == "YF|AAPL"
+    assert row["symbol"] == "AAPL"
+    assert row["action_date"] == date(2026, 8, 1)
+    assert row["action_type"] == "dividend"
+    assert row["value"] == 0.25
+    assert row["currency"] == "USD"
+    assert row["raw"] == {"kind": "cash_dividend"}
+
+
 def test_provider_request_log_rows_normalize_for_storage() -> None:
     rows = TimescaleStore._provider_request_log_rows(
         [

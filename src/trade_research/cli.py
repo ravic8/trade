@@ -660,6 +660,10 @@ def fetch_yfinance_daily(
     if store_db:
         console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
         console.print(
+            "Stored price adjustment rows: "
+            f"{result.metrics['timescale_price_adjustment_rows']}"
+        )
+        console.print(
             "Stored fetch coverage rows: "
             f"{result.metrics['timescale_fetch_coverage_rows']}"
         )

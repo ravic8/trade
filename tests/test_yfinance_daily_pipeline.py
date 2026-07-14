@@ -51,6 +51,7 @@ class _FakeYFinanceProvider:
                     "High": 101.0,
                     "Low": 99.0,
                     "Close": 100.5,
+                    "AdjClose": 99.5,
                     "Volume": 1000,
                     "OpenInterest": None,
                     "InstrumentKey": item["instrument_key"],
@@ -148,6 +149,7 @@ def test_run_yfinance_daily_pipeline_writes_artifacts_without_db(tmp_path, monke
     assert result.metrics["exchange"] == "US"
     assert result.metrics["fetch_symbols"] == 2
     assert result.metrics["store_db"] is False
+    assert result.metrics["timescale_price_adjustment_rows"] == 0
     assert result.artifacts["ohlcv"].exists()
     assert result.artifacts["daily_audit"].exists()
     assert result.artifacts["fetch_coverage"].exists()

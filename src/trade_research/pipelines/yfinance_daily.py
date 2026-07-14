@@ -124,7 +124,7 @@ def run_yfinance_daily_ohlcv_pipeline(
                 "mapped_symbols": len(mapping),
                 "batch_size": max(batch_size, 1),
                 "export_db_snapshot": bool(export_db_snapshot),
-                "adjusted_close_storage": "deferred",
+                "adjusted_close_storage": "price_adjustments_daily",
             },
         )
 
@@ -165,6 +165,11 @@ def run_yfinance_daily_ohlcv_pipeline(
 
     rows_written = (
         db.upsert_daily_ohlcv(ohlcv, exchange=exchange, source="yfinance")
+        if db is not None and not ohlcv.empty
+        else 0
+    )
+    price_adjustment_rows = (
+        db.upsert_daily_price_adjustments(ohlcv, exchange=exchange, source="yfinance")
         if db is not None and not ohlcv.empty
         else 0
     )
@@ -236,11 +241,12 @@ def run_yfinance_daily_ohlcv_pipeline(
             "failure_rows": int(len(failures)),
             "batch_size": int(max(batch_size, 1)),
             "timescale_rows": int(rows_written),
+            "timescale_price_adjustment_rows": int(price_adjustment_rows),
             "timescale_audit_rows": int(audits_written),
             "timescale_fetch_coverage_rows": int(fetch_coverage_rows),
             "db_snapshot_rows": int(db_snapshot_rows),
             "store_db": bool(store_db),
-            "adjusted_close_storage": "deferred",
+            "adjusted_close_storage": "price_adjustments_daily",
         },
         warnings=warnings,
     )
