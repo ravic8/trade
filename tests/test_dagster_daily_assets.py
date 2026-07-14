@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime
 from importlib import import_module
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -169,6 +170,28 @@ def test_dukascopy_intraday_asset_stores_to_timescale(monkeypatch) -> None:
     }
 
 
+def test_yfinance_intraday_asset_stores_to_timescale(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_pipeline(**kwargs) -> object:
+        captured.update(kwargs)
+        return _result("yfinance_fx_crypto_5m_ohlcv")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_yfinance_intraday_ohlcv_pipeline",
+        fake_pipeline,
+    )
+
+    result = daily_assets.yfinance_fx_crypto_intraday_ohlcv(dagster.build_op_context())
+
+    assert result.name == "yfinance_fx_crypto_5m_ohlcv"
+    assert captured == {
+        "store_db": True,
+        "trigger": "dagster",
+    }
+
+
 def test_fx_intraday_gap_validation_uses_fetch_artifact(monkeypatch, tmp_path) -> None:
     captured: dict[str, object] = {}
     artifact = tmp_path / "dukas.parquet"
@@ -197,6 +220,46 @@ def test_fx_intraday_gap_validation_uses_fetch_artifact(monkeypatch, tmp_path) -
     assert captured == {"input_path": artifact}
 
 
+def test_yfinance_fx_intraday_gap_validation_uses_fetch_artifact(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, object] = {}
+    artifact = tmp_path / "yf.parquet"
+    artifact.write_text("placeholder", encoding="utf-8")
+
+    def fake_pipeline(**kwargs) -> object:
+        captured.update(kwargs)
+        return _result("yfinance_fx_crypto_5m_gap_validation")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_dukascopy_intraday_gap_validation_pipeline",
+        fake_pipeline,
+    )
+
+    result = daily_assets.yfinance_fx_intraday_gap_validation(
+        dagster.build_op_context(),
+        intraday_ohlcv=daily_assets.PipelineRunResult(
+            name="yfinance_fx_crypto_5m_ohlcv",
+            status="pass",
+            artifacts={"ohlcv": artifact},
+        ),
+    )
+
+    assert result.name == "yfinance_fx_crypto_5m_gap_validation"
+    assert captured == {
+        "input_path": artifact,
+        "input_name": "processed/intraday/yfinance_fx_crypto_5m_5m_ohlcv",
+        "dataset_name": "yfinance_fx_crypto_5m_gap_validation",
+        "provider_label": "yfinance",
+        "output_path": Path("data/processed/intraday/yfinance_fx_crypto_5m_gap_validation.csv"),
+        "summary_output": Path(
+            "data/processed/intraday/yfinance_fx_crypto_5m_gap_validation_summary.json"
+        ),
+    }
+
+
 def test_fx_intraday_gap_validation_fails_without_artifact() -> None:
     result = daily_assets.fx_intraday_gap_validation(
         dagster.build_op_context(),
@@ -209,6 +272,21 @@ def test_fx_intraday_gap_validation_fails_without_artifact() -> None:
     assert result.status == "fail"
     assert result.blocking_issues == [
         "Dukascopy fetch produced no OHLCV artifact to validate."
+    ]
+
+
+def test_yfinance_fx_intraday_gap_validation_fails_without_artifact() -> None:
+    result = daily_assets.yfinance_fx_intraday_gap_validation(
+        dagster.build_op_context(),
+        intraday_ohlcv=daily_assets.PipelineRunResult(
+            name="yfinance_fx_crypto_5m_ohlcv",
+            status="pass",
+        ),
+    )
+
+    assert result.status == "fail"
+    assert result.blocking_issues == [
+        "yfinance fetch produced no OHLCV artifact to validate."
     ]
 
 

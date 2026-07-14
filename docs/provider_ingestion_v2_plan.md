@@ -654,6 +654,7 @@ Deliverables:
 - `ohlcv_intraday` hypertable.
 - CLI backfill/smoke command for 5-minute candles.
 - Dagster `fx_intraday_dukascopy_job` with a stopped-by-default schedule.
+- Dagster `yfinance_fx_intraday_job` with a stopped-by-default schedule.
 - Gap validation by instrument/interval/window.
 
 Acceptance:
@@ -692,6 +693,10 @@ production environments. Keep `fx_intraday_dukascopy_schedule` stopped until
 provider/network access is solved. Use yfinance as the temporary 5-minute
 intraday fallback, with the caveat that Yahoo intraday retention is limited and
 not suitable for deep historical backfills.
+
+Dagster orchestration keeps both provider paths separate. Leave Dukascopy
+stopped while it is timing out, and enable `yfinance_fx_intraday_schedule` only
+after choosing an operating cadence and retention window for the Yahoo fallback.
 
 ### Phase 5: APIs And UI
 

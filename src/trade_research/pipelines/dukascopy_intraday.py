@@ -194,6 +194,8 @@ def run_dukascopy_intraday_gap_validation_pipeline(
     interval: str = DUKASCOPY_INTERVAL_5M,
     expected_start: str | None = None,
     expected_end: str | None = None,
+    dataset_name: str = f"{DUKASCOPY_INTRADAY_UNIVERSE_ID}_5m_gap_validation",
+    provider_label: str = "Dukascopy",
     output_path: Path = Path(
         f"data/processed/intraday/{DUKASCOPY_INTRADAY_UNIVERSE_ID}_5m_gap_validation.csv"
     ),
@@ -228,15 +230,15 @@ def run_dukascopy_intraday_gap_validation_pipeline(
     blocking = []
     if summary["symbols_with_missing_rows"]:
         warnings.append(
-            f"{summary['symbols_with_missing_rows']} Dukascopy symbols have missing 5m rows."
+            f"{summary['symbols_with_missing_rows']} {provider_label} symbols have missing 5m rows."
         )
     if summary["invalid_ohlcv_rows"]:
         blocking.append(
-            f"{summary['invalid_ohlcv_rows']} Dukascopy rows have invalid OHLC values."
+            f"{summary['invalid_ohlcv_rows']} {provider_label} rows have invalid OHLC values."
         )
     status = "fail" if blocking else "warn" if warnings else "pass"
     return PipelineRunResult(
-        name=f"{DUKASCOPY_INTRADAY_UNIVERSE_ID}_{interval}_gap_validation",
+        name=dataset_name,
         status=status,
         rows=int(len(validation)),
         artifacts={
