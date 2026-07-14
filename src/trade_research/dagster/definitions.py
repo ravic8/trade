@@ -11,6 +11,8 @@ from trade_research.dagster.daily_assets import (
     processed_dataset_validation,
     upstox_daily_ohlcv,
     yfinance_canada_daily_ohlcv,
+    yfinance_fx_crypto_intraday_ohlcv,
+    yfinance_fx_intraday_gap_validation,
     yfinance_us_daily_ohlcv,
 )
 
@@ -55,6 +57,14 @@ fx_intraday_dukascopy_job = define_asset_job(
     ],
 )
 
+yfinance_fx_intraday_job = define_asset_job(
+    name="yfinance_fx_intraday_job",
+    selection=[
+        yfinance_fx_crypto_intraday_ohlcv,
+        yfinance_fx_intraday_gap_validation,
+    ],
+)
+
 daily_research_schedule = ScheduleDefinition(
     name="daily_research_schedule",
     job=daily_research_pipeline_job,
@@ -79,6 +89,14 @@ fx_intraday_dukascopy_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+yfinance_fx_intraday_schedule = ScheduleDefinition(
+    name="yfinance_fx_intraday_schedule",
+    job=yfinance_fx_intraday_job,
+    cron_schedule="20 * * * *",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 defs = Definitions(
     assets=[
         upstox_daily_ohlcv,
@@ -86,6 +104,8 @@ defs = Definitions(
         yfinance_canada_daily_ohlcv,
         dukascopy_fx_intraday_ohlcv,
         fx_intraday_gap_validation,
+        yfinance_fx_crypto_intraday_ohlcv,
+        yfinance_fx_intraday_gap_validation,
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
@@ -98,10 +118,12 @@ defs = Definitions(
         factor_research_job,
         north_america_daily_yfinance_job,
         fx_intraday_dukascopy_job,
+        yfinance_fx_intraday_job,
     ],
     schedules=[
         daily_research_schedule,
         north_america_daily_yfinance_schedule,
         fx_intraday_dukascopy_schedule,
+        yfinance_fx_intraday_schedule,
     ],
 )

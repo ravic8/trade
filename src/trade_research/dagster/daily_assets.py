@@ -18,6 +18,7 @@ from trade_research.pipelines import (
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
     run_yfinance_daily_ohlcv_pipeline,
+    run_yfinance_intraday_ohlcv_pipeline,
 )
 from trade_research.validation import resolve_latest_expected_trading_date
 
@@ -89,6 +90,20 @@ def dukascopy_fx_intraday_ohlcv(context) -> PipelineRunResult:
 
 @asset(
     group_name="fx_intraday",
+    compute_kind="yfinance",
+    description="Fetch yfinance 5-minute FX/crypto OHLCV into TimescaleDB.",
+)
+def yfinance_fx_crypto_intraday_ohlcv(context) -> PipelineRunResult:
+    result = run_yfinance_intraday_ohlcv_pipeline(
+        store_db=True,
+        trigger="dagster",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="fx_intraday",
     compute_kind="python",
     ins={"intraday_ohlcv": AssetIn("dukascopy_fx_intraday_ohlcv")},
     description="Validate Dukascopy 5-minute intraday gaps by instrument.",
@@ -109,6 +124,40 @@ def fx_intraday_gap_validation(
         return result
     result = run_dukascopy_intraday_gap_validation_pipeline(
         input_path=input_path,
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="fx_intraday",
+    compute_kind="python",
+    ins={"intraday_ohlcv": AssetIn("yfinance_fx_crypto_intraday_ohlcv")},
+    description="Validate yfinance 5-minute intraday gaps by instrument.",
+)
+def yfinance_fx_intraday_gap_validation(
+    context,
+    intraday_ohlcv: PipelineRunResult,
+) -> PipelineRunResult:
+    _assert_upstream_not_failed(intraday_ohlcv)
+    input_path = intraday_ohlcv.artifacts.get("ohlcv")
+    if input_path is None:
+        result = PipelineRunResult(
+            name="yfinance_fx_crypto_5m_gap_validation",
+            status="fail",
+            blocking_issues=["yfinance fetch produced no OHLCV artifact to validate."],
+        )
+        context.add_output_metadata(_result_metadata(result))
+        return result
+    result = run_dukascopy_intraday_gap_validation_pipeline(
+        input_path=input_path,
+        input_name="processed/intraday/yfinance_fx_crypto_5m_5m_ohlcv",
+        dataset_name="yfinance_fx_crypto_5m_gap_validation",
+        provider_label="yfinance",
+        output_path=Path("data/processed/intraday/yfinance_fx_crypto_5m_gap_validation.csv"),
+        summary_output=Path(
+            "data/processed/intraday/yfinance_fx_crypto_5m_gap_validation_summary.json"
+        ),
     )
     context.add_output_metadata(_result_metadata(result))
     return result

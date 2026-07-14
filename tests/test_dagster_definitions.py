@@ -16,3 +16,15 @@ def test_fx_intraday_dukascopy_job_and_schedule_are_registered() -> None:
         definitions.fx_intraday_dukascopy_schedule.default_status
         == dagster.DefaultScheduleStatus.STOPPED
     )
+
+
+def test_yfinance_fx_intraday_job_and_schedule_are_registered() -> None:
+    assert definitions.yfinance_fx_intraday_job.name == "yfinance_fx_intraday_job"
+    assert (
+        definitions.yfinance_fx_intraday_schedule.name
+        == "yfinance_fx_intraday_schedule"
+    )
+    assert (
+        definitions.yfinance_fx_intraday_schedule.default_status
+        == dagster.DefaultScheduleStatus.STOPPED
+    )
