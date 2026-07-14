@@ -110,6 +110,11 @@
   box-shadow: 0 1px 6px rgba(24, 36, 43, 0.12);
 }
 
+.data-mode-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .data-two-column {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 0.42fr);
@@ -234,6 +239,64 @@
   min-height: 30px;
   color: #0f684a;
   font-weight: 800;
+}
+
+.data-symbol-helper {
+  margin: -6px 0 0;
+  color: #66766f;
+  font-size: 0.9rem;
+}
+
+.data-symbol-suggestions {
+  display: grid;
+  overflow: hidden;
+  margin-top: -6px;
+  border: 1px solid #d9e3df;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.data-symbol-suggestions button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid #edf2ef;
+  background: transparent;
+  color: #1f2e28;
+  padding: 11px 14px;
+  text-align: left;
+}
+
+.data-symbol-suggestions button:last-child {
+  border-bottom: 0;
+}
+
+.data-symbol-suggestions button:hover {
+  background: #f4faf7;
+}
+
+.data-symbol-suggestions button:disabled {
+  cursor: default;
+  background: #f8fbf9;
+}
+
+.data-symbol-suggestions span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.data-symbol-suggestions strong,
+.data-symbol-suggestions small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-symbol-suggestions small {
+  color: #66766f;
 }
 
 .data-date-grid,

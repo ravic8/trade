@@ -23,6 +23,7 @@ import {
   useCreateDataPipelineRequest,
   useDataAvailability,
   useDataCoveragePreview,
+  useDataInstrumentSearch,
   useDataPipelineHealth,
   usePipelineScheduleStatus,
   useProviderRequestLogs,
@@ -35,6 +36,7 @@ import type {
   DataAvailabilityRow,
   DataCoveragePreviewRequest,
   DataCoveragePreviewResponse,
+  DataInstrumentSearchRow,
   DataPipelineRunSummary,
   PipelineScheduleStatusRow,
   ProviderRequestLogRow,
@@ -88,15 +90,15 @@ const markets: MarketOption[] = [
   },
   {
     id: "ca",
-    label: "Canada",
-    detail: "yfinance daily",
+    label: "TSX",
+    detail: "Canada yfinance daily",
     icon: "CA",
     provider: "yfinance",
     exchange: "CA",
     interval: "1d",
     requestEnabled: false,
     defaultSymbols: ["SHOP.TO", "RY.TO"],
-    notice: "Canada daily availability is visible here; public fetch controls are not exposed yet.",
+    notice: "TSX daily availability is visible here; public fetch controls are not exposed yet.",
   },
   {
     id: "global",
@@ -200,6 +202,15 @@ export function DataPipelinePage() {
   const summaryQuery = useProviderRequestSummary(observabilityParams);
   const logsQuery = useProviderRequestLogs({ ...observabilityParams, limit: 50 });
   const schedulesQuery = usePipelineScheduleStatus();
+  const symbolSearchQuery = useDataInstrumentSearch(
+    {
+      provider: "upstox",
+      exchange: "NSE",
+      query: symbolInput.trim(),
+      limit: 8,
+    },
+    market.requestEnabled && symbolInput.trim().length > 0,
+  );
   const previewMutation = useDataCoveragePreview();
   const createMutation = useCreateDataPipelineRequest();
 
@@ -224,10 +235,13 @@ export function DataPipelinePage() {
     createMutation.isPending;
 
   function selectMarket(nextMarketId: MarketId) {
+    const nextMarket = markets.find((item) => item.id === nextMarketId) ?? markets[0];
     setMarketId(nextMarketId);
+    setActiveTab(nextMarket.requestEnabled ? "request" : "available");
     setAvailabilityQueryText("");
     setAvailabilityStatus("");
     setRunStatus("");
+    setSymbolInput("");
     previewMutation.reset();
     createMutation.reset();
   }
@@ -290,13 +304,15 @@ export function DataPipelinePage() {
       />
 
       <MarketSelector activeMarket={market.id} onChange={selectMarket} />
-      <DataTabs activeTab={activeTab} onChange={setActiveTab} />
+      <DataTabs activeTab={activeTab} requestEnabled={market.requestEnabled} onChange={setActiveTab} />
 
       {activeTab === "request" ? (
         <RequestView
           market={market}
           selectedSymbols={selectedSymbols}
           symbolInput={symbolInput}
+          symbolSuggestions={symbolSearchQuery.data ?? []}
+          isSymbolSearchLoading={symbolSearchQuery.isFetching}
           startDate={startDate}
           endDate={endDate}
           tokenConfigured={tokenConfigured}
@@ -309,6 +325,7 @@ export function DataPipelinePage() {
           isRunning={createMutation.isPending}
           onSymbolInputChange={setSymbolInput}
           onAddSymbols={addSymbols}
+          onSelectSymbol={(symbol) => addSymbols([symbol])}
           onRemoveSymbol={removeSymbol}
           onStartDateChange={(value) => {
             setStartDate(value);
@@ -405,9 +422,11 @@ function MarketSelector({
 
 function DataTabs({
   activeTab,
+  requestEnabled,
   onChange,
 }: {
   activeTab: DataTab;
+  requestEnabled: boolean;
   onChange: (tab: DataTab) => void;
 }) {
   const tabs: { id: DataTab; label: string; icon: typeof Sparkles }[] = [
@@ -420,11 +439,13 @@ function DataTabs({
     <div className="data-mode-tabs" role="tablist" aria-label="Data views">
       {tabs.map((tab) => {
         const Icon = tab.icon;
+        const disabled = tab.id === "request" && !requestEnabled;
         return (
           <button
             key={tab.id}
             type="button"
             className={activeTab === tab.id ? "active" : ""}
+            disabled={disabled}
             onClick={() => onChange(tab.id)}
           >
             <Icon size={17} />
@@ -440,6 +461,8 @@ function RequestView({
   market,
   selectedSymbols,
   symbolInput,
+  symbolSuggestions,
+  isSymbolSearchLoading,
   startDate,
   endDate,
   tokenConfigured,
@@ -452,6 +475,7 @@ function RequestView({
   isRunning,
   onSymbolInputChange,
   onAddSymbols,
+  onSelectSymbol,
   onRemoveSymbol,
   onStartDateChange,
   onEndDateChange,
@@ -461,6 +485,8 @@ function RequestView({
   market: MarketOption;
   selectedSymbols: string[];
   symbolInput: string;
+  symbolSuggestions: DataInstrumentSearchRow[];
+  isSymbolSearchLoading: boolean;
   startDate: string;
   endDate: string;
   tokenConfigured: boolean;
@@ -473,6 +499,7 @@ function RequestView({
   isRunning: boolean;
   onSymbolInputChange: (value: string) => void;
   onAddSymbols: (symbols: string[]) => void;
+  onSelectSymbol: (symbol: string) => void;
   onRemoveSymbol: (symbol: string) => void;
   onStartDateChange: (value: string) => void;
   onEndDateChange: (value: string) => void;
@@ -520,15 +547,27 @@ function RequestView({
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === ",") {
                   event.preventDefault();
-                  onAddSymbols([symbolInput]);
+                  onAddSymbols([symbolSuggestions[0]?.symbol ?? symbolInput]);
                 }
               }}
               placeholder={market.requestEnabled ? "Add symbol" : "Symbols shown for context"}
             />
-            <button type="button" className="data-inline-action" onClick={() => onAddSymbols([symbolInput])}>
+            <button
+              type="button"
+              className="data-inline-action"
+              onClick={() => onAddSymbols([symbolSuggestions[0]?.symbol ?? symbolInput])}
+            >
               Add
             </button>
           </div>
+          {market.requestEnabled && symbolInput.trim() ? (
+            <SymbolSuggestions
+              suggestions={symbolSuggestions}
+              selectedSymbols={selectedSymbols}
+              isLoading={isSymbolSearchLoading}
+              onSelect={onSelectSymbol}
+            />
+          ) : null}
 
           <div className="data-step-label">
             <span>2</span>
@@ -583,6 +622,43 @@ function RequestView({
           <p className="data-muted">{market.notice}</p>
         </section>
       </aside>
+    </div>
+  );
+}
+
+function SymbolSuggestions({
+  suggestions,
+  selectedSymbols,
+  isLoading,
+  onSelect,
+}: {
+  suggestions: DataInstrumentSearchRow[];
+  selectedSymbols: string[];
+  isLoading: boolean;
+  onSelect: (symbol: string) => void;
+}) {
+  const selected = new Set(selectedSymbols.map((symbol) => symbol.toUpperCase()));
+  if (isLoading) return <p className="data-symbol-helper">Searching symbols...</p>;
+  if (!suggestions.length) return <p className="data-symbol-helper">No matching symbols found.</p>;
+  return (
+    <div className="data-symbol-suggestions" aria-label="Symbol suggestions">
+      {suggestions.map((row) => {
+        const isSelected = selected.has(row.symbol.toUpperCase());
+        return (
+          <button
+            key={row.instrument_key}
+            type="button"
+            disabled={isSelected}
+            onClick={() => onSelect(row.symbol)}
+          >
+            <span>
+              <strong>{row.symbol}</strong>
+              {row.name ? <small>{row.name}</small> : null}
+            </span>
+            <small>{isSelected ? "Selected" : row.exchange}</small>
+          </button>
+        );
+      })}
     </div>
   );
 }
