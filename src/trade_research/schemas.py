@@ -305,6 +305,7 @@ class DataAvailabilityResponse(BaseModel):
 
 
 class DataBulkFetchPreviewRow(DataAvailabilityRow):
+    avg_daily_turnover: float | None = Field(default=None, ge=0.0)
     tasks: list[DataCoveragePreviewTask] = Field(default_factory=list)
 
 
@@ -317,6 +318,8 @@ class DataBulkFetchPreviewResponse(BaseModel):
     end_date: date
     query: str | None = None
     coverage_status: str | None = None
+    min_avg_daily_turnover: float | None = Field(default=None, ge=0.0)
+    min_coverage_pct: float | None = Field(default=None, ge=0.0, le=1.0)
     limit: int = Field(ge=1)
     offset: int = Field(ge=0)
     sort: str

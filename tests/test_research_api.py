@@ -73,6 +73,23 @@ class FakeCoverageStore:
             "NSE_EQ|BBB": {start_date},
         }
 
+    def daily_ohlcv_average_turnover_by_instrument(
+        self,
+        instrument_keys: list[str],
+        start_date: date,
+        end_date: date,
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> dict:
+        assert start_date <= end_date
+        if source == "yfinance":
+            assert exchange == "US"
+            return {
+                "YF|AAPL": 100.0,
+                "YF|MSFT": 500.0,
+            }
+        return {}
+
     def exchange_holidays(
         self,
         exchange: str,
@@ -664,6 +681,34 @@ def test_data_bulk_fetch_preview_supports_yfinance_filters(monkeypatch) -> None:
     assert payload["tasks"] == payload["rows"][0]["tasks"]
     assert payload["tasks"][0]["fetch_start"] == "2026-01-05"
     assert payload["tasks"][0]["fetch_end"] == "2026-01-06"
+
+
+def test_data_bulk_fetch_preview_filters_liquidity_and_coverage(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/bulk-fetch-preview"
+            "?provider=yfinance&exchange=US"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+            "&coverage_status=partial"
+            "&min_avg_daily_turnover=200"
+            "&min_coverage_pct=0.75"
+            "&sort=-avg_daily_turnover"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["min_avg_daily_turnover"] == 200.0
+    assert payload["min_coverage_pct"] == 0.75
+    assert payload["total"] == 1
+    assert payload["summary"]["symbols_partial"] == 1
+    assert payload["summary"]["missing_rows"] == 1
+    assert payload["rows"][0]["symbol"] == "MSFT"
+    assert payload["rows"][0]["avg_daily_turnover"] == 500.0
+    assert payload["rows"][0]["coverage_pct"] == 0.75
+    assert payload["tasks"][0]["fetch_start"] == "2026-01-05"
+    assert payload["tasks"][0]["fetch_end"] == "2026-01-05"
 
 
 def test_data_bulk_fetch_preview_rejects_non_yfinance() -> None:

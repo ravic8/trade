@@ -606,14 +606,15 @@ Deliverables:
 - `GET /api/data/availability` supports `provider=yfinance` for seeded US and
   Canada daily coverage.
 - `GET /api/data/bulk-fetch-preview` previews seeded yfinance missing windows
-  by exchange, universe, date range, query, and coverage status before any
-  mutating fetch runs.
+  by exchange, universe, date range, query, coverage status, minimum coverage
+  percent, and minimum average daily turnover before any mutating fetch runs.
 - US/Canada expected-session counts use weekdays until exchange-specific
   holiday calendars are added.
 
 Acceptance:
 
-- Seeded US/Canada symbols can be filtered as complete, partial, or empty.
+- Seeded US/Canada symbols can be filtered as complete, partial, empty, liquid
+  enough, and sufficiently covered.
 - Preview responses include queued fetch windows for missing daily candles.
 - Preview remains read-only; production fetches still go through
   `trade-research fetch-yfinance-daily` or scheduled Dagster assets.
