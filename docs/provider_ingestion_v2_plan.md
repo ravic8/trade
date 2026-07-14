@@ -604,22 +604,41 @@ Acceptance:
 
 Deliverables:
 
-- `GET /api/data/availability` supports `provider=yfinance` for seeded US and
-  Canada daily coverage.
-- `GET /api/data/bulk-fetch-preview` previews seeded yfinance missing windows
-  by exchange, universe, date range, query, coverage status, minimum coverage
-  percent, and minimum average daily turnover before any mutating fetch runs.
+- `GET /api/data/availability` supports `provider=yfinance` for seeded and
+  full US/Canada daily coverage.
+- `GET /api/data/bulk-fetch-preview` previews seeded or full-universe yfinance
+  missing windows by exchange, universe, date range, query, coverage status,
+  minimum coverage percent, and minimum average daily turnover before any
+  mutating fetch runs.
+- CLI command: `trade-research fetch-yfinance-missing` executes the filtered
+  missing-window plan against Timescale using the same universe, coverage, and
+  liquidity filters as the preview API.
 - US/Canada expected-session counts use exchange-specific holiday calendars;
   Canada reuses the TMX/TSX calendar source and US uses standard exchange
   holiday rules.
 
 Acceptance:
 
-- Seeded US/Canada symbols can be filtered as complete, partial, empty, liquid
-  enough, and sufficiently covered.
+- Seeded and full US/Canada symbols can be filtered as complete, partial,
+  empty, liquid enough, and sufficiently covered.
 - Preview responses include queued fetch windows for missing daily candles.
-- Preview remains read-only; production fetches still go through
-  `trade-research fetch-yfinance-daily` or scheduled Dagster assets.
+- Preview remains read-only; filtered production fills go through
+  `trade-research fetch-yfinance-missing`, and broad scheduled refreshes still
+  go through `trade-research fetch-yfinance-daily` or Dagster assets.
+
+Filtered fill example:
+
+```text
+trade-research fetch-yfinance-missing \
+  --universe us_all \
+  --from-date 2026-07-06 \
+  --to-date 2026-07-08 \
+  --coverage-status partial \
+  --min-avg-daily-turnover 1000000000 \
+  --min-coverage-pct 0.5 \
+  --limit 5 \
+  --batch-size 5
+```
 
 ### Phase 4: Dukascopy FX Intraday Storage
 

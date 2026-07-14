@@ -37,6 +37,7 @@ from trade_research.pipelines import (
     run_upstox_daily_ohlcv_retry_pipeline,
     run_walk_forward_folds_v1_pipeline,
     run_yfinance_daily_ohlcv_pipeline,
+    run_yfinance_missing_ohlcv_pipeline,
 )
 from trade_research.storage import ParquetStore, TimescaleStore
 from trade_research.targets import (
@@ -676,6 +677,91 @@ def fetch_yfinance_daily(
             "Stored fetch coverage rows: "
             f"{result.metrics['timescale_fetch_coverage_rows']}"
         )
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("fetch-yfinance-missing")
+def fetch_yfinance_missing(
+    universe: Annotated[
+        str,
+        typer.Option(
+            help="Universe to inspect and fill: us_seed, canada_seed, us_all, or canada_all."
+        ),
+    ] = "us_all",
+    from_date: Annotated[
+        str,
+        typer.Option(help="Start date in YYYY-MM-DD format."),
+    ] = ...,
+    to_date: Annotated[
+        str,
+        typer.Option(help="End date in YYYY-MM-DD format."),
+    ] = ...,
+    coverage_status: Annotated[
+        str | None,
+        typer.Option(help="Optional filter: complete, partial, or empty."),
+    ] = None,
+    min_avg_daily_turnover: Annotated[
+        float | None,
+        typer.Option(min=0, help="Only fetch symbols at or above this stored turnover."),
+    ] = None,
+    min_coverage_pct: Annotated[
+        float | None,
+        typer.Option(min=0, max=1, help="Only fetch symbols with at least this coverage ratio."),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(min=1, help="Maximum missing windows to fetch."),
+    ] = None,
+    batch_size: Annotated[
+        int,
+        typer.Option(min=1, max=100, help="Symbols per yfinance download batch."),
+    ] = 25,
+    export_db_snapshot: Annotated[
+        bool,
+        typer.Option(help="Export a full DB snapshot after applying the missing rows."),
+    ] = True,
+) -> None:
+    try:
+        result = run_yfinance_missing_ohlcv_pipeline(
+            universe=universe,
+            from_date=from_date,
+            to_date=to_date,
+            coverage_status=coverage_status,
+            min_avg_daily_turnover=min_avg_daily_turnover,
+            min_coverage_pct=min_coverage_pct,
+            limit=limit,
+            batch_size=batch_size,
+            export_db_snapshot=export_db_snapshot,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    output_path = result.artifacts.get("ohlcv")
+    if output_path is None:
+        console.print("No yfinance missing-window rows fetched; existing Parquet left unchanged")
+    else:
+        console.print(
+            f"Wrote yfinance missing-window OHLCV: {output_path} "
+            f"({result.metrics['db_snapshot_rows'] or result.rows} rows)"
+        )
+    console.print(
+        f"Universe: {result.metrics['universe']} / exchange {result.metrics['exchange']}"
+    )
+    console.print(f"Fetch symbols: {result.metrics['fetch_symbols']}")
+    console.print(f"Fetch windows: {result.metrics['fetch_windows']}")
+    console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
+    console.print(f"Batch size: {result.metrics['batch_size']}")
+    console.print(f"Fetch failures: {result.metrics['failure_rows']}")
+    console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
+    console.print(
+        "Stored price adjustment rows: "
+        f"{result.metrics['timescale_price_adjustment_rows']}"
+    )
+    console.print(
+        "Stored fetch coverage rows: "
+        f"{result.metrics['timescale_fetch_coverage_rows']}"
+    )
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
 
