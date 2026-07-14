@@ -18,6 +18,7 @@ import type {
   DataPipelineRunSummary,
   DataUniverseMemberRow,
   DataUniverseRow,
+  PipelineScheduleStatusRow,
   FactorICResponse,
   FactorSummaryResponse,
   JobRun,
@@ -36,6 +37,9 @@ import type {
   ProviderCredentialTestRequest,
   ProviderCredentialTestResponse,
   ProviderCredentialTokenRequest,
+  ProviderObservabilityParams,
+  ProviderRequestLogRow,
+  ProviderRequestSummaryRow,
   ResearchProgressResponse,
   ResearchNote,
   ScreenerResult,
@@ -368,6 +372,47 @@ export function getDataPipelineRuns(): Promise<DataPipelineRunSummary[]> {
 
 export function getDataPipelineRunDetail(runId: string): Promise<DataPipelineRunDetail> {
   return strictFetchJson(`/api/data/pipeline-runs/${encodeURIComponent(runId)}`);
+}
+
+function appendObservabilityParams(query: URLSearchParams, params: ProviderObservabilityParams) {
+  if (params.provider) query.set("provider", params.provider);
+  if (params.exchange) query.set("exchange", params.exchange);
+  if (params.job) query.set("job", params.job);
+  if (params.endpoint_group) query.set("endpoint_group", params.endpoint_group);
+  if (params.status) query.set("status", params.status);
+  if (params.start_date) query.set("start_date", params.start_date);
+  if (params.end_date) query.set("end_date", params.end_date);
+  if (params.run_id) query.set("run_id", params.run_id);
+  if (params.limit) query.set("limit", params.limit.toString());
+  if (params.offset) query.set("offset", params.offset.toString());
+}
+
+export function getProviderRuns(
+  params: ProviderObservabilityParams,
+): Promise<DataPipelineRunSummary[]> {
+  const query = new URLSearchParams();
+  appendObservabilityParams(query, params);
+  return strictFetchJson(`/api/data/provider-runs?${query.toString()}`);
+}
+
+export function getProviderRequestSummary(
+  params: ProviderObservabilityParams,
+): Promise<ProviderRequestSummaryRow[]> {
+  const query = new URLSearchParams();
+  appendObservabilityParams(query, params);
+  return strictFetchJson(`/api/data/provider-request-summary?${query.toString()}`);
+}
+
+export function getProviderRequestLogs(
+  params: ProviderObservabilityParams,
+): Promise<ProviderRequestLogRow[]> {
+  const query = new URLSearchParams();
+  appendObservabilityParams(query, params);
+  return strictFetchJson(`/api/data/provider-request-logs?${query.toString()}`);
+}
+
+export function getPipelineScheduleStatus(): Promise<PipelineScheduleStatusRow[]> {
+  return strictFetchJson("/api/data/schedules/status");
 }
 
 export async function postChatQuery(payload: ChatQueryRequest): Promise<ChatQueryResponse> {

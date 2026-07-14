@@ -2197,6 +2197,269 @@ class TimescaleStore:
             )
         return {"total": total, "rows": clean_rows, "summary": summary}
 
+    def seeded_intraday_ohlcv_availability(
+        self,
+        symbols: list[dict[str, str | None]],
+        source: str,
+        exchange: str,
+        interval: str,
+        start_ts: datetime | None = None,
+        end_ts: datetime | None = None,
+        query_text: str | None = None,
+        coverage_status: str | None = None,
+        expected_rows_per_symbol: int = 0,
+        limit: int = 50,
+        offset: int = 0,
+        sort: str = "symbol",
+    ) -> dict[str, Any]:
+        if (start_ts is None) != (end_ts is None):
+            raise ValueError("start_ts and end_ts must be supplied together.")
+        if start_ts and end_ts and start_ts > end_ts:
+            raise ValueError("start_ts must be on or before end_ts.")
+
+        empty_summary = {
+            "symbols_total": 0,
+            "symbols_complete": 0,
+            "symbols_partial": 0,
+            "symbols_empty": 0,
+            "expected_rows": 0,
+            "stored_rows": 0,
+            "missing_rows": 0,
+            "estimated_provider_calls_for_missing": 0,
+        }
+        seed_rows = [
+            row for row in symbols if row.get("symbol") and row.get("instrument_key")
+        ]
+        if not seed_rows:
+            return {"total": 0, "rows": [], "summary": empty_summary}
+
+        params: dict[str, Any] = {
+            "source": source,
+            "exchange": exchange.upper(),
+            "interval": interval,
+            "expected_rows": int(expected_rows_per_symbol),
+            "limit": int(limit),
+            "offset": int(offset),
+        }
+        values_sql = []
+        for index, row in enumerate(seed_rows):
+            symbol_key = f"symbol_{index}"
+            name_key = f"name_{index}"
+            instrument_key = f"instrument_key_{index}"
+            asset_class_key = f"asset_class_{index}"
+            values_sql.append(
+                f"(:{symbol_key}, :{name_key}, :{instrument_key}, :{asset_class_key})"
+            )
+            params[symbol_key] = str(row["symbol"]).upper()
+            params[name_key] = row.get("name")
+            params[instrument_key] = str(row["instrument_key"])
+            params[asset_class_key] = row.get("asset_class")
+
+        ts_filter = ""
+        if start_ts and end_ts:
+            params["start_ts"] = start_ts
+            params["end_ts"] = end_ts
+            ts_filter = "AND d.ts >= :start_ts AND d.ts <= :end_ts"
+
+        filters = []
+        if query_text:
+            params["query"] = f"%{query_text.strip().upper()}%"
+            filters.append(
+                "("
+                "upper(s.symbol) LIKE :query OR "
+                "upper(coalesce(s.name, '')) LIKE :query OR "
+                "upper(s.instrument_key) LIKE :query"
+                ")"
+            )
+
+        status_filter = ""
+        if coverage_status:
+            normalized_status = coverage_status.lower()
+            if normalized_status not in {"complete", "partial", "empty"}:
+                raise ValueError("coverage_status must be complete, partial, or empty.")
+            params["coverage_status"] = normalized_status
+            status_filter = "WHERE coverage_status = :coverage_status"
+
+        order_by = {
+            "symbol": "symbol ASC",
+            "-symbol": "symbol DESC",
+            "coverage_pct": "coverage_pct ASC, symbol ASC",
+            "-coverage_pct": "coverage_pct DESC, symbol ASC",
+            "missing_rows": "missing_rows ASC, symbol ASC",
+            "-missing_rows": "missing_rows DESC, symbol ASC",
+            "latest_stored_ts": "latest_stored_ts ASC NULLS FIRST, symbol ASC",
+            "-latest_stored_ts": "latest_stored_ts DESC NULLS LAST, symbol ASC",
+        }.get(sort)
+        if order_by is None:
+            raise ValueError("Unsupported sort value.")
+
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        statement = text(
+            f"""
+            WITH seed_symbols(symbol, name, instrument_key, asset_class) AS (
+                VALUES {", ".join(values_sql)}
+            ),
+            latest_fetch AS (
+                SELECT DISTINCT ON (instrument_key)
+                    instrument_key,
+                    status AS last_fetch_status
+                FROM provider_request_log
+                WHERE provider = :source
+                  AND interval = :interval
+                ORDER BY instrument_key, created_at DESC
+            ),
+            latest_success AS (
+                SELECT DISTINCT ON (instrument_key)
+                    instrument_key,
+                    run_id AS last_successful_run
+                FROM provider_request_log
+                WHERE provider = :source
+                  AND interval = :interval
+                  AND status = 'success'
+                ORDER BY instrument_key, created_at DESC
+            ),
+            base AS (
+                SELECT
+                    s.symbol,
+                    s.name,
+                    s.instrument_key,
+                    :source AS provider,
+                    :exchange AS exchange,
+                    :interval AS interval,
+                    s.asset_class,
+                    min(d.ts) AS first_stored_ts,
+                    max(d.ts) AS latest_stored_ts,
+                    count(d.ts)::bigint AS stored_rows,
+                    ls.last_successful_run,
+                    lf.last_fetch_status
+                FROM seed_symbols s
+                LEFT JOIN ohlcv_intraday d
+                    ON d.instrument_key = s.instrument_key
+                   AND d.source = :source
+                   AND d.exchange = :exchange
+                   AND d.interval = :interval
+                   {ts_filter}
+                LEFT JOIN latest_fetch lf
+                    ON lf.instrument_key = s.instrument_key
+                LEFT JOIN latest_success ls
+                    ON ls.instrument_key = s.instrument_key
+                {where_clause}
+                GROUP BY
+                    s.symbol,
+                    s.name,
+                    s.instrument_key,
+                    s.asset_class,
+                    ls.last_successful_run,
+                    lf.last_fetch_status
+            ),
+            scored AS (
+                SELECT
+                    *,
+                    CAST(:expected_rows AS bigint) AS expected_rows,
+                    greatest(
+                        CAST(:expected_rows AS bigint) - stored_rows,
+                        0
+                    )::bigint AS missing_rows,
+                    CASE
+                        WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0.0
+                        ELSE least(stored_rows::float / CAST(:expected_rows AS float), 1.0)
+                    END AS coverage_pct,
+                    CASE
+                        WHEN stored_rows = 0 THEN 'empty'
+                        WHEN CAST(:expected_rows AS bigint) > 0
+                            AND stored_rows >= CAST(:expected_rows AS bigint) THEN 'complete'
+                        ELSE 'partial'
+                    END AS coverage_status
+                FROM base
+            ),
+            filtered AS (
+                SELECT * FROM scored
+                {status_filter}
+            ),
+            summary AS (
+                SELECT
+                    count(*)::bigint AS symbols_total,
+                    count(*) FILTER (
+                        WHERE coverage_status = 'complete'
+                    )::bigint AS symbols_complete,
+                    count(*) FILTER (WHERE coverage_status = 'partial')::bigint AS symbols_partial,
+                    count(*) FILTER (WHERE coverage_status = 'empty')::bigint AS symbols_empty,
+                    coalesce(sum(expected_rows), 0)::bigint AS expected_rows,
+                    coalesce(sum(stored_rows), 0)::bigint AS stored_rows,
+                    coalesce(sum(missing_rows), 0)::bigint AS missing_rows,
+                    count(*) FILTER (
+                        WHERE missing_rows > 0
+                    )::bigint AS estimated_provider_calls_for_missing
+                FROM filtered
+            ),
+            total_count AS (
+                SELECT count(*)::bigint AS total FROM filtered
+            )
+            SELECT
+                f.*,
+                tc.total,
+                s.symbols_total,
+                s.symbols_complete,
+                s.symbols_partial,
+                s.symbols_empty,
+                s.expected_rows AS summary_expected_rows,
+                s.stored_rows AS summary_stored_rows,
+                s.missing_rows AS summary_missing_rows,
+                s.estimated_provider_calls_for_missing
+            FROM filtered f
+            CROSS JOIN total_count tc
+            CROSS JOIN summary s
+            ORDER BY {order_by}
+            LIMIT :limit OFFSET :offset
+            """
+        )
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(statement, params).mappings()]
+
+        summary = empty_summary
+        total = 0
+        if rows:
+            first = rows[0]
+            total = int(first["total"] or 0)
+            summary = {
+                "symbols_total": int(first["symbols_total"] or 0),
+                "symbols_complete": int(first["symbols_complete"] or 0),
+                "symbols_partial": int(first["symbols_partial"] or 0),
+                "symbols_empty": int(first["symbols_empty"] or 0),
+                "expected_rows": int(first["summary_expected_rows"] or 0),
+                "stored_rows": int(first["summary_stored_rows"] or 0),
+                "missing_rows": int(first["summary_missing_rows"] or 0),
+                "estimated_provider_calls_for_missing": int(
+                    first["estimated_provider_calls_for_missing"] or 0
+                ),
+            }
+
+        clean_rows = []
+        for row in rows:
+            missing_rows = int(row["missing_rows"] or 0)
+            clean_rows.append(
+                {
+                    "symbol": row["symbol"],
+                    "name": row.get("name"),
+                    "instrument_key": row["instrument_key"],
+                    "provider": row["provider"],
+                    "exchange": row["exchange"],
+                    "interval": row["interval"],
+                    "asset_class": row.get("asset_class"),
+                    "first_stored_ts": row.get("first_stored_ts"),
+                    "latest_stored_ts": row.get("latest_stored_ts"),
+                    "stored_rows": int(row["stored_rows"] or 0),
+                    "expected_rows": int(row["expected_rows"] or 0),
+                    "coverage_pct": float(row["coverage_pct"] or 0.0),
+                    "missing_rows": missing_rows,
+                    "missing_windows": 1 if missing_rows > 0 else 0,
+                    "coverage_status": row["coverage_status"],
+                    "last_successful_run": row.get("last_successful_run"),
+                    "last_fetch_status": row.get("last_fetch_status"),
+                }
+            )
+        return {"total": total, "rows": clean_rows, "summary": summary}
+
     def search_provider_instruments(
         self,
         query_text: str,
@@ -2710,6 +2973,36 @@ class TimescaleStore:
         with self.engine.begin() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 
+    def provider_runs(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        source: str | None = None,
+        exchange: str | None = None,
+        job_name: str | None = None,
+        status: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        query = ingestion_runs_table.select().order_by(ingestion_runs_table.c.started_at.desc())
+        if source:
+            query = query.where(ingestion_runs_table.c.source == source.lower())
+        if exchange:
+            query = query.where(ingestion_runs_table.c.exchange == exchange.upper())
+        if job_name:
+            query = query.where(ingestion_runs_table.c.job_name == job_name)
+        if status:
+            query = query.where(ingestion_runs_table.c.status == status)
+        if start_date:
+            query = query.where(ingestion_runs_table.c.started_at >= start_date)
+        if end_date:
+            query = query.where(
+                ingestion_runs_table.c.started_at < end_date + timedelta(days=1)
+            )
+        query = query.limit(max(limit, 1)).offset(max(offset, 0))
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
     def ingestion_run(self, run_id: str) -> dict[str, Any] | None:
         query = ingestion_runs_table.select().where(ingestion_runs_table.c.run_id == run_id)
         with self.engine.begin() as connection:
@@ -2759,6 +3052,51 @@ class TimescaleStore:
         with self.engine.begin() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 
+    def provider_request_logs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        run_id: str | None = None,
+        provider: str | None = None,
+        endpoint_group: str | None = None,
+        status: str | None = None,
+        exchange: str | None = None,
+        job_name: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        query = provider_request_log_table.select().order_by(
+            provider_request_log_table.c.created_at.desc()
+        )
+        if exchange or job_name:
+            query = query.select_from(
+                provider_request_log_table.outerjoin(
+                    ingestion_runs_table,
+                    provider_request_log_table.c.run_id == ingestion_runs_table.c.run_id,
+                )
+            )
+        if run_id:
+            query = query.where(provider_request_log_table.c.run_id == run_id)
+        if provider:
+            query = query.where(provider_request_log_table.c.provider == provider.lower())
+        if endpoint_group:
+            query = query.where(provider_request_log_table.c.endpoint_group == endpoint_group)
+        if status:
+            query = query.where(provider_request_log_table.c.status == status)
+        if exchange:
+            query = query.where(ingestion_runs_table.c.exchange == exchange.upper())
+        if job_name:
+            query = query.where(ingestion_runs_table.c.job_name == job_name)
+        if start_date:
+            query = query.where(provider_request_log_table.c.created_at >= start_date)
+        if end_date:
+            query = query.where(
+                provider_request_log_table.c.created_at < end_date + timedelta(days=1)
+            )
+        query = query.limit(max(limit, 1)).offset(max(offset, 0))
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
     def provider_request_log_summary(
         self,
         run_id: str,
@@ -2780,6 +3118,65 @@ class TimescaleStore:
             query = query.where(provider_request_log_table.c.provider == provider.lower())
         if endpoint_group:
             query = query.where(provider_request_log_table.c.endpoint_group == endpoint_group)
+        query = query.group_by(
+            provider_request_log_table.c.provider,
+            provider_request_log_table.c.endpoint_group,
+            provider_request_log_table.c.status,
+        ).order_by(
+            provider_request_log_table.c.provider,
+            provider_request_log_table.c.endpoint_group,
+            provider_request_log_table.c.status,
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def provider_request_summary(
+        self,
+        run_id: str | None = None,
+        provider: str | None = None,
+        endpoint_group: str | None = None,
+        status: str | None = None,
+        exchange: str | None = None,
+        job_name: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        query = select(
+            provider_request_log_table.c.provider,
+            provider_request_log_table.c.endpoint_group,
+            provider_request_log_table.c.status,
+            func.count().label("requests"),
+            func.sum(provider_request_log_table.c.wait_seconds).label("wait_seconds"),
+            func.avg(provider_request_log_table.c.duration_ms).label("avg_duration_ms"),
+            func.sum(
+                case((provider_request_log_table.c.rate_limited.is_(True), 1), else_=0)
+            ).label("rate_limited_requests"),
+        )
+        if exchange or job_name:
+            query = query.select_from(
+                provider_request_log_table.outerjoin(
+                    ingestion_runs_table,
+                    provider_request_log_table.c.run_id == ingestion_runs_table.c.run_id,
+                )
+            )
+        if run_id:
+            query = query.where(provider_request_log_table.c.run_id == run_id)
+        if provider:
+            query = query.where(provider_request_log_table.c.provider == provider.lower())
+        if endpoint_group:
+            query = query.where(provider_request_log_table.c.endpoint_group == endpoint_group)
+        if status:
+            query = query.where(provider_request_log_table.c.status == status)
+        if exchange:
+            query = query.where(ingestion_runs_table.c.exchange == exchange.upper())
+        if job_name:
+            query = query.where(ingestion_runs_table.c.job_name == job_name)
+        if start_date:
+            query = query.where(provider_request_log_table.c.created_at >= start_date)
+        if end_date:
+            query = query.where(
+                provider_request_log_table.c.created_at < end_date + timedelta(days=1)
+            )
         query = query.group_by(
             provider_request_log_table.c.provider,
             provider_request_log_table.c.endpoint_group,

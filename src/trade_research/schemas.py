@@ -267,13 +267,17 @@ class DataAvailabilityRow(BaseModel):
     instrument_key: str
     provider: str
     exchange: str
-    interval: Literal["1d"] = "1d"
+    interval: Literal["1d", "5m"] = "1d"
+    asset_class: str | None = None
     first_stored_date: date | None = None
     latest_stored_date: date | None = None
+    first_stored_ts: datetime | None = None
+    latest_stored_ts: datetime | None = None
     stored_rows: int = Field(ge=0)
     expected_rows: int = Field(ge=0)
     coverage_pct: float = Field(ge=0.0)
     missing_rows: int = Field(ge=0)
+    missing_windows: int = Field(default=0, ge=0)
     coverage_status: Literal["complete", "partial", "empty"]
     last_successful_run: str | None = None
     last_fetch_status: str | None = None
@@ -293,7 +297,7 @@ class DataAvailabilitySummary(BaseModel):
 class DataAvailabilityResponse(BaseModel):
     provider: str
     exchange: str
-    interval: Literal["1d"] = "1d"
+    interval: Literal["1d", "5m"] = "1d"
     start_date: date | None = None
     end_date: date | None = None
     limit: int = Field(ge=1)
@@ -403,6 +407,46 @@ class DailyOhlcvFetchCoverageRow(BaseModel):
 class DataPipelineRunDetail(BaseModel):
     run: DataPipelineRunSummary
     fetch_coverage: list[DailyOhlcvFetchCoverageRow] = Field(default_factory=list)
+
+
+class ProviderRequestSummaryRow(BaseModel):
+    provider: str
+    endpoint_group: str
+    status: str
+    requests: int = Field(ge=0)
+    rate_limited_requests: int = Field(ge=0)
+    wait_seconds: float = Field(ge=0.0)
+    avg_duration_ms: float = Field(ge=0.0)
+
+
+class ProviderRequestLogRow(BaseModel):
+    id: str
+    run_id: str | None = None
+    provider: str
+    endpoint_group: str
+    request_key: str
+    instrument_key: str | None = None
+    symbol: str | None = None
+    interval: str | None = None
+    window_start: date | None = None
+    window_end: date | None = None
+    status_code: int | None = None
+    status: str
+    error_message: str | None = None
+    retry_count: int = Field(ge=0)
+    rate_limited: bool
+    wait_seconds: float = Field(ge=0.0)
+    duration_ms: float = Field(ge=0.0)
+    created_at: datetime
+
+
+class PipelineScheduleStatusRow(BaseModel):
+    schedule_name: str
+    job_name: str
+    cron_schedule: str
+    execution_timezone: str
+    intended_status: Literal["running", "stopped"]
+    notes: str | None = None
 
 
 class ToolCallSpec(BaseModel):

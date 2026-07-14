@@ -157,13 +157,17 @@ export type DataAvailabilityRow = {
   instrument_key: string;
   provider: string;
   exchange: string;
-  interval: "1d";
+  interval: "1d" | "5m";
+  asset_class: string | null;
   first_stored_date: string | null;
   latest_stored_date: string | null;
+  first_stored_ts: string | null;
+  latest_stored_ts: string | null;
   stored_rows: number;
   expected_rows: number;
   coverage_pct: number;
   missing_rows: number;
+  missing_windows: number;
   coverage_status: "complete" | "partial" | "empty";
   last_successful_run: string | null;
   last_fetch_status: string | null;
@@ -183,7 +187,7 @@ export type DataAvailabilitySummary = {
 export type DataAvailabilityResponse = {
   provider: string;
   exchange: string;
-  interval: "1d";
+  interval: "1d" | "5m";
   start_date: string | null;
   end_date: string | null;
   limit: number;
@@ -195,9 +199,9 @@ export type DataAvailabilityResponse = {
 };
 
 export type DataAvailabilityParams = {
-  provider?: "upstox";
-  exchange?: "NSE";
-  interval?: "1d";
+  provider?: "upstox" | "yfinance";
+  exchange?: "NSE" | "US" | "CA" | "GLOBAL";
+  interval?: "1d" | "5m";
   start_date?: string;
   end_date?: string;
   query?: string;
@@ -288,6 +292,59 @@ export type DailyOhlcvFetchCoverageRow = {
 export type DataPipelineRunDetail = {
   run: DataPipelineRunSummary;
   fetch_coverage: DailyOhlcvFetchCoverageRow[];
+};
+
+export type ProviderRequestSummaryRow = {
+  provider: string;
+  endpoint_group: string;
+  status: string;
+  requests: number;
+  rate_limited_requests: number;
+  wait_seconds: number;
+  avg_duration_ms: number;
+};
+
+export type ProviderRequestLogRow = {
+  id: string;
+  run_id: string | null;
+  provider: string;
+  endpoint_group: string;
+  request_key: string;
+  instrument_key: string | null;
+  symbol: string | null;
+  interval: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  status_code: number | null;
+  status: string;
+  error_message: string | null;
+  retry_count: number;
+  rate_limited: boolean;
+  wait_seconds: number;
+  duration_ms: number;
+  created_at: string;
+};
+
+export type ProviderObservabilityParams = {
+  provider?: "upstox" | "yfinance" | "";
+  exchange?: "NSE" | "US" | "CA" | "GLOBAL" | "";
+  job?: string;
+  endpoint_group?: string;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+  run_id?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type PipelineScheduleStatusRow = {
+  schedule_name: string;
+  job_name: string;
+  cron_schedule: string;
+  execution_timezone: string;
+  intended_status: "running" | "stopped";
+  notes: string | null;
 };
 
 export type ChatExchange = "NSE" | "TSX" | "BOTH";

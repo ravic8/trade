@@ -121,6 +121,104 @@ class FakeCoverageStore:
     def ingestion_run(self, run_id: str) -> dict | None:
         return _run_row() if run_id == "run-1" else None
 
+    def provider_runs(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        source: str | None = None,
+        exchange: str | None = None,
+        job_name: str | None = None,
+        status: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict]:
+        assert limit == 25
+        assert offset == 0
+        assert source == "yfinance"
+        assert exchange == "GLOBAL"
+        assert job_name == "yfinance_fx_intraday_job"
+        assert status == "success"
+        assert start_date == date(2026, 7, 1)
+        assert end_date == date(2026, 7, 14)
+        return [_run_row(source="yfinance", exchange="GLOBAL", job_name=job_name)]
+
+    def provider_request_summary(
+        self,
+        run_id: str | None = None,
+        provider: str | None = None,
+        endpoint_group: str | None = None,
+        status: str | None = None,
+        exchange: str | None = None,
+        job_name: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict]:
+        assert run_id is None
+        assert provider == "yfinance"
+        assert endpoint_group == "intraday_download"
+        assert status == "success"
+        assert exchange == "GLOBAL"
+        assert job_name is None
+        assert start_date == date(2026, 7, 1)
+        assert end_date == date(2026, 7, 14)
+        return [
+            {
+                "provider": "yfinance",
+                "endpoint_group": "intraday_download",
+                "status": "success",
+                "requests": 2,
+                "rate_limited_requests": 1,
+                "wait_seconds": 0.5,
+                "avg_duration_ms": 123.4,
+            }
+        ]
+
+    def provider_request_logs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        run_id: str | None = None,
+        provider: str | None = None,
+        endpoint_group: str | None = None,
+        status: str | None = None,
+        exchange: str | None = None,
+        job_name: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[dict]:
+        assert limit == 10
+        assert offset == 0
+        assert run_id == "run-1"
+        assert provider == "yfinance"
+        assert endpoint_group == "intraday_download"
+        assert status is None
+        assert exchange is None
+        assert job_name is None
+        assert start_date is None
+        assert end_date is None
+        return [
+            {
+                "id": "log-1",
+                "run_id": "run-1",
+                "provider": "yfinance",
+                "endpoint_group": "intraday_download",
+                "request_key": "EURUSD=X:5m",
+                "instrument_key": "YF_INTRADAY|EURUSD=X",
+                "symbol": "EUR/USD",
+                "interval": "5m",
+                "window_start": date(2026, 7, 1),
+                "window_end": date(2026, 7, 1),
+                "status_code": 200,
+                "status": "success",
+                "error_message": None,
+                "retry_count": 0,
+                "rate_limited": True,
+                "wait_seconds": 0.5,
+                "duration_ms": 123.4,
+                "created_at": datetime(2026, 7, 1, 1, tzinfo=UTC),
+            }
+        ]
+
     def daily_ohlcv_fetch_coverage_for_run(
         self,
         run_id: str,
@@ -269,6 +367,73 @@ class FakeCoverageStore:
             },
         }
 
+    def seeded_intraday_ohlcv_availability(
+        self,
+        symbols: list[dict],
+        source: str,
+        exchange: str,
+        interval: str,
+        start_ts: datetime | None = None,
+        end_ts: datetime | None = None,
+        query_text: str | None = None,
+        coverage_status: str | None = None,
+        expected_rows_per_symbol: int = 0,
+        limit: int = 50,
+        offset: int = 0,
+        sort: str = "symbol",
+    ) -> dict:
+        assert source == "yfinance"
+        assert exchange == "GLOBAL"
+        assert interval == "5m"
+        assert symbols[0] == {
+            "symbol": "EUR/USD",
+            "name": "Euro vs US Dollar",
+            "instrument_key": "YF_INTRADAY|EURUSD=X",
+            "asset_class": "fx",
+        }
+        assert start_ts == datetime(2026, 7, 1, tzinfo=UTC)
+        assert end_ts == datetime(2026, 7, 1, 23, 55, tzinfo=UTC)
+        assert query_text == "EUR"
+        assert coverage_status == "partial"
+        assert expected_rows_per_symbol == 288
+        assert limit == 10
+        assert offset == 0
+        assert sort == "-latest_stored_ts"
+        return {
+            "total": 1,
+            "rows": [
+                {
+                    "symbol": "EUR/USD",
+                    "name": "Euro vs US Dollar",
+                    "instrument_key": "YF_INTRADAY|EURUSD=X",
+                    "provider": "yfinance",
+                    "exchange": "GLOBAL",
+                    "interval": "5m",
+                    "asset_class": "fx",
+                    "first_stored_ts": datetime(2026, 7, 1, tzinfo=UTC),
+                    "latest_stored_ts": datetime(2026, 7, 1, 1, tzinfo=UTC),
+                    "stored_rows": 12,
+                    "expected_rows": 288,
+                    "coverage_pct": 12 / 288,
+                    "missing_rows": 276,
+                    "missing_windows": 1,
+                    "coverage_status": "partial",
+                    "last_successful_run": "run-1",
+                    "last_fetch_status": "success",
+                }
+            ],
+            "summary": {
+                "symbols_total": 1,
+                "symbols_complete": 0,
+                "symbols_partial": 1,
+                "symbols_empty": 0,
+                "expected_rows": 288,
+                "stored_rows": 12,
+                "missing_rows": 276,
+                "estimated_provider_calls_for_missing": 1,
+            },
+        }
+
     def search_provider_instruments(
         self,
         query_text: str,
@@ -374,13 +539,18 @@ class ColdHolidayStore(FakeCoverageStore):
         return 1
 
 
-def _run_row() -> dict:
+def _run_row(
+    source: str = "upstox",
+    exchange: str = "NSE",
+    job_name: str = "upstox_nse_daily_ohlcv",
+    status: str = "completed",
+) -> dict:
     return {
         "run_id": "run-1",
-        "job_name": "upstox_nse_daily_ohlcv",
-        "status": "completed",
-        "exchange": "NSE",
-        "source": "upstox",
+        "job_name": job_name,
+        "status": status,
+        "exchange": exchange,
+        "source": source,
         "started_at": datetime(2026, 1, 6, 9, 0, tzinfo=UTC),
         "finished_at": datetime(2026, 1, 6, 9, 2, 5, tzinfo=UTC),
         "items_requested": 2,
@@ -645,6 +815,31 @@ def test_data_availability_supports_yfinance_seeded_universe(monkeypatch) -> Non
     assert payload["rows"][0]["last_successful_run"] == "run-yf"
 
 
+def test_data_availability_supports_yfinance_intraday(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?provider=yfinance&exchange=GLOBAL&interval=5m"
+            "&start_date=2026-07-01&end_date=2026-07-01"
+            "&query=EUR&coverage_status=partial&limit=10&sort=-latest_stored_ts"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "yfinance"
+    assert payload["exchange"] == "GLOBAL"
+    assert payload["interval"] == "5m"
+    assert payload["summary"]["expected_rows"] == 288
+    assert payload["summary"]["stored_rows"] == 12
+    assert payload["rows"][0]["symbol"] == "EUR/USD"
+    assert payload["rows"][0]["asset_class"] == "fx"
+    assert payload["rows"][0]["first_stored_ts"] == "2026-07-01T00:00:00Z"
+    assert payload["rows"][0]["latest_stored_ts"] == "2026-07-01T01:00:00Z"
+    assert payload["rows"][0]["missing_windows"] == 1
+
+
 def test_data_availability_rejects_yfinance_exchange_mismatch() -> None:
     with TestClient(app) as client:
         response = client.get(
@@ -819,6 +1014,70 @@ def test_data_pipeline_runs_endpoint(monkeypatch) -> None:
     assert payload[0]["duration_seconds"] == 125
     assert payload[0]["items_requested"] == 2
     assert payload[0]["run_metadata"] == {"trigger": "ui"}
+
+
+def test_provider_runs_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/provider-runs"
+            "?provider=yfinance&exchange=GLOBAL&job=yfinance_fx_intraday_job"
+            "&status=success&start_date=2026-07-01&end_date=2026-07-14&limit=25"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["source"] == "yfinance"
+    assert payload[0]["exchange"] == "GLOBAL"
+    assert payload[0]["name"] == "yfinance_fx_intraday_job"
+
+
+def test_provider_request_summary_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/provider-request-summary"
+            "?provider=yfinance&exchange=GLOBAL&endpoint_group=intraday_download"
+            "&status=success&start_date=2026-07-01&end_date=2026-07-14"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["provider"] == "yfinance"
+    assert payload[0]["endpoint_group"] == "intraday_download"
+    assert payload[0]["requests"] == 2
+    assert payload[0]["rate_limited_requests"] == 1
+
+
+def test_provider_request_logs_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/provider-request-logs"
+            "?run_id=run-1&provider=yfinance&endpoint_group=intraday_download&limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["id"] == "log-1"
+    assert payload[0]["symbol"] == "EUR/USD"
+    assert payload[0]["interval"] == "5m"
+    assert payload[0]["rate_limited"] is True
+
+
+def test_data_schedule_status_endpoint() -> None:
+    with TestClient(app) as client:
+        response = client.get("/api/data/schedules/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    schedules = {row["schedule_name"]: row for row in payload}
+    assert schedules["fx_intraday_dukascopy_schedule"]["intended_status"] == "stopped"
+    assert schedules["yfinance_fx_intraday_schedule"]["intended_status"] == "stopped"
+    assert "private" in schedules["daily_research_schedule"]["notes"]
 
 
 def test_data_pipeline_run_detail_endpoint(monkeypatch) -> None:
