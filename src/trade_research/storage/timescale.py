@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    case,
     create_engine,
     func,
     select,
@@ -2303,7 +2304,7 @@ class TimescaleStore:
             func.sum(provider_request_log_table.c.wait_seconds).label("wait_seconds"),
             func.avg(provider_request_log_table.c.duration_ms).label("avg_duration_ms"),
             func.sum(
-                provider_request_log_table.c.rate_limited.cast(BigInteger)
+                case((provider_request_log_table.c.rate_limited.is_(True), 1), else_=0)
             ).label("rate_limited_requests"),
         ).where(provider_request_log_table.c.run_id == run_id)
         if provider:
