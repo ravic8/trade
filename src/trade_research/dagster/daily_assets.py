@@ -15,6 +15,7 @@ from trade_research.pipelines import (
     run_ml_dataset_v1_pipeline,
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
+    run_yfinance_daily_ohlcv_pipeline,
 )
 from trade_research.validation import resolve_latest_expected_trading_date
 
@@ -33,6 +34,38 @@ def upstox_daily_ohlcv(context) -> PipelineRunResult:
         export_db_snapshot=True,
         trigger="dagster",
         max_concurrent_fetches=settings.upstox_historical_concurrency,
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="north_america_daily",
+    compute_kind="yfinance",
+    description="Incrementally fetch seeded US daily OHLCV from yfinance into TimescaleDB.",
+)
+def yfinance_us_daily_ohlcv(context) -> PipelineRunResult:
+    result = run_yfinance_daily_ohlcv_pipeline(
+        universe="us_seed",
+        store_db=True,
+        export_db_snapshot=True,
+        trigger="dagster",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="north_america_daily",
+    compute_kind="yfinance",
+    description="Incrementally fetch seeded Canada daily OHLCV from yfinance into TimescaleDB.",
+)
+def yfinance_canada_daily_ohlcv(context) -> PipelineRunResult:
+    result = run_yfinance_daily_ohlcv_pipeline(
+        universe="canada_seed",
+        store_db=True,
+        export_db_snapshot=True,
+        trigger="dagster",
     )
     context.add_output_metadata(_result_metadata(result))
     return result

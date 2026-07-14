@@ -36,6 +36,7 @@ from trade_research.pipelines import (
     run_upstox_daily_ohlcv_pipeline,
     run_upstox_daily_ohlcv_retry_pipeline,
     run_walk_forward_folds_v1_pipeline,
+    run_yfinance_daily_ohlcv_pipeline,
 )
 from trade_research.storage import ParquetStore, TimescaleStore
 from trade_research.targets import (
@@ -594,6 +595,76 @@ def retry_upstox_nse_daily(
     if result.warnings:
         for warning in result.warnings:
             console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("fetch-yfinance-daily")
+def fetch_yfinance_daily(
+    universe: Annotated[
+        str,
+        typer.Option(help="Seed universe to fetch: us_seed or canada_seed."),
+    ] = "us_seed",
+    years: Annotated[
+        int,
+        typer.Option(min=1, max=10, help="Daily candle lookback in years."),
+    ] = 2,
+    from_date: Annotated[
+        str | None,
+        typer.Option(help="Optional start date in YYYY-MM-DD format."),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        typer.Option(help="Optional end date in YYYY-MM-DD format."),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(help="Optional smoke-test symbol limit."),
+    ] = None,
+    batch_size: Annotated[
+        int,
+        typer.Option(min=1, max=100, help="Symbols per yfinance download batch."),
+    ] = 25,
+    store_db: Annotated[
+        bool,
+        typer.Option(help="Also upsert daily candles and audits into Timescale/Postgres."),
+    ] = True,
+) -> None:
+    try:
+        result = run_yfinance_daily_ohlcv_pipeline(
+            universe=universe,
+            years=years,
+            from_date=from_date,
+            to_date=to_date,
+            limit=limit,
+            batch_size=batch_size,
+            store_db=store_db,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    output_path = result.artifacts.get("ohlcv")
+    if output_path is None:
+        console.print("No new yfinance daily OHLCV rows fetched; existing Parquet left unchanged")
+    else:
+        console.print(
+            f"Wrote yfinance daily OHLCV: {output_path} "
+            f"({result.metrics['db_snapshot_rows'] or result.rows} rows)"
+        )
+    console.print(
+        f"Universe: {result.metrics['universe']} / exchange {result.metrics['exchange']}"
+    )
+    console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
+    console.print(f"Batch size: {result.metrics['batch_size']}")
+    console.print(f"Skipped/current symbols: {result.metrics['skipped_current_symbols']}")
+    console.print(f"Fetch failures: {result.metrics['failure_rows']}")
+    if store_db:
+        console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
+        console.print(
+            "Stored fetch coverage rows: "
+            f"{result.metrics['timescale_fetch_coverage_rows']}"
+        )
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
 
 
 def _subtract_months(value: date, months: int) -> date:
