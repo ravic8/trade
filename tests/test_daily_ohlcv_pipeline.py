@@ -5,6 +5,7 @@ import pandas as pd
 from trade_research.data.rate_limits import RateLimitDecision
 from trade_research.pipelines.daily_ohlcv import (
     _fetch_upstox_daily_with_controls,
+    _load_upstox_mapping,
     _retry_candidates_to_fetch_plan,
     build_daily_fetch_coverage,
     plan_daily_fetch_windows,
@@ -27,6 +28,16 @@ class _RecordingStore:
     def insert_provider_request_logs(self, logs) -> int:
         self.logs.extend(logs)
         return len(logs)
+
+
+class _UniverseStore:
+    def __init__(self, members: list[dict]) -> None:
+        self.members = members
+        self.calls: list[tuple[str, int]] = []
+
+    def tradable_universe_members(self, universe_id: str, limit: int = 500) -> list[dict]:
+        self.calls.append((universe_id, limit))
+        return self.members
 
 
 class _DailyProvider:
@@ -108,6 +119,42 @@ def test_fetch_upstox_daily_with_controls_limits_and_logs_request() -> None:
     assert log["rate_limited"] is True
     assert log["wait_seconds"] == 0.1
     assert log["status"] == "success"
+
+
+def test_load_upstox_mapping_rebuilds_missing_csv_from_db(tmp_path) -> None:
+    mapping_path = tmp_path / "data/processed/universe/liquid_nse_upstox_mapping.csv"
+    store = _UniverseStore(
+        [
+            {
+                "symbol": "hdfcbank",
+                "instrument_key": "NSE_EQ|HDFC",
+            },
+            {
+                "symbol": "RELIANCE",
+                "instrument_key": "NSE_EQ|RELIANCE",
+                "trading_symbol": "RELIANCE",
+            },
+        ]
+    )
+
+    mapping = _load_upstox_mapping(mapping_path, db=store)
+
+    assert store.calls == [("nse_liquid_adt_100cr", 10_000)]
+    assert mapping_path.exists()
+    assert mapping["symbol"].tolist() == ["HDFCBANK", "RELIANCE"]
+    assert mapping["instrument_key"].tolist() == ["NSE_EQ|HDFC", "NSE_EQ|RELIANCE"]
+    assert mapping["trading_symbol"].tolist() == ["HDFCBANK", "RELIANCE"]
+
+
+def test_load_upstox_mapping_raises_clear_error_without_file_or_db(tmp_path) -> None:
+    mapping_path = tmp_path / "missing.csv"
+
+    try:
+        _load_upstox_mapping(mapping_path, db=None)
+    except FileNotFoundError as exc:
+        assert "Run map-liquid-nse-upstox" in str(exc)
+    else:
+        raise AssertionError("Expected missing mapping to raise FileNotFoundError")
 
 
 def test_build_daily_fetch_coverage_classifies_retry_candidates() -> None:

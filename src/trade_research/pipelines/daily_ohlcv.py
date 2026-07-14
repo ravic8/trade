@@ -49,13 +49,12 @@ def run_upstox_daily_ohlcv_pipeline(
         _parse_pipeline_date(from_date, "from_date") if from_date else _subtract_years(end, years)
     )
     is_full_window = full_refresh or from_date is not None
-    mapping = pd.read_csv(mapping_csv)
-    if limit:
-        mapping = mapping.head(limit)
-
     db = TimescaleStore(settings.database_url) if store_db else None
     if db is not None:
         db.initialize()
+    mapping = _load_upstox_mapping(mapping_csv, db=db)
+    if limit:
+        mapping = mapping.head(limit)
     token = access_token or (
         resolve_provider_token(
             db,
@@ -430,6 +429,38 @@ def _retry_candidates_to_fetch_plan(candidates: pd.DataFrame) -> pd.DataFrame:
             for record in candidates.to_dict(orient="records")
         ]
     )
+
+
+def _load_upstox_mapping(mapping_csv: Path, db: TimescaleStore | None) -> pd.DataFrame:
+    if mapping_csv.exists():
+        return pd.read_csv(mapping_csv)
+    if db is None:
+        raise FileNotFoundError(
+            f"Upstox mapping file not found: {mapping_csv}. "
+            "Run map-liquid-nse-upstox or enable database storage so the mapping can be "
+            "rebuilt from tradable_universe_members."
+        )
+
+    members = db.tradable_universe_members("nse_liquid_adt_100cr", limit=10_000)
+    rows = [
+        {
+            "symbol": str(member["symbol"]).upper(),
+            "instrument_key": member["instrument_key"],
+            "trading_symbol": str(member.get("trading_symbol") or member["symbol"]).upper(),
+        }
+        for member in members
+        if member.get("instrument_key") and member.get("symbol")
+    ]
+    if not rows:
+        raise FileNotFoundError(
+            f"Upstox mapping file not found: {mapping_csv}, and no mapped members were found "
+            "in tradable_universe_members for universe nse_liquid_adt_100cr."
+        )
+
+    mapping = pd.DataFrame(rows)
+    mapping_csv.parent.mkdir(parents=True, exist_ok=True)
+    mapping.to_csv(mapping_csv, index=False)
+    return mapping
 
 
 def _fetch_upstox_daily_with_controls(
