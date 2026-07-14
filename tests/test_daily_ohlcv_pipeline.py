@@ -1,9 +1,12 @@
+import asyncio
 from datetime import date
 
 import pandas as pd
 
+import trade_research.pipelines.daily_ohlcv as daily_ohlcv_module
 from trade_research.data.rate_limits import RateLimitDecision
 from trade_research.pipelines.daily_ohlcv import (
+    _fetch_upstox_daily_batch_with_controls,
     _fetch_upstox_daily_with_controls,
     _load_upstox_mapping,
     _retry_candidates_to_fetch_plan,
@@ -49,6 +52,46 @@ class _DailyProvider:
         symbol: str,
         trading_symbol: str | None = None,
     ) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "InstrumentKey": instrument_key,
+                    "Symbol": symbol,
+                    "TradingSymbol": trading_symbol,
+                    "Date": start,
+                    "Open": 100.0,
+                    "High": 101.0,
+                    "Low": 99.0,
+                    "Close": 100.5,
+                    "Volume": 1000,
+                }
+            ]
+        )
+
+
+class _AsyncDailyProvider:
+    def __init__(self, _token: str) -> None:
+        self.active = 0
+        self.max_active = 0
+
+    async def __aenter__(self) -> "_AsyncDailyProvider":
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+    async def fetch_daily_candles(
+        self,
+        instrument_key: str,
+        start: date,
+        end: date,
+        symbol: str,
+        trading_symbol: str | None = None,
+    ) -> pd.DataFrame:
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.01)
+        self.active -= 1
         return pd.DataFrame(
             [
                 {
@@ -119,6 +162,45 @@ def test_fetch_upstox_daily_with_controls_limits_and_logs_request() -> None:
     assert log["rate_limited"] is True
     assert log["wait_seconds"] == 0.1
     assert log["status"] == "success"
+
+
+def test_fetch_upstox_daily_batch_uses_bounded_async_concurrency(monkeypatch) -> None:
+    limiter = _RecordingLimiter()
+    store = _RecordingStore()
+    provider = _AsyncDailyProvider("token")
+    rows = [
+        {
+            "instrument_key": f"NSE_EQ|TEST{index}",
+            "symbol": f"TEST{index}",
+            "trading_symbol": f"TEST{index}",
+            "fetch_start": "2026-06-21",
+        }
+        for index in range(4)
+    ]
+
+    monkeypatch.setattr(
+        daily_ohlcv_module,
+        "AsyncUpstoxHistoricalDataProvider",
+        lambda _token: provider,
+    )
+
+    frames, failures = _fetch_upstox_daily_batch_with_controls(
+        rows=rows,
+        token="token",
+        limiter=limiter,
+        db=store,
+        run_id="run-1",
+        end=date(2026, 6, 25),
+        concurrency=2,
+        throttle_seconds=0,
+    )
+
+    assert len(frames) == 4
+    assert failures == []
+    assert provider.max_active == 2
+    assert limiter.calls == [("upstox", "historical")] * 4
+    assert len(store.logs) == 4
+    assert {log["status"] for log in store.logs} == {"success"}
 
 
 def test_load_upstox_mapping_rebuilds_missing_csv_from_db(tmp_path) -> None:

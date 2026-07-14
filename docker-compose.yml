@@ -12,6 +12,9 @@ services:
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      INGESTION_PROFILE: local
+      UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
+      DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
       API_CORS_ORIGINS: http://localhost:5173,http://localhost:8000
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -74,6 +77,9 @@ services:
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      INGESTION_PROFILE: local
+      UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
+      DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -106,6 +112,9 @@ services:
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      INGESTION_PROFILE: local
+      UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
+      DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}

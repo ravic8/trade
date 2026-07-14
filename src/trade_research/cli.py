@@ -412,6 +412,14 @@ def fetch_upstox_nse_daily(
         float,
         typer.Option(min=0, help="Pause between Upstox candle requests."),
     ] = 0.25,
+    max_concurrent_fetches: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            max=32,
+            help="Override UPSTOX_HISTORICAL_CONCURRENCY for this run.",
+        ),
+    ] = None,
     output_name: Annotated[
         str,
         typer.Option(help="Canonical full-refresh Parquet path prefix under DATA_DIR."),
@@ -458,6 +466,7 @@ def fetch_upstox_nse_daily(
             settlement_lag_days=settlement_lag_days,
             limit=limit,
             throttle_seconds=throttle_seconds,
+            max_concurrent_fetches=max_concurrent_fetches,
             output_name=output_name,
             incremental_output_name=incremental_output_name,
             audit_output=audit_output,
@@ -492,6 +501,9 @@ def fetch_upstox_nse_daily(
         f"Wrote fetch coverage: "
         f"{fetch_coverage_output} ({result.metrics['fetch_coverage_rows']} rows)"
     )
+    console.print(
+        f"Upstox historical concurrency: {result.metrics['max_concurrent_fetches']}"
+    )
     if store_db:
         console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
         console.print(
@@ -522,6 +534,14 @@ def retry_upstox_nse_daily(
         float,
         typer.Option(min=0, help="Pause between Upstox retry requests."),
     ] = 0.25,
+    max_concurrent_fetches: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            max=32,
+            help="Override UPSTOX_HISTORICAL_CONCURRENCY for this retry run.",
+        ),
+    ] = None,
     retry_output_name: Annotated[
         str,
         typer.Option(help="Retry Parquet path prefix under DATA_DIR."),
@@ -548,6 +568,7 @@ def retry_upstox_nse_daily(
             statuses=retry_statuses,
             limit=limit,
             throttle_seconds=throttle_seconds,
+            max_concurrent_fetches=max_concurrent_fetches,
             retry_output_name=retry_output_name,
             retry_coverage_output=retry_coverage_output,
             retry_failures_output=retry_failures_output,
@@ -562,6 +583,9 @@ def retry_upstox_nse_daily(
         f"{result.metrics['candidate_rows']} from {result.metrics['source_coverage_run_id']}"
     )
     console.print(f"Fetched retry rows: {result.metrics['fetched_rows']}")
+    console.print(
+        f"Upstox historical concurrency: {result.metrics['max_concurrent_fetches']}"
+    )
     console.print(f"Wrote retry coverage: {retry_coverage_output}")
     console.print(f"Wrote retry failures: {retry_failures_output}")
     console.print(

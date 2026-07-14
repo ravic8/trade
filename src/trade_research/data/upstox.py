@@ -172,6 +172,68 @@ class UpstoxHistoricalDataProvider:
         return payload
 
 
+class AsyncUpstoxHistoricalDataProvider:
+    """Fetch batch historical candles from Upstox v3 with async HTTP I/O."""
+
+    def __init__(
+        self,
+        access_token: str,
+        base_url: str = "https://api.upstox.com",
+        timeout_seconds: float = 30.0,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self._owned_client = client is None
+        self.client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        self.headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+
+    async def close(self) -> None:
+        if self._owned_client:
+            await self.client.aclose()
+
+    async def __aenter__(self) -> AsyncUpstoxHistoricalDataProvider:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.close()
+
+    async def fetch_daily_candles(
+        self,
+        instrument_key: str,
+        start: date,
+        end: date,
+        symbol: str,
+        trading_symbol: str | None = None,
+    ) -> pd.DataFrame:
+        instrument_path = _encode_path_segment(instrument_key)
+        payload = await self._get_json(
+            f"/v3/historical-candle/{instrument_path}/days/1/"
+            f"{end.isoformat()}/{start.isoformat()}"
+        )
+        return _daily_candles_to_frame(
+            payload.get("data", {}).get("candles", []),
+            instrument_key=instrument_key,
+            symbol=symbol,
+            trading_symbol=trading_symbol or symbol,
+            source="upstox",
+        )
+
+    async def _get_json(self, path: str) -> dict[str, Any]:
+        response = await self.client.get(f"{self.base_url}{path}", headers=self.headers)
+        if response.status_code >= 400:
+            raise UpstoxAPIError(
+                f"Upstox request failed: {response.status_code} {response.text}"
+            )
+        payload = response.json()
+        if payload.get("status") not in {None, "success"}:
+            raise UpstoxAPIError(f"Upstox request failed: {payload}")
+        return payload
+
+
 class UpstoxNiftyFuturesHistoryProvider:
     """Fetch historical NIFTY futures candles from Upstox.
 
