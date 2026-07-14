@@ -608,8 +608,9 @@ Deliverables:
 - `GET /api/data/bulk-fetch-preview` previews seeded yfinance missing windows
   by exchange, universe, date range, query, coverage status, minimum coverage
   percent, and minimum average daily turnover before any mutating fetch runs.
-- US/Canada expected-session counts use weekdays until exchange-specific
-  holiday calendars are added.
+- US/Canada expected-session counts use exchange-specific holiday calendars;
+  Canada reuses the TMX/TSX calendar source and US uses standard exchange
+  holiday rules.
 
 Acceptance:
 

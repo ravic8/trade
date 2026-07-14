@@ -96,9 +96,10 @@ class FakeCoverageStore:
         year: int,
         max_age_days: int | None = None,
     ) -> dict:
+        closed_dates = ["2026-01-05"] if exchange == "NSE" else []
         return {
             "source_url": "test",
-            "closed_dates": ["2026-01-05"],
+            "closed_dates": closed_dates,
             "early_close_dates": [],
             "year": year,
         }

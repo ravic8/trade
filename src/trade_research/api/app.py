@@ -1044,7 +1044,7 @@ def _expected_daily_dates(
     start_date: date,
     end_date: date,
 ) -> list[date]:
-    if exchange.upper() not in {"NSE", "TSX"}:
+    if exchange.upper() not in {"NSE", "TSX", "US", "CA"}:
         current = start_date
         trading_dates = []
         while current <= end_date:
@@ -1173,7 +1173,7 @@ def _build_yfinance_bulk_fetch_preview(
     warnings = []
     if not expected_dates:
         warnings.append("No expected trading sessions in the requested date range.")
-    if exchange not in {"NSE", "TSX"}:
+    if exchange not in {"NSE", "TSX", "US", "CA"}:
         warnings.append("No stored exchange holiday calendar found; preview uses weekdays only.")
 
     return {
@@ -1276,12 +1276,16 @@ def _ensure_exchange_holidays(
     start_date: date,
     end_date: date,
 ) -> None:
-    if exchange.upper() not in {"NSE", "TSX"}:
+    if exchange.upper() not in {"NSE", "TSX", "US", "CA"}:
         return
 
     for year in range(start_date.year, end_date.year + 1):
         cached = store.exchange_holidays(exchange, year)
-        if cached is not None and cached.get("closed_dates"):
+        if cached is not None and (
+            cached.get("closed_dates")
+            or cached.get("early_close_dates")
+            or cached.get("source_url")
+        ):
             continue
         try:
             holidays = fetch_exchange_holidays(exchange, year)
