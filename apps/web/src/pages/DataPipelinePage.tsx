@@ -34,6 +34,7 @@ import type {
   DataAvailabilityResponse,
   DataAvailabilityRow,
   DataCoveragePreviewRequest,
+  DataCoveragePreviewResponse,
   DataPipelineRunSummary,
   PipelineScheduleStatusRow,
   ProviderRequestLogRow,
@@ -464,7 +465,7 @@ function RequestView({
   endDate: string;
   tokenConfigured: boolean;
   isHealthLoading: boolean;
-  preview: { missing_rows: number; estimated_provider_calls: number } | undefined;
+  preview: DataCoveragePreviewResponse | undefined;
   previewError: Error | null;
   runError: Error | null;
   requestBlocked: boolean;
@@ -490,16 +491,19 @@ function RequestView({
         </div>
 
         {!market.requestEnabled ? (
-          <div className="data-notice compact">
-            <Globe2 size={18} />
-            <p>{market.notice}</p>
+          <div className="data-readonly-panel">
+            <Globe2 size={20} />
+            <div>
+              <strong>{market.label} is availability-only here</strong>
+              <p>{market.notice}</p>
+            </div>
           </div>
         ) : null}
 
         <form className="data-simple-form" onSubmit={onPreview}>
           <div className="data-step-label">
             <span>1</span>
-            <strong>Pick Symbols</strong>
+            <strong>{market.requestEnabled ? "Pick Symbols" : "Symbols In View"}</strong>
           </div>
           <div className="data-symbol-box">
             {selectedSymbols.map((symbol) => (
@@ -528,7 +532,7 @@ function RequestView({
 
           <div className="data-step-label">
             <span>2</span>
-            <strong>Select Window</strong>
+            <strong>{market.requestEnabled ? "Select Window" : "Window In View"}</strong>
           </div>
           <div className="data-date-grid">
             <label>
@@ -541,26 +545,25 @@ function RequestView({
             </label>
           </div>
 
-          <div className="data-step-label">
-            <span>3</span>
-            <strong>Preview and Fetch</strong>
-          </div>
-          <div className="data-action-row">
-            <button className="icon-button" type="submit" disabled={!market.requestEnabled || isPreviewing}>
-              <SearchCheck size={17} />
-              <span>{isPreviewing ? "Previewing" : "Preview Coverage"}</span>
-            </button>
-            <button className="icon-button primary" type="button" disabled={requestBlocked} onClick={onRun}>
-              <Play size={17} />
-              <span>{isRunning ? "Fetching" : `Fetch ${selectedSymbols.length}`}</span>
-            </button>
-          </div>
+          {market.requestEnabled ? (
+            <>
+              <div className="data-step-label">
+                <span>3</span>
+                <strong>Preview Missing Windows</strong>
+              </div>
+              <div className="data-action-row">
+                <button className="icon-button" type="submit" disabled={isPreviewing}>
+                  <SearchCheck size={17} />
+                  <span>{isPreviewing ? "Previewing" : "Preview Coverage"}</span>
+                </button>
+                <button className="icon-button primary" type="button" disabled={requestBlocked} onClick={onRun}>
+                  <Play size={17} />
+                  <span>{isRunning ? "Fetching" : `Fetch ${selectedSymbols.length}`}</span>
+                </button>
+              </div>
 
-          {preview ? (
-            <div className="data-preview-result">
-              <strong>{formatNumber(preview.missing_rows)} missing rows</strong>
-              <span>{formatNumber(preview.estimated_provider_calls)} provider calls queued</span>
-            </div>
+              {preview ? <PreviewResult preview={preview} /> : null}
+            </>
           ) : null}
           {previewError ? <p className="form-error">{previewError.message}</p> : null}
           {runError ? <p className="form-error">{runError.message}</p> : null}
@@ -584,6 +587,46 @@ function RequestView({
   );
 }
 
+function PreviewResult({ preview }: { preview: DataCoveragePreviewResponse }) {
+  const visibleTasks = preview.tasks.slice(0, 8);
+  return (
+    <div className="data-preview-panel">
+      <div className="data-preview-result">
+        <strong>{formatNumber(preview.missing_rows)} missing rows</strong>
+        <span>{formatNumber(preview.estimated_provider_calls)} provider calls queued</span>
+      </div>
+      {preview.tasks.length > 0 ? (
+        <div className="data-preview-task-list" aria-label="Missing windows preview">
+          {visibleTasks.map((task) => (
+            <div key={`${task.instrument_key}-${task.fetch_start}-${task.fetch_end}`} className="data-preview-task">
+              <div>
+                <strong>{task.symbol}</strong>
+                <span>{task.trading_symbol}</span>
+              </div>
+              <div>
+                <span>{formatDisplayDate(task.fetch_start)} to {formatDisplayDate(task.fetch_end)}</span>
+                <strong>{formatNumber(task.missing_rows)} rows</strong>
+              </div>
+            </div>
+          ))}
+          {preview.tasks.length > visibleTasks.length ? (
+            <p className="data-muted">Showing {visibleTasks.length} of {preview.tasks.length} missing windows.</p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="data-preview-empty">No missing windows in this selection.</p>
+      )}
+      {preview.warnings.length > 0 ? (
+        <div className="data-preview-warnings">
+          {preview.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ReadinessCard({
   market,
   selectedCount,
@@ -597,15 +640,18 @@ function ReadinessCard({
   isLoading: boolean;
   hasPreview: boolean;
 }) {
-  const rows = [
-    { label: "Market selected", ok: true },
-    {
-      label: market.requestEnabled ? "Upstox token configured" : "Fetch controls read-only",
-      ok: market.requestEnabled ? tokenConfigured : true,
-    },
-    { label: `${selectedCount} symbols selected`, ok: selectedCount > 0 },
-    { label: "Coverage preview ready", ok: !market.requestEnabled || hasPreview },
-  ];
+  const rows = market.requestEnabled
+    ? [
+        { label: "Market selected", ok: true },
+        { label: "Upstox token configured", ok: tokenConfigured },
+        { label: `${selectedCount} symbols selected`, ok: selectedCount > 0 },
+        { label: "Missing-window preview ready", ok: hasPreview },
+      ]
+    : [
+        { label: "Market selected", ok: true },
+        { label: "Availability API enabled", ok: true },
+        { label: "Fetch controls read-only", ok: true },
+      ];
   return (
     <section className="data-card">
       <h2>Readiness</h2>
@@ -913,4 +959,10 @@ function averageDuration(runs: DataPipelineRunSummary[]): number {
     .filter((value): value is number => typeof value === "number");
   if (!durations.length) return 0;
   return Math.round(durations.reduce((total, value) => total + value, 0) / durations.length);
+}
+
+function formatDisplayDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
