@@ -36,6 +36,7 @@ UPSTOX_V3_HISTORICAL_CANDLE_DOCS_URL = (
 )
 UPSTOX_RATE_LIMIT_DOCS_URL = "https://upstox.com/developer/api-documentation/rate-limiting/"
 YFINANCE_SOURCE_URL = "https://pypi.org/project/yfinance/"
+DUKASCOPY_SOURCE_URL = "https://www.dukascopy.com/swiss/english/marketwatch/historical/"
 
 
 UPSTOX_V3_CAPABILITY = ProviderCapability(
@@ -126,6 +127,32 @@ YFINANCE_CAPABILITY = ProviderCapability(
     ),
 )
 
+DUKASCOPY_CAPABILITY = ProviderCapability(
+    provider="dukascopy",
+    api_version="datafeed",
+    source_url=DUKASCOPY_SOURCE_URL,
+    historical=(
+        HistoricalCapability(
+            unit="minutes",
+            interval_min=5,
+            interval_max=5,
+            available_from=date(2012, 1, 2),
+            max_window="chunked hourly archive requests",
+            notes="Phase 4 stores 5-minute candles aggregated from Dukascopy tick archives.",
+        ),
+    ),
+    rate_limits=RateLimits(
+        standard_api_per_second=1,
+        standard_api_per_minute=30,
+        standard_api_per_30_minutes=600,
+    ),
+    notes=(
+        "Initial universe: EUR/USD, USD/JPY, USD/CAD, USD/CNH, GBP/USD, BTC/USD.",
+        "USD/CNH is used as the Dukascopy-supported offshore renminbi proxy for USD/CNY.",
+        "Rows are stored in ohlcv_intraday with source=dukascopy and interval=5m.",
+    ),
+)
+
 
 def provider_capability(provider: str) -> ProviderCapability:
     normalized = provider.strip().lower()
@@ -133,4 +160,6 @@ def provider_capability(provider: str) -> ProviderCapability:
         return UPSTOX_V3_CAPABILITY
     if normalized == "yfinance":
         return YFINANCE_CAPABILITY
+    if normalized == "dukascopy":
+        return DUKASCOPY_CAPABILITY
     raise ValueError(f"Unsupported provider: {provider}")

@@ -308,11 +308,14 @@ Initial pairs:
 EUR/USD
 USD/JPY
 USD/CAD
-USD/CNY
+USD/CNH
+GBP/USD
+BTC/USD
 ```
 
-Treat `BTC/USD` as a separate coverage decision after confirming provider
-support and data shape.
+Use `USD/CNH` as the Dukascopy-supported offshore renminbi proxy for requested
+`USD/CNY`. Store `BTC/USD` in the same intraday table with `asset_class=crypto`
+as long as the provider data shape matches the FX instruments.
 
 ## Schema Plan
 
@@ -395,6 +398,7 @@ ohlcv_intraday
   asset_class
   interval
   ts
+  symbol
   open
   high
   low
@@ -645,14 +649,18 @@ trade-research fetch-yfinance-missing \
 Deliverables:
 
 - Dukascopy provider adapter.
-- FX instrument registry.
+- Fixed Dukascopy 5-minute FX/crypto instrument registry.
 - `ohlcv_intraday` hypertable.
+- CLI backfill/smoke command for 5-minute candles.
 - FX intraday scheduled asset.
 - Gap validation by pair/interval/window.
 
 Acceptance:
 
-- EUR/USD, USD/JPY, USD/CAD, and USD/CNY are stored incrementally.
+- EUR/USD, USD/JPY, USD/CAD, USD/CNH, GBP/USD, and BTC/USD are stored
+  incrementally at `interval=5m`.
+- `USD/CNH` is documented as the Dukascopy-supported proxy for requested
+  `USD/CNY`.
 - Each request is rate-limited and logged.
 - Backfills are chunked and resumable.
 

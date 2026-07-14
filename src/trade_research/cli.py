@@ -27,6 +27,7 @@ from trade_research.pipelines import (
     run_daily_feature_pipeline,
     run_daily_pipeline_health_pipeline,
     run_daily_target_pipeline,
+    run_dukascopy_intraday_ohlcv_pipeline,
     run_factor_research_pipeline,
     run_latest_predictions_v1_pipeline,
     run_lightgbm_predictions_v1_pipeline,
@@ -762,6 +763,64 @@ def fetch_yfinance_missing(
         "Stored fetch coverage rows: "
         f"{result.metrics['timescale_fetch_coverage_rows']}"
     )
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("fetch-dukascopy-intraday")
+def fetch_dukascopy_intraday(
+    universe: Annotated[
+        str,
+        typer.Option(help="Dukascopy intraday universe id."),
+    ] = "dukascopy_fx_crypto_5m",
+    interval: Annotated[
+        str,
+        typer.Option(help="Intraday candle interval. Phase 4 supports 5m only."),
+    ] = "5m",
+    from_date: Annotated[
+        str,
+        typer.Option(help="Start date in YYYY-MM-DD format."),
+    ] = ...,
+    to_date: Annotated[
+        str,
+        typer.Option(help="End date in YYYY-MM-DD format."),
+    ] = ...,
+    limit: Annotated[
+        int | None,
+        typer.Option(min=1, help="Optional instrument limit for smoke tests."),
+    ] = None,
+    store_db: Annotated[
+        bool,
+        typer.Option(help="Also upsert 5-minute candles into Timescale/Postgres."),
+    ] = True,
+) -> None:
+    try:
+        result = run_dukascopy_intraday_ohlcv_pipeline(
+            universe=universe,
+            interval=interval,
+            from_date=from_date,
+            to_date=to_date,
+            limit=limit,
+            store_db=store_db,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    output_path = result.artifacts.get("ohlcv")
+    if output_path is None:
+        console.print("No Dukascopy intraday OHLCV rows fetched; Parquet left unchanged")
+    else:
+        console.print(f"Wrote Dukascopy intraday OHLCV: {output_path} ({result.rows} rows)")
+    console.print(
+        f"Universe: {result.metrics['universe']} / interval {result.metrics['interval']}"
+    )
+    console.print(f"Mapped symbols: {result.metrics['mapped_symbols']}")
+    console.print(f"Requested hours: {result.metrics['requested_hours']}")
+    console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
+    console.print(f"Fetch failures: {result.metrics['failure_rows']}")
+    if store_db:
+        console.print(f"Upserted ohlcv_intraday rows: {result.metrics['timescale_rows']}")
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
 
