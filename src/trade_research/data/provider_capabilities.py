@@ -121,7 +121,8 @@ YFINANCE_CAPABILITY = ProviderCapability(
     ),
     notes=(
         "Unofficial Yahoo Finance library; use conservative batching and retries.",
-        "Phase 3A stores raw OHLCV into ohlcv_daily; adjusted close storage is deferred.",
+        "Raw OHLCV is stored in ohlcv_daily; adjusted close is stored separately "
+        "in price_adjustments_daily.",
     ),
 )
 

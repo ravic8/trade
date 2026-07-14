@@ -11,6 +11,7 @@ NSE_HOLIDAY_URL = "https://www.nseindia.com/api/holiday-master?type=trading"
 NSE_HOLIDAYS_PAGE_URL = "https://www.nseindia.com/resources/exchange-communication-holidays/"
 NSE_TIMINGS_URL = "https://www.nseindia.com/static/market-data/market-timings"
 TMX_CALENDAR_URL = "https://www.tsx.com/en/trading/calendars-and-trading-hours/calendar"
+US_MARKET_HOLIDAYS_URL = "https://www.nasdaqtrader.com/Trader.aspx?id=Calendar"
 
 NSE_FALLBACK_CLOSED_DATES = {
     2025: frozenset(
@@ -83,6 +84,24 @@ EXCHANGE_CONFIGS = {
         early_close_time=time(13, 0),
         holiday_source_url=TMX_CALENDAR_URL,
         timings_source_url="https://www.tsx.com/en/trading/calendars-and-trading-hours",
+    ),
+    "CA": ExchangeSessionConfig(
+        exchange="CA",
+        timezone="America/Toronto",
+        open_time=time(9, 30),
+        close_time=time(16, 0),
+        early_close_time=time(13, 0),
+        holiday_source_url=TMX_CALENDAR_URL,
+        timings_source_url="https://www.tsx.com/en/trading/calendars-and-trading-hours",
+    ),
+    "US": ExchangeSessionConfig(
+        exchange="US",
+        timezone="America/New_York",
+        open_time=time(9, 30),
+        close_time=time(16, 0),
+        early_close_time=time(13, 0),
+        holiday_source_url=US_MARKET_HOLIDAYS_URL,
+        timings_source_url=US_MARKET_HOLIDAYS_URL,
     ),
 }
 
@@ -161,7 +180,16 @@ def fetch_exchange_holidays(exchange: str, year: int) -> ExchangeHolidays:
         return fetch_nse_holidays(year)
     if normalized == "TSX":
         return fetch_tsx_holidays(year)
-    raise ValueError("exchange must be NSE or TSX")
+    if normalized == "CA":
+        holidays = fetch_tsx_holidays(year)
+        return ExchangeHolidays(
+            closed_dates=holidays.closed_dates,
+            early_close_dates=holidays.early_close_dates,
+            source_url=holidays.source_url,
+        )
+    if normalized == "US":
+        return build_us_exchange_holidays(year)
+    raise ValueError("exchange must be NSE, TSX, CA, or US")
 
 
 def fetch_nse_holidays(year: int) -> ExchangeHolidays:
@@ -244,6 +272,38 @@ def parse_tsx_holidays(html: str, year: int) -> ExchangeHolidays:
     )
 
 
+def build_us_exchange_holidays(year: int) -> ExchangeHolidays:
+    closed_dates = {
+        _observed_fixed_holiday(year, 1, 1),
+        _nth_weekday(year, 1, 0, 3),
+        _nth_weekday(year, 2, 0, 3),
+        _good_friday(year),
+        _last_weekday(year, 5, 0),
+        _observed_fixed_holiday(year, 6, 19),
+        _observed_fixed_holiday(year, 7, 4),
+        _nth_weekday(year, 9, 0, 1),
+        _nth_weekday(year, 11, 3, 4),
+        _observed_fixed_holiday(year, 12, 25),
+    }
+    next_new_year_observed = _observed_fixed_holiday(year + 1, 1, 1)
+    if next_new_year_observed.year == year:
+        closed_dates.add(next_new_year_observed)
+    early_close_dates = {
+        _nth_weekday(year, 11, 3, 4) + timedelta(days=1),
+        date(year, 12, 24),
+    }
+    if date(year, 7, 4).weekday() in {1, 2, 3, 4}:
+        early_close_dates.add(date(year, 7, 3))
+    early_close_dates = {
+        value for value in early_close_dates if value.weekday() < 5 and value not in closed_dates
+    }
+    return ExchangeHolidays(
+        closed_dates=frozenset(closed_dates),
+        early_close_dates=frozenset(early_close_dates),
+        source_url=US_MARKET_HOLIDAYS_URL,
+    )
+
+
 def _closed_decision(
     config: ExchangeSessionConfig,
     local_time: datetime,
@@ -265,7 +325,7 @@ def _config(exchange: str) -> ExchangeSessionConfig:
     try:
         return EXCHANGE_CONFIGS[exchange.upper()]
     except KeyError as exc:
-        raise ValueError("exchange must be NSE or TSX") from exc
+        raise ValueError("exchange must be NSE, TSX, CA, or US") from exc
 
 
 def _parse_holiday_date(value: str) -> date | None:
@@ -280,3 +340,46 @@ def _parse_holiday_date(value: str) -> date | None:
 
 def _parse_month_date(month: str, day: int, year: int) -> date:
     return datetime.strptime(f"{month} {day} {year}", "%B %d %Y").date()
+
+
+def _observed_fixed_holiday(year: int, month: int, day: int) -> date:
+    holiday = date(year, month, day)
+    if holiday.weekday() == 5:
+        return holiday - timedelta(days=1)
+    if holiday.weekday() == 6:
+        return holiday + timedelta(days=1)
+    return holiday
+
+
+def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
+    current = date(year, month, 1)
+    while current.weekday() != weekday:
+        current += timedelta(days=1)
+    return current + timedelta(days=7 * (nth - 1))
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    next_month = date(year + (month == 12), 1 if month == 12 else month + 1, 1)
+    current = next_month - timedelta(days=1)
+    while current.weekday() != weekday:
+        current -= timedelta(days=1)
+    return current
+
+
+def _good_friday(year: int) -> date:
+    # Anonymous Gregorian algorithm for Easter Sunday, then back up two days.
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    correction = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * correction) // 451
+    month = (h + correction - 7 * m + 114) // 31
+    day = ((h + correction - 7 * m + 114) % 31) + 1
+    return date(year, month, day) - timedelta(days=2)

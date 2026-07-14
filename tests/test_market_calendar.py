@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from trade_research.market_calendar import (
     NSE_FALLBACK_CLOSED_DATES,
     ExchangeHolidays,
+    build_us_exchange_holidays,
     expected_trading_dates,
     fetch_exchange_holidays,
     parse_tsx_holidays,
@@ -51,6 +52,56 @@ def test_expected_trading_dates_skip_weekends_and_holidays() -> None:
         datetime(2026, 1, 2).date(),
         datetime(2026, 1, 6).date(),
     ]
+
+
+def test_us_exchange_holidays_include_observed_independence_day() -> None:
+    holidays = build_us_exchange_holidays(2026)
+
+    assert datetime(2026, 1, 1).date() in holidays.closed_dates
+    assert datetime(2026, 4, 3).date() in holidays.closed_dates
+    assert datetime(2026, 7, 3).date() in holidays.closed_dates
+    assert datetime(2026, 11, 27).date() in holidays.early_close_dates
+    assert datetime(2026, 12, 24).date() in holidays.early_close_dates
+
+
+def test_us_exchange_holidays_include_prior_year_new_year_observed_day() -> None:
+    holidays = build_us_exchange_holidays(2021)
+
+    assert datetime(2021, 12, 31).date() in holidays.closed_dates
+
+
+def test_expected_trading_dates_support_us_exchange_code() -> None:
+    dates = expected_trading_dates(
+        "US",
+        datetime(2026, 7, 1).date(),
+        datetime(2026, 7, 3).date(),
+        holidays=build_us_exchange_holidays(2026),
+    )
+
+    assert dates == [
+        datetime(2026, 7, 1).date(),
+        datetime(2026, 7, 2).date(),
+    ]
+
+
+def test_fetch_exchange_holidays_supports_ca_alias(monkeypatch) -> None:
+    def fake_tsx_holidays(year: int) -> ExchangeHolidays:
+        assert year == 2026
+        return ExchangeHolidays(
+            closed_dates=frozenset({datetime(2026, 7, 1).date()}),
+            early_close_dates=frozenset(),
+            source_url="tmx",
+        )
+
+    monkeypatch.setattr(
+        "trade_research.market_calendar.fetch_tsx_holidays",
+        fake_tsx_holidays,
+    )
+
+    holidays = fetch_exchange_holidays("CA", 2026)
+
+    assert datetime(2026, 7, 1).date() in holidays.closed_dates
+    assert holidays.source_url == "tmx"
 
 
 def test_nse_fallback_holidays_include_2025_trading_closures() -> None:
@@ -110,6 +161,6 @@ def test_fetch_exchange_holidays_rejects_unknown_exchange() -> None:
     try:
         fetch_exchange_holidays("ABC", 2026)
     except ValueError as exc:
-        assert "NSE or TSX" in str(exc)
+        assert "NSE, TSX, CA, or US" in str(exc)
     else:
         raise AssertionError("expected ValueError")

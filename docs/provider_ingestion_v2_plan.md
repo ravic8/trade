@@ -559,16 +559,17 @@ Deliverables:
 Phase 3A implemented contract:
 
 - Seed universes: `us_seed` and `canada_seed`, each with 20 large/liquid names.
-- CLI command: `trade-research fetch-yfinance-daily --universe us_seed|canada_seed`.
+- Full universes: `us_all` from Nasdaq Trader symbol directory files and
+  `canada_all` from the configured TSX universe provider.
+- CLI command: `trade-research fetch-yfinance-daily --universe us_seed|canada_seed|us_all|canada_all`.
 - yfinance daily downloads are batched and pass through the shared provider
   limiter as `provider=yfinance`, `endpoint_group=download`.
 - `provider_request_log` records one row per attempted yfinance download batch.
 - Raw daily OHLCV is stored in existing `ohlcv_daily` with `source=yfinance`
   and `exchange=US` or `CA`.
-- Adjusted close storage is deliberately deferred because the current
-  `ohlcv_daily` contract stores one close column. The filter/preview phase
-  should decide whether to add adjusted close, raw close plus adjusted close, or
-  a separate adjustment table.
+- Raw close remains the only `ohlcv_daily.close` value. Adjusted close is stored
+  separately in `price_adjustments_daily`; future split/dividend events belong
+  in `corporate_actions`.
 - Dagster assets `yfinance_us_daily_ohlcv` and `yfinance_canada_daily_ohlcv`
   are available through `north_america_daily_yfinance_job`, with the schedule
   stopped by default.
@@ -603,21 +604,41 @@ Acceptance:
 
 Deliverables:
 
-- `GET /api/data/availability` supports `provider=yfinance` for seeded US and
-  Canada daily coverage.
-- `GET /api/data/bulk-fetch-preview` previews seeded yfinance missing windows
-  by exchange, universe, date range, query, coverage status, minimum coverage
-  percent, and minimum average daily turnover before any mutating fetch runs.
-- US/Canada expected-session counts use weekdays until exchange-specific
-  holiday calendars are added.
+- `GET /api/data/availability` supports `provider=yfinance` for seeded and
+  full US/Canada daily coverage.
+- `GET /api/data/bulk-fetch-preview` previews seeded or full-universe yfinance
+  missing windows by exchange, universe, date range, query, coverage status,
+  minimum coverage percent, and minimum average daily turnover before any
+  mutating fetch runs.
+- CLI command: `trade-research fetch-yfinance-missing` executes the filtered
+  missing-window plan against Timescale using the same universe, coverage, and
+  liquidity filters as the preview API.
+- US/Canada expected-session counts use exchange-specific holiday calendars;
+  Canada reuses the TMX/TSX calendar source and US uses standard exchange
+  holiday rules.
 
 Acceptance:
 
-- Seeded US/Canada symbols can be filtered as complete, partial, empty, liquid
-  enough, and sufficiently covered.
+- Seeded and full US/Canada symbols can be filtered as complete, partial,
+  empty, liquid enough, and sufficiently covered.
 - Preview responses include queued fetch windows for missing daily candles.
-- Preview remains read-only; production fetches still go through
-  `trade-research fetch-yfinance-daily` or scheduled Dagster assets.
+- Preview remains read-only; filtered production fills go through
+  `trade-research fetch-yfinance-missing`, and broad scheduled refreshes still
+  go through `trade-research fetch-yfinance-daily` or Dagster assets.
+
+Filtered fill example:
+
+```text
+trade-research fetch-yfinance-missing \
+  --universe us_all \
+  --from-date 2026-07-06 \
+  --to-date 2026-07-08 \
+  --coverage-status partial \
+  --min-avg-daily-turnover 1000000000 \
+  --min-coverage-pct 0.5 \
+  --limit 5 \
+  --batch-size 5
+```
 
 ### Phase 4: Dukascopy FX Intraday Storage
 
@@ -662,8 +683,6 @@ use a separate queue. Do not add Celery before this decision point.
 
 ## Open Decisions
 
-- Exact yfinance universe source for US and Canada.
-- Whether yfinance stores adjusted close, raw close, or both.
 - Dukascopy data format and supported coverage for `BTC/USD`.
 - Whether to keep provider rate-limit configs only in settings or promote them
   to a database table later.

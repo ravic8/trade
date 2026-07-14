@@ -94,6 +94,11 @@ def _normalize_single_ticker_frame(frame: pd.DataFrame, symbol: dict[str, str]) 
                 "High": float(record["High"]),
                 "Low": float(record["Low"]),
                 "Close": float(record["Close"]),
+                "AdjClose": (
+                    float(record["Adj Close"])
+                    if "Adj Close" in record and not pd.isna(record.get("Adj Close"))
+                    else None
+                ),
                 "Volume": int(record["Volume"]),
                 "OpenInterest": None,
                 "InstrumentKey": symbol["instrument_key"],

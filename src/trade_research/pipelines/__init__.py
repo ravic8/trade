@@ -18,7 +18,10 @@ from trade_research.pipelines.processed_validation import (
     run_processed_dataset_validation_pipeline,
 )
 from trade_research.pipelines.walk_forward import run_walk_forward_folds_v1_pipeline
-from trade_research.pipelines.yfinance_daily import run_yfinance_daily_ohlcv_pipeline
+from trade_research.pipelines.yfinance_daily import (
+    run_yfinance_daily_ohlcv_pipeline,
+    run_yfinance_missing_ohlcv_pipeline,
+)
 
 __all__ = [
     "PipelineRunResult",
@@ -38,4 +41,5 @@ __all__ = [
     "run_upstox_daily_ohlcv_pipeline",
     "run_walk_forward_folds_v1_pipeline",
     "run_yfinance_daily_ohlcv_pipeline",
+    "run_yfinance_missing_ohlcv_pipeline",
 ]
