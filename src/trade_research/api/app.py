@@ -41,6 +41,7 @@ from trade_research.schemas import (
     ChatQueryResponse,
     ChatSourcesResponse,
     DataAvailabilityResponse,
+    DataBulkFetchPreviewResponse,
     DataCoveragePreviewRequest,
     DataCoveragePreviewResponse,
     DataInstrumentSearchRow,
@@ -60,6 +61,7 @@ from trade_research.schemas import (
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
+from trade_research.universe import yfinance_seed_universe
 
 app = FastAPI(title="Trade Research API", version="0.1.0")
 logger = logging.getLogger(__name__)
@@ -290,10 +292,20 @@ def data_availability(
     offset: Annotated[int, Query(ge=0)] = 0,
     sort: str = "symbol",
 ) -> DataAvailabilityResponse:
-    if provider.lower() != "upstox":
-        raise HTTPException(status_code=400, detail="Only provider=upstox is supported.")
-    if exchange.upper() != "NSE":
-        raise HTTPException(status_code=400, detail="Only exchange=NSE is supported.")
+    provider_normalized = provider.lower()
+    exchange_normalized = exchange.upper()
+    if provider_normalized not in {"upstox", "yfinance"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only provider=upstox or provider=yfinance is supported.",
+        )
+    if provider_normalized == "upstox" and exchange_normalized != "NSE":
+        raise HTTPException(status_code=400, detail="provider=upstox supports only exchange=NSE.")
+    if provider_normalized == "yfinance" and exchange_normalized not in {"US", "CA"}:
+        raise HTTPException(
+            status_code=400,
+            detail="provider=yfinance supports only exchange=US or exchange=CA.",
+        )
     if interval not in {"1d", "daily"}:
         raise HTTPException(status_code=400, detail="Only interval=1d is supported.")
     if (start_date is None) != (end_date is None):
@@ -309,27 +321,62 @@ def data_availability(
         if start_date and end_date:
             _ensure_exchange_holidays(store, exchange, start_date, end_date)
         expected_rows = _expected_daily_rows(store, exchange, start_date, end_date)
-        payload = store.daily_ohlcv_availability(
-            source=provider.lower(),
-            exchange=exchange.upper(),
-            start_date=start_date,
-            end_date=end_date,
-            query_text=query,
-            universe_id=universe_id,
-            coverage_status=coverage_status,
-            expected_rows_per_symbol=expected_rows,
-            limit=limit,
-            offset=offset,
-            sort=sort,
-        )
+        if provider_normalized == "yfinance":
+            seed_universe = universe_id or (
+                "canada_seed" if exchange_normalized == "CA" else "us_seed"
+            )
+            symbols = yfinance_seed_universe(seed_universe)
+            invalid_symbols = [
+                symbol.symbol
+                for symbol in symbols
+                if symbol.exchange.upper() != exchange_normalized
+            ]
+            if invalid_symbols:
+                raise ValueError(
+                    f"universe_id={seed_universe} does not match exchange={exchange_normalized}."
+                )
+            payload = store.seeded_daily_ohlcv_availability(
+                symbols=[
+                    {
+                        "symbol": symbol.symbol,
+                        "name": symbol.name,
+                        "instrument_key": f"YF|{symbol.yahoo_symbol or symbol.symbol}",
+                    }
+                    for symbol in symbols
+                ],
+                source=provider_normalized,
+                exchange=exchange_normalized,
+                start_date=start_date,
+                end_date=end_date,
+                query_text=query,
+                coverage_status=coverage_status,
+                expected_rows_per_symbol=expected_rows,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+            )
+        else:
+            payload = store.daily_ohlcv_availability(
+                source=provider_normalized,
+                exchange=exchange_normalized,
+                start_date=start_date,
+                end_date=end_date,
+                query_text=query,
+                universe_id=universe_id,
+                coverage_status=coverage_status,
+                expected_rows_per_symbol=expected_rows,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
 
     return DataAvailabilityResponse(
-        provider=provider.lower(),
-        exchange=exchange.upper(),
+        provider=provider_normalized,
+        exchange=exchange_normalized,
         interval="1d",
         start_date=start_date,
         end_date=end_date,
@@ -340,6 +387,61 @@ def data_availability(
         rows=payload["rows"],
         summary=payload["summary"],
     )
+
+
+@app.get("/api/data/bulk-fetch-preview", response_model=DataBulkFetchPreviewResponse)
+def data_bulk_fetch_preview(
+    provider: str = "yfinance",
+    exchange: str = "US",
+    interval: str = "1d",
+    universe_id: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    query: str | None = None,
+    coverage_status: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    sort: str = "-missing_rows",
+) -> DataBulkFetchPreviewResponse:
+    if start_date is None or end_date is None:
+        raise HTTPException(status_code=400, detail="start_date and end_date are required")
+    provider_normalized = provider.lower()
+    exchange_normalized = exchange.upper()
+    if provider_normalized != "yfinance":
+        raise HTTPException(
+            status_code=400,
+            detail="Only provider=yfinance is supported for bulk fetch preview.",
+        )
+    if exchange_normalized not in {"US", "CA"}:
+        raise HTTPException(
+            status_code=400,
+            detail="provider=yfinance supports only exchange=US or exchange=CA.",
+        )
+    if interval not in {"1d", "daily"}:
+        raise HTTPException(status_code=400, detail="Only interval=1d is supported.")
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+
+    try:
+        store = _store()
+        payload = _build_yfinance_bulk_fetch_preview(
+            store=store,
+            exchange=exchange_normalized,
+            universe_id=universe_id,
+            start_date=start_date,
+            end_date=end_date,
+            query=query,
+            coverage_status=coverage_status,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+    return DataBulkFetchPreviewResponse(**payload)
 
 
 @app.get("/api/data/instruments/search", response_model=list[DataInstrumentSearchRow])
@@ -929,8 +1031,213 @@ def _expected_daily_rows(
     if start_date is None or end_date is None:
         return 0
 
+    return len(_expected_daily_dates(store, exchange, start_date, end_date))
+
+
+def _expected_daily_dates(
+    store: TimescaleStore,
+    exchange: str,
+    start_date: date,
+    end_date: date,
+) -> list[date]:
+    if exchange.upper() not in {"NSE", "TSX"}:
+        current = start_date
+        trading_dates = []
+        while current <= end_date:
+            if current.weekday() < 5:
+                trading_dates.append(current)
+            current += timedelta(days=1)
+        return trading_dates
+
     holidays = _stored_exchange_holidays(store, exchange, start_date, end_date)
-    return len(expected_trading_dates(exchange, start_date, end_date, holidays=holidays))
+    return expected_trading_dates(exchange, start_date, end_date, holidays=holidays)
+
+
+def _build_yfinance_bulk_fetch_preview(
+    store: TimescaleStore,
+    exchange: str,
+    universe_id: str | None,
+    start_date: date,
+    end_date: date,
+    query: str | None,
+    coverage_status: str | None,
+    limit: int,
+    offset: int,
+    sort: str,
+) -> dict:
+    seed_universe = universe_id or ("canada_seed" if exchange == "CA" else "us_seed")
+    symbols = yfinance_seed_universe(seed_universe)
+    if any(symbol.exchange.upper() != exchange for symbol in symbols):
+        raise ValueError(f"universe_id={seed_universe} does not match exchange={exchange}.")
+    if coverage_status and coverage_status.lower() not in {"complete", "partial", "empty"}:
+        raise ValueError("coverage_status must be complete, partial, or empty.")
+
+    expected_dates = _expected_daily_dates(store, exchange, start_date, end_date)
+    expected_set = set(expected_dates)
+    expected_rows = len(expected_dates)
+    seed_rows = [
+        {
+            "symbol": symbol.symbol.upper(),
+            "name": symbol.name,
+            "instrument_key": f"YF|{symbol.yahoo_symbol or symbol.symbol}",
+        }
+        for symbol in symbols
+        if symbol.yahoo_symbol
+    ]
+    if query:
+        needle = query.strip().upper()
+        seed_rows = [
+            row
+            for row in seed_rows
+            if needle in row["symbol"]
+            or needle in str(row.get("name") or "").upper()
+            or needle in row["instrument_key"].upper()
+        ]
+
+    stored_dates = store.daily_ohlcv_dates_by_instrument(
+        [row["instrument_key"] for row in seed_rows],
+        start_date,
+        end_date,
+        source="yfinance",
+        exchange=exchange,
+    )
+    rows = []
+    all_tasks = []
+    for row in seed_rows:
+        key = row["instrument_key"]
+        present_dates = expected_set.intersection(stored_dates.get(key, set()))
+        missing_dates = sorted(expected_set.difference(present_dates))
+        stored_count = len(present_dates)
+        missing_count = len(missing_dates)
+        status = _coverage_status(stored_count, expected_rows)
+        if coverage_status and status != coverage_status.lower():
+            continue
+        tasks = [
+            {
+                "symbol": row["symbol"],
+                "trading_symbol": key.removeprefix("YF|"),
+                "instrument_key": key,
+                "fetch_start": window_start,
+                "fetch_end": window_end,
+                "missing_rows": len(dates),
+                "status": "queued",
+            }
+            for window_start, window_end, dates in _contiguous_date_windows(missing_dates)
+        ]
+        all_tasks.extend(tasks)
+        rows.append(
+            {
+                "symbol": row["symbol"],
+                "name": row.get("name"),
+                "instrument_key": key,
+                "provider": "yfinance",
+                "exchange": exchange,
+                "interval": "1d",
+                "first_stored_date": min(present_dates) if present_dates else None,
+                "latest_stored_date": max(present_dates) if present_dates else None,
+                "stored_rows": stored_count,
+                "expected_rows": expected_rows,
+                "coverage_pct": (
+                    min(stored_count / expected_rows, 1.0) if expected_rows else 0.0
+                ),
+                "missing_rows": missing_count,
+                "coverage_status": status,
+                "last_successful_run": None,
+                "last_fetch_status": None,
+                "tasks": tasks,
+            }
+        )
+
+    rows = _sort_bulk_fetch_preview_rows(rows, sort)
+    summary = _availability_summary(rows)
+    paginated_rows = rows[offset : offset + limit]
+    paginated_tasks = [task for row in paginated_rows for task in row["tasks"]]
+    warnings = []
+    if not expected_dates:
+        warnings.append("No expected trading sessions in the requested date range.")
+    if exchange not in {"NSE", "TSX"}:
+        warnings.append("No stored exchange holiday calendar found; preview uses weekdays only.")
+
+    return {
+        "provider": "yfinance",
+        "exchange": exchange,
+        "universe_id": seed_universe,
+        "interval": "1d",
+        "start_date": start_date,
+        "end_date": end_date,
+        "query": query,
+        "coverage_status": coverage_status,
+        "limit": limit,
+        "offset": offset,
+        "sort": sort,
+        "total": len(rows),
+        "rows": paginated_rows,
+        "summary": summary,
+        "tasks": paginated_tasks,
+        "warnings": warnings,
+    }
+
+
+def _coverage_status(stored_rows: int, expected_rows: int) -> str:
+    if stored_rows == 0:
+        return "empty"
+    if expected_rows > 0 and stored_rows >= expected_rows:
+        return "complete"
+    return "partial"
+
+
+def _availability_summary(rows: list[dict]) -> dict:
+    return {
+        "symbols_total": len(rows),
+        "symbols_complete": sum(1 for row in rows if row["coverage_status"] == "complete"),
+        "symbols_partial": sum(1 for row in rows if row["coverage_status"] == "partial"),
+        "symbols_empty": sum(1 for row in rows if row["coverage_status"] == "empty"),
+        "expected_rows": sum(int(row["expected_rows"]) for row in rows),
+        "stored_rows": sum(int(row["stored_rows"]) for row in rows),
+        "missing_rows": sum(int(row["missing_rows"]) for row in rows),
+        "estimated_provider_calls_for_missing": sum(
+            len(row["tasks"]) for row in rows if row["missing_rows"] > 0
+        ),
+    }
+
+
+def _sort_bulk_fetch_preview_rows(rows: list[dict], sort: str) -> list[dict]:
+    sorters = {
+        "symbol": lambda row: (row["symbol"],),
+        "-symbol": lambda row: (row["symbol"],),
+        "coverage_pct": lambda row: (row["coverage_pct"], row["symbol"]),
+        "-coverage_pct": lambda row: (row["coverage_pct"], row["symbol"]),
+        "missing_rows": lambda row: (row["missing_rows"], row["symbol"]),
+        "-missing_rows": lambda row: (row["missing_rows"], row["symbol"]),
+        "latest_stored_date": lambda row: (
+            row["latest_stored_date"] is not None,
+            row["latest_stored_date"],
+            row["symbol"],
+        ),
+        "-latest_stored_date": lambda row: (
+            row["latest_stored_date"] is not None,
+            row["latest_stored_date"],
+            row["symbol"],
+        ),
+    }
+    if sort not in sorters:
+        raise ValueError("Unsupported sort value.")
+    return sorted(rows, key=sorters[sort], reverse=sort.startswith("-"))
+
+
+def _contiguous_date_windows(missing_dates: list[date]) -> list[tuple[date, date, list[date]]]:
+    if not missing_dates:
+        return []
+    windows = []
+    current = [missing_dates[0]]
+    for candle_date in missing_dates[1:]:
+        if candle_date == current[-1] + timedelta(days=1):
+            current.append(candle_date)
+            continue
+        windows.append((current[0], current[-1], current))
+        current = [candle_date]
+    windows.append((current[0], current[-1], current))
+    return windows
 
 
 def _ensure_exchange_holidays(
@@ -939,6 +1246,9 @@ def _ensure_exchange_holidays(
     start_date: date,
     end_date: date,
 ) -> None:
+    if exchange.upper() not in {"NSE", "TSX"}:
+        return
+
     for year in range(start_date.year, end_date.year + 1):
         cached = store.exchange_holidays(exchange, year)
         if cached is not None and cached.get("closed_dates"):

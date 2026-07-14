@@ -304,6 +304,29 @@ class DataAvailabilityResponse(BaseModel):
     summary: DataAvailabilitySummary
 
 
+class DataBulkFetchPreviewRow(DataAvailabilityRow):
+    tasks: list[DataCoveragePreviewTask] = Field(default_factory=list)
+
+
+class DataBulkFetchPreviewResponse(BaseModel):
+    provider: str
+    exchange: str
+    universe_id: str
+    interval: Literal["1d"] = "1d"
+    start_date: date
+    end_date: date
+    query: str | None = None
+    coverage_status: str | None = None
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    sort: str
+    total: int = Field(ge=0)
+    rows: list[DataBulkFetchPreviewRow] = Field(default_factory=list)
+    summary: DataAvailabilitySummary
+    tasks: list[DataCoveragePreviewTask] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DataInstrumentSearchRow(BaseModel):
     symbol: str
     name: str | None = None

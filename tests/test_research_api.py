@@ -62,6 +62,12 @@ class FakeCoverageStore:
         source: str = "upstox",
         exchange: str = "NSE",
     ) -> dict:
+        if source == "yfinance":
+            assert exchange == "US"
+            return {
+                "YF|AAPL": {start_date, start_date.replace(day=2)},
+                "YF|MSFT": {start_date, start_date.replace(day=2), start_date.replace(day=6)},
+            }
         return {
             "NSE_EQ|AAA": {start_date, start_date.replace(day=2)},
             "NSE_EQ|BBB": {start_date},
@@ -179,6 +185,68 @@ class FakeCoverageStore:
                 "expected_rows": 3,
                 "stored_rows": 2,
                 "missing_rows": 1,
+                "estimated_provider_calls_for_missing": 1,
+            },
+        }
+
+    def seeded_daily_ohlcv_availability(
+        self,
+        symbols: list[dict],
+        source: str,
+        exchange: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        query_text: str | None = None,
+        coverage_status: str | None = None,
+        expected_rows_per_symbol: int = 0,
+        limit: int = 50,
+        offset: int = 0,
+        sort: str = "symbol",
+    ) -> dict:
+        assert source == "yfinance"
+        assert exchange == "US"
+        assert symbols[0] == {
+            "symbol": "AAPL",
+            "name": "Apple",
+            "instrument_key": "YF|AAPL",
+        }
+        assert start_date == date(2026, 1, 1)
+        assert end_date == date(2026, 1, 6)
+        assert query_text == "AAPL"
+        assert coverage_status == "partial"
+        assert expected_rows_per_symbol == 4
+        assert limit == 10
+        assert offset == 0
+        assert sort == "symbol"
+        return {
+            "total": 1,
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "name": "Apple",
+                    "instrument_key": "YF|AAPL",
+                    "provider": "yfinance",
+                    "exchange": "US",
+                    "interval": "1d",
+                    "first_stored_date": date(2026, 1, 1),
+                    "latest_stored_date": date(2026, 1, 2),
+                    "stored_rows": 2,
+                    "expected_rows": 4,
+                    "coverage_pct": 0.5,
+                    "missing_rows": 2,
+                    "coverage_status": "partial",
+                    "last_successful_run": "run-yf",
+                    "last_fetch_status": "fetched",
+                }
+            ],
+            "summary": {
+                "symbols_total": 1,
+                "symbols_complete": 0,
+                "symbols_partial": 1,
+                "symbols_empty": 0,
+                "expected_rows": 4,
+                "stored_rows": 2,
+                "missing_rows": 2,
                 "estimated_provider_calls_for_missing": 1,
             },
         }
@@ -535,6 +603,81 @@ def test_data_availability_endpoint(monkeypatch) -> None:
     assert payload["rows"][0]["expected_rows"] == 3
     assert payload["rows"][0]["coverage_status"] == "partial"
     assert payload["rows"][0]["last_successful_run"] == "run-1"
+
+
+def test_data_availability_supports_yfinance_seeded_universe(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?provider=yfinance&exchange=US"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+            "&query=AAPL&coverage_status=partial&limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "yfinance"
+    assert payload["exchange"] == "US"
+    assert payload["total"] == 1
+    assert payload["summary"]["missing_rows"] == 2
+    assert payload["rows"][0]["symbol"] == "AAPL"
+    assert payload["rows"][0]["instrument_key"] == "YF|AAPL"
+    assert payload["rows"][0]["last_successful_run"] == "run-yf"
+
+
+def test_data_availability_rejects_yfinance_exchange_mismatch() -> None:
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?provider=yfinance&exchange=CA&universe_id=us_seed"
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "universe_id=us_seed does not match exchange=CA."
+
+
+def test_data_bulk_fetch_preview_supports_yfinance_filters(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/bulk-fetch-preview"
+            "?provider=yfinance&exchange=US"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+            "&query=AAPL&coverage_status=partial&limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "yfinance"
+    assert payload["exchange"] == "US"
+    assert payload["universe_id"] == "us_seed"
+    assert payload["total"] == 1
+    assert payload["summary"]["symbols_partial"] == 1
+    assert payload["summary"]["missing_rows"] == 2
+    assert payload["rows"][0]["symbol"] == "AAPL"
+    assert payload["rows"][0]["stored_rows"] == 2
+    assert payload["rows"][0]["expected_rows"] == 4
+    assert payload["rows"][0]["coverage_status"] == "partial"
+    assert payload["tasks"] == payload["rows"][0]["tasks"]
+    assert payload["tasks"][0]["fetch_start"] == "2026-01-05"
+    assert payload["tasks"][0]["fetch_end"] == "2026-01-06"
+
+
+def test_data_bulk_fetch_preview_rejects_non_yfinance() -> None:
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/bulk-fetch-preview"
+            "?provider=upstox&exchange=NSE"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Only provider=yfinance is supported for bulk fetch preview."
+    )
 
 
 def test_data_availability_requires_date_pair() -> None:
