@@ -21,7 +21,12 @@ from trade_research.data.upstox import (
     instrument_master_audit,
     map_liquid_universe_to_upstox,
 )
-from trade_research.data.yfinance_provider import YFinanceDailyProvider, normalize_yfinance_daily
+from trade_research.data.yfinance_provider import (
+    YFinanceDailyProvider,
+    YFinanceIntradayProvider,
+    normalize_yfinance_daily,
+    normalize_yfinance_intraday,
+)
 
 __all__ = [
     "MarketDataProvider",
@@ -31,6 +36,7 @@ __all__ = [
     "UpstoxInstrumentMasterProvider",
     "UpstoxNiftyFuturesHistoryProvider",
     "YFinanceDailyProvider",
+    "YFinanceIntradayProvider",
     "DUKASCOPY_INTERVAL_5M",
     "DukascopyHistoricalProvider",
     "aggregate_ticks_to_ohlcv",
@@ -41,6 +47,7 @@ __all__ = [
     "map_liquid_universe_to_upstox",
     "normalize_dukascopy_ticks",
     "normalize_yfinance_daily",
+    "normalize_yfinance_intraday",
     "build_daily_coverage_preview",
     "provider_capability",
     "validate_ohlcv",

@@ -26,6 +26,7 @@ from trade_research.pipelines.yfinance_daily import (
     run_yfinance_daily_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
 )
+from trade_research.pipelines.yfinance_intraday import run_yfinance_intraday_ohlcv_pipeline
 
 __all__ = [
     "PipelineRunResult",
@@ -47,5 +48,6 @@ __all__ = [
     "run_upstox_daily_ohlcv_pipeline",
     "run_walk_forward_folds_v1_pipeline",
     "run_yfinance_daily_ohlcv_pipeline",
+    "run_yfinance_intraday_ohlcv_pipeline",
     "run_yfinance_missing_ohlcv_pipeline",
 ]

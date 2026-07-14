@@ -181,6 +181,9 @@ def provider_rate_limit_windows(
         ("yfinance", "download"): (
             RateLimitWindow("1m", settings.yfinance_rate_per_minute, 60),
         ),
+        ("yfinance", "intraday_download"): (
+            RateLimitWindow("1m", settings.yfinance_rate_per_minute, 60),
+        ),
         ("dukascopy", "historical"): (
             RateLimitWindow("1m", settings.dukascopy_rate_per_minute, 60),
         ),

@@ -2,8 +2,11 @@ from datetime import date
 
 import pandas as pd
 
-from trade_research.data.yfinance_provider import normalize_yfinance_daily
-from trade_research.universe import yfinance_seed_universe
+from trade_research.data.yfinance_provider import (
+    normalize_yfinance_daily,
+    normalize_yfinance_intraday,
+)
+from trade_research.universe import yfinance_intraday_universe, yfinance_seed_universe
 
 
 def test_yfinance_seed_universe_returns_us_and_canada_symbols() -> None:
@@ -18,6 +21,16 @@ def test_yfinance_seed_universe_returns_us_and_canada_symbols() -> None:
     assert canada[0].symbol == "SHOP"
     assert canada[0].yahoo_symbol == "SHOP.TO"
     assert canada[0].currency == "CAD"
+
+
+def test_yfinance_intraday_universe_maps_fx_crypto_symbols() -> None:
+    universe = yfinance_intraday_universe()
+    by_symbol = {item.symbol: item for item in universe}
+
+    assert by_symbol["EUR/USD"].yahoo_symbol == "EURUSD=X"
+    assert by_symbol["USD/JPY"].yahoo_symbol == "JPY=X"
+    assert by_symbol["USD/CNH"].yahoo_symbol == "CNH=X"
+    assert by_symbol["BTC/USD"].yahoo_symbol == "BTC-USD"
 
 
 def test_normalize_yfinance_daily_handles_multi_ticker_frame() -> None:
@@ -75,3 +88,29 @@ def test_normalize_yfinance_daily_handles_single_ticker_frame() -> None:
     assert normalized.iloc[0]["Symbol"] == "SHOP"
     assert normalized.iloc[0]["TradingSymbol"] == "SHOP.TO"
     assert normalized.iloc[0]["Source"] == "yfinance"
+
+
+def test_normalize_yfinance_intraday_handles_multi_ticker_frame() -> None:
+    columns = pd.MultiIndex.from_product(
+        [["EURUSD=X", "BTC-USD"], ["Open", "High", "Low", "Close", "Volume"]]
+    )
+    frame = pd.DataFrame(
+        [
+            [1.10, 1.11, 1.09, 1.105, 0, 60000.0, 60100.0, 59900.0, 60050.0, 42],
+        ],
+        index=pd.DatetimeIndex(["2026-07-01T00:00:00Z"], name="Datetime"),
+        columns=columns,
+    )
+    instruments = [
+        item for item in yfinance_intraday_universe() if item.symbol in {"EUR/USD", "BTC/USD"}
+    ]
+
+    normalized = normalize_yfinance_intraday(frame, instruments)
+
+    assert normalized["InstrumentKey"].tolist() == [
+        "YF_INTRADAY|BTC-USD",
+        "YF_INTRADAY|EURUSD=X",
+    ]
+    assert normalized["Symbol"].tolist() == ["BTC/USD", "EUR/USD"]
+    assert normalized["Interval"].tolist() == ["5m", "5m"]
+    assert normalized["Source"].tolist() == ["yfinance", "yfinance"]

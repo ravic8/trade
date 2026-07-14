@@ -38,6 +38,7 @@ from trade_research.pipelines import (
     run_upstox_daily_ohlcv_retry_pipeline,
     run_walk_forward_folds_v1_pipeline,
     run_yfinance_daily_ohlcv_pipeline,
+    run_yfinance_intraday_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
 )
 from trade_research.storage import ParquetStore, TimescaleStore
@@ -833,6 +834,68 @@ def fetch_dukascopy_intraday(
     console.print(f"Mapped symbols: {result.metrics['mapped_symbols']}")
     console.print(f"Requested hours: {result.metrics['requested_hours']}")
     console.print(f"Timeout seconds: {result.metrics['timeout_seconds']}")
+    console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
+    console.print(f"Fetch failures: {result.metrics['failure_rows']}")
+    if store_db:
+        console.print(f"Upserted ohlcv_intraday rows: {result.metrics['timescale_rows']}")
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("fetch-yfinance-intraday")
+def fetch_yfinance_intraday(
+    universe: Annotated[
+        str,
+        typer.Option(help="yfinance intraday universe id."),
+    ] = "yfinance_fx_crypto_5m",
+    interval: Annotated[
+        str,
+        typer.Option(help="Intraday candle interval. Phase 4 fallback supports 5m only."),
+    ] = "5m",
+    from_datetime: Annotated[
+        str | None,
+        typer.Option(help="Start datetime, e.g. 2026-07-01T00:00:00Z."),
+    ] = None,
+    to_datetime: Annotated[
+        str | None,
+        typer.Option(help="End datetime, e.g. 2026-07-01T01:00:00Z."),
+    ] = None,
+    instrument: Annotated[
+        str | None,
+        typer.Option(help="Optional single instrument, e.g. EUR/USD, EURUSD=X, or BTC/USD."),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(min=1, help="Optional instrument limit for smoke tests."),
+    ] = None,
+    store_db: Annotated[
+        bool,
+        typer.Option(help="Also upsert 5-minute candles into Timescale/Postgres."),
+    ] = True,
+) -> None:
+    try:
+        result = run_yfinance_intraday_ohlcv_pipeline(
+            universe=universe,
+            interval=interval,
+            from_datetime=from_datetime,
+            to_datetime=to_datetime,
+            instrument=instrument,
+            limit=limit,
+            store_db=store_db,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    output_path = result.artifacts.get("ohlcv")
+    if output_path is None:
+        console.print("No yfinance intraday OHLCV rows fetched; Parquet left unchanged")
+    else:
+        console.print(f"Wrote yfinance intraday OHLCV: {output_path} ({result.rows} rows)")
+    console.print(
+        f"Universe: {result.metrics['universe']} / interval {result.metrics['interval']}"
+    )
+    console.print(f"Mapped symbols: {result.metrics['mapped_symbols']}")
     console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
     if store_db:

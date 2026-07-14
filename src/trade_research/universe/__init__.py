@@ -12,6 +12,11 @@ from trade_research.universe.yfinance_full import (
     yfinance_universe,
     yfinance_universe_id,
 )
+from trade_research.universe.yfinance_intraday import (
+    YFINANCE_INTRADAY_UNIVERSE_ID,
+    YFinanceIntradayInstrument,
+    yfinance_intraday_universe,
+)
 from trade_research.universe.yfinance_seed import yfinance_seed_universe
 
 __all__ = [
@@ -21,8 +26,11 @@ __all__ = [
     "DukascopyInstrument",
     "dukascopy_intraday_universe",
     "YFinanceCanadaUniverseProvider",
+    "YFINANCE_INTRADAY_UNIVERSE_ID",
+    "YFinanceIntradayInstrument",
     "YFinanceUSUniverseProvider",
     "yfinance_exchange_for_universe",
+    "yfinance_intraday_universe",
     "yfinance_seed_universe",
     "yfinance_universe",
     "yfinance_universe_id",

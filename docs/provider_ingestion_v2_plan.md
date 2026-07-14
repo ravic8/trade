@@ -644,12 +644,13 @@ trade-research fetch-yfinance-missing \
   --batch-size 5
 ```
 
-### Phase 4: Dukascopy FX Intraday Storage
+### Phase 4: FX/Crypto 5-Minute Intraday Storage
 
 Deliverables:
 
 - Dukascopy provider adapter.
 - Fixed Dukascopy 5-minute FX/crypto instrument registry.
+- yfinance 5-minute FX/crypto fallback provider.
 - `ohlcv_intraday` hypertable.
 - CLI backfill/smoke command for 5-minute candles.
 - Dagster `fx_intraday_dukascopy_job` with a stopped-by-default schedule.
@@ -667,6 +668,16 @@ Acceptance:
 Local smoke command:
 
 ```text
+trade-research fetch-yfinance-intraday \
+  --from-datetime 2026-07-01T00:00:00Z \
+  --to-datetime 2026-07-01T01:00:00Z \
+  --instrument EUR/USD \
+  --no-store-db
+```
+
+Dukascopy diagnostic command:
+
+```text
 trade-research fetch-dukascopy-intraday \
   --from-date 2026-07-01 \
   --to-date 2026-07-01 \
@@ -676,9 +687,11 @@ trade-research fetch-dukascopy-intraday \
   --no-store-db
 ```
 
-Production smoke should first use the same one-hour command with `--store-db`,
-then inspect `provider_request_log` for `provider=dukascopy` before attempting
-larger one-day windows.
+Dukascopy `datafeed.dukascopy.com` currently times out from both local and
+production environments. Keep `fx_intraday_dukascopy_schedule` stopped until
+provider/network access is solved. Use yfinance as the temporary 5-minute
+intraday fallback, with the caveat that Yahoo intraday retention is limited and
+not suitable for deep historical backfills.
 
 ### Phase 5: APIs And UI
 
