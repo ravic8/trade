@@ -508,6 +508,38 @@ Deliverables:
 - One active ingestion run by default.
 - Higher production step parallelism only for independent steps.
 
+Implemented in this branch:
+
+- `fetch-upstox-nse-daily` and `retry-upstox-nse-daily` use an async Upstox
+  historical client under a bounded `asyncio.Semaphore`.
+- `UPSTOX_HISTORICAL_CONCURRENCY` controls the default provider HTTP
+  concurrency; CLI runs can override it with `--max-concurrent-fetches`.
+- The Redis/in-memory provider limiter is still acquired immediately before
+  every Upstox historical request.
+- `provider_request_log` still receives one row per attempted request, including
+  async success/error attempts.
+- Dagster keeps orchestration coarse-grained: the `upstox_daily_ohlcv` asset
+  reads the configured Upstox concurrency, while `dagster_home/dagster.yaml`
+  queues runs with `max_concurrent_runs: 1`.
+- Local compose defaults to `UPSTOX_HISTORICAL_CONCURRENCY=4`; production
+  compose defaults to `PROD_UPSTOX_HISTORICAL_CONCURRENCY=10`.
+
+Smoke examples:
+
+```text
+trade-research fetch-upstox-nse-daily \
+  --limit 3 \
+  --from-date 2026-07-01 \
+  --to-date 2026-07-03 \
+  --store-db \
+  --max-concurrent-fetches 3
+
+trade-research retry-upstox-nse-daily \
+  --limit 10 \
+  --statuses failed,no_rows \
+  --max-concurrent-fetches 3
+```
+
 Acceptance:
 
 - Local Mac does not exceed 8 GB memory during smoke runs.

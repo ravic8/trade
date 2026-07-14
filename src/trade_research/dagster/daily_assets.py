@@ -5,6 +5,7 @@ from typing import Any
 
 from dagster import AssetIn, MetadataValue, asset
 
+from trade_research.config import get_settings
 from trade_research.pipelines import (
     PipelineRunResult,
     run_daily_feature_pipeline,
@@ -24,12 +25,14 @@ from trade_research.validation import resolve_latest_expected_trading_date
     description="Incrementally fetch Upstox NSE daily OHLCV and upsert it into TimescaleDB.",
 )
 def upstox_daily_ohlcv(context) -> PipelineRunResult:
+    settings = get_settings()
     latest = resolve_latest_expected_trading_date()
     result = run_upstox_daily_ohlcv_pipeline(
         to_date=latest.latest_expected_trading_date.isoformat(),
         store_db=True,
         export_db_snapshot=True,
         trigger="dagster",
+        max_concurrent_fetches=settings.upstox_historical_concurrency,
     )
     context.add_output_metadata(_result_metadata(result))
     return result

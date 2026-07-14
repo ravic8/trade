@@ -1,9 +1,11 @@
+import asyncio
 from datetime import date
 
 import httpx
 import pandas as pd
 
 from trade_research.data.upstox import (
+    AsyncUpstoxHistoricalDataProvider,
     UpstoxHistoricalDataProvider,
     UpstoxInstrumentMasterProvider,
     UpstoxNiftyFuturesHistoryProvider,
@@ -105,6 +107,50 @@ def test_fetch_daily_candles_uses_v3_days_endpoint() -> None:
         end=date(2026, 6, 17),
         symbol="HDFCBANK",
     )
+
+    assert requested_paths == [
+        "/v3/historical-candle/NSE_EQ|INE040A01034/days/1/2026-06-17/2026-06-01"
+    ]
+    assert frame["Symbol"].tolist() == ["HDFCBANK"]
+    assert frame["Volume"].tolist() == [12345]
+
+
+def test_async_fetch_daily_candles_uses_v3_days_endpoint() -> None:
+    requested_paths: list[str] = []
+
+    async def run() -> pd.DataFrame:
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_paths.append(request.url.path)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "candles": [
+                            [
+                                "2026-06-17T00:00:00+05:30",
+                                100.0,
+                                110.0,
+                                95.0,
+                                105.0,
+                                12345,
+                                0,
+                            ]
+                        ]
+                    },
+                },
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        async with AsyncUpstoxHistoricalDataProvider("token", client=client) as provider:
+            return await provider.fetch_daily_candles(
+                "NSE_EQ|INE040A01034",
+                start=date(2026, 6, 1),
+                end=date(2026, 6, 17),
+                symbol="HDFCBANK",
+            )
+
+    frame = asyncio.run(run())
 
     assert requested_paths == [
         "/v3/historical-candle/NSE_EQ|INE040A01034/days/1/2026-06-17/2026-06-01"

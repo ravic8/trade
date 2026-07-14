@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime
 from importlib import import_module
+from types import SimpleNamespace
 
 import pytest
 
@@ -90,6 +91,11 @@ def test_upstox_daily_asset_stores_to_timescale(monkeypatch) -> None:
     monkeypatch.setattr(daily_assets, "run_upstox_daily_ohlcv_pipeline", fake_pipeline)
     monkeypatch.setattr(
         daily_assets,
+        "get_settings",
+        lambda: SimpleNamespace(upstox_historical_concurrency=7),
+    )
+    monkeypatch.setattr(
+        daily_assets,
         "resolve_latest_expected_trading_date",
         lambda: LatestTradingDate(
             current_local_time=datetime(2026, 6, 28, tzinfo=UTC),
@@ -107,6 +113,7 @@ def test_upstox_daily_asset_stores_to_timescale(monkeypatch) -> None:
         "store_db": True,
         "export_db_snapshot": True,
         "trigger": "dagster",
+        "max_concurrent_fetches": 7,
     }
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import time
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -12,6 +12,7 @@ from trade_research.config import get_settings
 from trade_research.credentials import resolve_provider_token
 from trade_research.data import UpstoxHistoricalDataProvider, audit_daily_ohlcv
 from trade_research.data.rate_limits import ProviderRateLimiter, build_provider_rate_limiter
+from trade_research.data.upstox import AsyncUpstoxHistoricalDataProvider
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.storage import ParquetStore, TimescaleStore
 
@@ -37,8 +38,10 @@ def run_upstox_daily_ohlcv_pipeline(
     store_db: bool = True,
     export_db_snapshot: bool = True,
     trigger: str = "pipeline",
+    max_concurrent_fetches: int | None = None,
 ) -> PipelineRunResult:
     settings = get_settings()
+    concurrency = max(max_concurrent_fetches or settings.upstox_historical_concurrency, 1)
 
     end = (
         _parse_pipeline_date(to_date, "to_date")
@@ -103,6 +106,7 @@ def run_upstox_daily_ohlcv_pipeline(
                 "mapped_symbols": len(mapping),
                 "skipped_current_symbols": len(skipped_plan),
                 "export_db_snapshot": bool(export_db_snapshot),
+                "max_concurrent_fetches": concurrency,
             },
         )
 
@@ -110,30 +114,16 @@ def run_upstox_daily_ohlcv_pipeline(
     failures: list[dict[str, str]] = []
     limiter = build_provider_rate_limiter(settings)
     try:
-        with UpstoxHistoricalDataProvider(token) as provider:
-            for row in fetch_plan.to_dict(orient="records"):
-                try:
-                    frame = _fetch_upstox_daily_with_controls(
-                        provider=provider,
-                        limiter=limiter,
-                        db=db,
-                        run_id=str(run_id) if run_id is not None else None,
-                        row=row,
-                        start=_parse_pipeline_date(str(row["fetch_start"]), "fetch_start"),
-                        end=end,
-                    )
-                    if not frame.empty:
-                        frames.append(frame)
-                except Exception as exc:
-                    failures.append(
-                        {
-                            "symbol": str(row["symbol"]),
-                            "instrument_key": str(row["instrument_key"]),
-                            "error": str(exc),
-                        }
-                    )
-                if throttle_seconds:
-                    time.sleep(throttle_seconds)
+        frames, failures = _fetch_upstox_daily_batch_with_controls(
+            rows=fetch_plan.to_dict(orient="records"),
+            token=token,
+            limiter=limiter,
+            db=db,
+            run_id=str(run_id) if run_id is not None else None,
+            end=end,
+            concurrency=concurrency,
+            throttle_seconds=throttle_seconds,
+        )
 
         ohlcv = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         audit = (
@@ -236,6 +226,7 @@ def run_upstox_daily_ohlcv_pipeline(
             "timescale_audit_rows": int(audits_written),
             "db_snapshot_rows": int(db_snapshot_rows),
             "store_db": bool(store_db),
+            "max_concurrent_fetches": int(concurrency),
         },
         warnings=warnings,
     )
@@ -256,8 +247,10 @@ def run_upstox_daily_ohlcv_retry_pipeline(
     access_token: str | None = None,
     export_db_snapshot: bool = True,
     trigger: str = "pipeline",
+    max_concurrent_fetches: int | None = None,
 ) -> PipelineRunResult:
     settings = get_settings()
+    concurrency = max(max_concurrent_fetches or settings.upstox_historical_concurrency, 1)
     db = TimescaleStore(settings.database_url)
     db.initialize()
     candidates = db.daily_ohlcv_fetch_retry_candidates(
@@ -288,6 +281,7 @@ def run_upstox_daily_ohlcv_retry_pipeline(
             "source_coverage_run_id": source_run_id,
             "retry_statuses": list(statuses),
             "export_db_snapshot": bool(export_db_snapshot),
+            "max_concurrent_fetches": concurrency,
         },
     )
 
@@ -296,30 +290,16 @@ def run_upstox_daily_ohlcv_retry_pipeline(
     limiter = build_provider_rate_limiter(settings)
     try:
         if not candidates.empty:
-            with UpstoxHistoricalDataProvider(token) as provider:
-                for row in candidates.to_dict(orient="records"):
-                    try:
-                        frame = _fetch_upstox_daily_with_controls(
-                            provider=provider,
-                            limiter=limiter,
-                            db=db,
-                            run_id=str(run_id),
-                            row=row,
-                            start=_parse_pipeline_date(str(row["fetch_start"]), "fetch_start"),
-                            end=_parse_pipeline_date(str(row["fetch_end"]), "fetch_end"),
-                        )
-                        if not frame.empty:
-                            frames.append(frame)
-                    except Exception as exc:
-                        failures.append(
-                            {
-                                "symbol": str(row["symbol"]),
-                                "instrument_key": str(row["instrument_key"]),
-                                "error": str(exc),
-                            }
-                        )
-                    if throttle_seconds:
-                        time.sleep(throttle_seconds)
+            frames, failures = _fetch_upstox_daily_batch_with_controls(
+                rows=candidates.to_dict(orient="records"),
+                token=token,
+                limiter=limiter,
+                db=db,
+                run_id=str(run_id),
+                end=None,
+                concurrency=concurrency,
+                throttle_seconds=throttle_seconds,
+            )
 
         ohlcv = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         failures_frame = pd.DataFrame(failures, columns=["symbol", "instrument_key", "error"])
@@ -397,6 +377,7 @@ def run_upstox_daily_ohlcv_retry_pipeline(
             "timescale_fetch_coverage_rows": int(retry_coverage_rows),
             "timescale_rows": int(rows_written),
             "db_snapshot_rows": int(db_snapshot_rows),
+            "max_concurrent_fetches": int(concurrency),
         },
         warnings=warnings,
     )
@@ -463,6 +444,109 @@ def _load_upstox_mapping(mapping_csv: Path, db: TimescaleStore | None) -> pd.Dat
     return mapping
 
 
+def _fetch_upstox_daily_batch_with_controls(
+    rows: list[dict[str, Any]],
+    token: str,
+    limiter: ProviderRateLimiter,
+    db: TimescaleStore | None,
+    run_id: str | None,
+    end: date | None,
+    concurrency: int,
+    throttle_seconds: float,
+) -> tuple[list[pd.DataFrame], list[dict[str, str]]]:
+    if not rows:
+        return [], []
+    return asyncio.run(
+        _fetch_upstox_daily_batch_with_controls_async(
+            rows=rows,
+            token=token,
+            limiter=limiter,
+            db=db,
+            run_id=run_id,
+            end=end,
+            concurrency=concurrency,
+            throttle_seconds=throttle_seconds,
+        )
+    )
+
+
+async def _fetch_upstox_daily_batch_with_controls_async(
+    rows: list[dict[str, Any]],
+    token: str,
+    limiter: ProviderRateLimiter,
+    db: TimescaleStore | None,
+    run_id: str | None,
+    end: date | None,
+    concurrency: int,
+    throttle_seconds: float,
+) -> tuple[list[pd.DataFrame], list[dict[str, str]]]:
+    semaphore = asyncio.Semaphore(max(concurrency, 1))
+    async with AsyncUpstoxHistoricalDataProvider(token) as provider:
+        tasks = [
+            _fetch_upstox_daily_row_with_semaphore(
+                provider=provider,
+                limiter=limiter,
+                db=db,
+                run_id=run_id,
+                row=row,
+                start=_parse_pipeline_date(str(row["fetch_start"]), "fetch_start"),
+                end=(
+                    end
+                    if end is not None
+                    else _parse_pipeline_date(str(row["fetch_end"]), "fetch_end")
+                ),
+                semaphore=semaphore,
+                start_delay_seconds=index * throttle_seconds if throttle_seconds else 0.0,
+            )
+            for index, row in enumerate(rows)
+        ]
+        results = await asyncio.gather(*tasks)
+
+    frames: list[pd.DataFrame] = []
+    failures: list[dict[str, str]] = []
+    for row, frame, error in results:
+        if error:
+            failures.append(
+                {
+                    "symbol": str(row["symbol"]),
+                    "instrument_key": str(row["instrument_key"]),
+                    "error": error,
+                }
+            )
+        elif not frame.empty:
+            frames.append(frame)
+    return frames, failures
+
+
+async def _fetch_upstox_daily_row_with_semaphore(
+    provider: AsyncUpstoxHistoricalDataProvider,
+    limiter: ProviderRateLimiter,
+    db: TimescaleStore | None,
+    run_id: str | None,
+    row: dict[str, Any],
+    start: date,
+    end: date,
+    semaphore: asyncio.Semaphore,
+    start_delay_seconds: float,
+) -> tuple[dict[str, Any], pd.DataFrame, str]:
+    if start_delay_seconds:
+        await asyncio.sleep(start_delay_seconds)
+    async with semaphore:
+        try:
+            frame = await _fetch_upstox_daily_with_controls_async(
+                provider=provider,
+                limiter=limiter,
+                db=db,
+                run_id=run_id,
+                row=row,
+                start=start,
+                end=end,
+            )
+            return row, frame, ""
+        except Exception as exc:
+            return row, pd.DataFrame(), str(exc)
+
+
 def _fetch_upstox_daily_with_controls(
     provider: UpstoxHistoricalDataProvider,
     limiter: ProviderRateLimiter,
@@ -494,6 +578,56 @@ def _fetch_upstox_daily_with_controls(
     finally:
         duration_ms = (perf_counter() - started) * 1000
         _record_provider_request(
+            db=db,
+            run_id=run_id,
+            provider="upstox",
+            endpoint_group="historical",
+            request_key=f"{instrument_key}:1d:{start.isoformat()}:{end.isoformat()}",
+            instrument_key=instrument_key,
+            symbol=symbol,
+            interval="1d",
+            window_start=start,
+            window_end=end,
+            status=status,
+            error_message=error_message,
+            rate_limited=decision.rate_limited,
+            wait_seconds=decision.wait_seconds,
+            duration_ms=duration_ms,
+        )
+
+
+async def _fetch_upstox_daily_with_controls_async(
+    provider: AsyncUpstoxHistoricalDataProvider,
+    limiter: ProviderRateLimiter,
+    db: TimescaleStore | None,
+    run_id: str | None,
+    row: dict[str, Any],
+    start: date,
+    end: date,
+) -> pd.DataFrame:
+    instrument_key = str(row["instrument_key"])
+    symbol = str(row["symbol"])
+    trading_symbol = str(row.get("trading_symbol") or symbol)
+    decision = await asyncio.to_thread(limiter.acquire, "upstox", "historical")
+    started = perf_counter()
+    status = "success"
+    error_message = ""
+    try:
+        return await provider.fetch_daily_candles(
+            instrument_key=instrument_key,
+            start=start,
+            end=end,
+            symbol=symbol,
+            trading_symbol=trading_symbol,
+        )
+    except Exception as exc:
+        status = "error"
+        error_message = str(exc)
+        raise
+    finally:
+        duration_ms = (perf_counter() - started) * 1000
+        await asyncio.to_thread(
+            _record_provider_request,
             db=db,
             run_id=run_id,
             provider="upstox",
