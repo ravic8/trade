@@ -272,7 +272,9 @@ def _stored_holiday_records(
     records: dict[int, ExchangeHolidays] = {}
     for year in range(start_year, end_year + 1):
         row = repository.exchange_holidays(exchange, year)
-        if row is None:
+        if row is None or not (
+            row.get("closed_dates") or row.get("early_close_dates")
+        ):
             continue
         records[year] = _holiday_record(row)
     return records

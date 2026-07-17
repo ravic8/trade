@@ -23,6 +23,7 @@ __pycache__/
 /tmp/
 
 dagster_home/.logs_queue/
+dagster_home/.nux/
 dagster_home/.telemetry/
 dagster_home/history/
 dagster_home/schedules/

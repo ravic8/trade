@@ -12,6 +12,9 @@ NSE_HOLIDAYS_PAGE_URL = "https://www.nseindia.com/resources/exchange-communicati
 NSE_TIMINGS_URL = "https://www.nseindia.com/static/market-data/market-timings"
 TMX_CALENDAR_URL = "https://www.tsx.com/en/trading/calendars-and-trading-hours/calendar"
 US_MARKET_HOLIDAYS_URL = "https://www.nasdaqtrader.com/Trader.aspx?id=Calendar"
+MINIMUM_EXCHANGE_CALENDAR_YEAR = 1990
+MAXIMUM_EXCHANGE_CALENDAR_YEAR_COUNT = 21
+MAXIMUM_EXCHANGE_CALENDAR_FUTURE_YEARS = 1
 
 NSE_FALLBACK_CLOSED_DATES = {
     2025: frozenset(
@@ -108,6 +111,35 @@ EXCHANGE_CONFIGS = {
 
 class MarketCalendarError(RuntimeError):
     pass
+
+
+def validated_exchange_calendar_years(
+    start: date,
+    end: date,
+    *,
+    reference_date: date | None = None,
+) -> range:
+    if start > end:
+        raise ValueError("start_date must be on or before end_date.")
+    if start.year < MINIMUM_EXCHANGE_CALENDAR_YEAR:
+        raise ValueError(
+            "Exchange calendar dates earlier than "
+            f"{MINIMUM_EXCHANGE_CALENDAR_YEAR} are unsupported."
+        )
+    latest_supported_year = (
+        reference_date or date.today()
+    ).year + MAXIMUM_EXCHANGE_CALENDAR_FUTURE_YEARS
+    if end.year > latest_supported_year:
+        raise ValueError(
+            f"Exchange calendar dates after {latest_supported_year} are unsupported."
+        )
+    year_count = end.year - start.year + 1
+    if year_count > MAXIMUM_EXCHANGE_CALENDAR_YEAR_COUNT:
+        raise ValueError(
+            "Exchange calendar requests may span at most "
+            f"{MAXIMUM_EXCHANGE_CALENDAR_YEAR_COUNT} calendar years."
+        )
+    return range(start.year, end.year + 1)
 
 
 def expected_trading_dates(
@@ -214,7 +246,12 @@ def fetch_nse_holidays(year: int) -> ExchangeHolidays:
         if (parsed := _parse_holiday_date(str(row.get("tradingDate", "")))) and parsed.year == year
     }
     if not closed_dates:
-        closed_dates = set(NSE_FALLBACK_CLOSED_DATES.get(year, frozenset()))
+        fallback_dates = NSE_FALLBACK_CLOSED_DATES.get(year)
+        if fallback_dates is None:
+            raise MarketCalendarError(
+                f"NSE holiday calendar is unavailable for {year}"
+            )
+        closed_dates = set(fallback_dates)
     return ExchangeHolidays(
         closed_dates=frozenset(closed_dates),
         early_close_dates=frozenset(),
