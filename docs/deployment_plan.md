@@ -318,6 +318,10 @@ git fetch origin
 git checkout main
 git pull --ff-only
 docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d postgres
+docker compose -f docker-compose.prod.yml exec -T postgres pg_isready
+docker compose -f docker-compose.prod.yml run --rm --no-deps api \
+  alembic -c /app/alembic.ini upgrade head
 docker compose -f docker-compose.prod.yml up -d
 curl -f http://localhost:8080/api/health
 ```
@@ -339,7 +343,11 @@ deploy/deploy.sh
 ```
 
 It loads `/opt/trade/.env`, creates the configured persistent directories,
-validates compose config, builds images, starts the stack, and checks
+validates compose config, and builds images. It then starts PostgreSQL, waits
+for database readiness, and applies Alembic migrations from a one-off container
+using the newly built API image. Application containers are replaced only
+after migration succeeds. A migration failure leaves the prior application
+release running and fails the deployment. Finally, it checks
 `http://localhost:${PROD_WEB_PORT:-8080}/api/health`.
 
 The private Dagster webserver remains opt-in through the `admin` Compose

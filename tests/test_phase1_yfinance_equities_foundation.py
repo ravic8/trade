@@ -147,3 +147,37 @@ def test_transition_migration_upgrades_and_downgrades_legacy_schema(
     assert SYMBOL_LIFECYCLE_COLUMNS.isdisjoint(
         {column["name"] for column in downgraded.get_columns("symbols")}
     )
+
+
+def test_upgrade_reconciles_create_all_tables_with_legacy_symbols(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "phase1-create-all.sqlite"
+    database_url = f"sqlite:///{database_path}"
+    engine = create_engine(database_url)
+    legacy_metadata = MetaData()
+    Table(
+        "symbols",
+        legacy_metadata,
+        Column("symbol", String, primary_key=True),
+        Column("exchange", String, primary_key=True),
+        Column("fetched_at", DateTime(timezone=True), nullable=False),
+    )
+    legacy_metadata.create_all(engine)
+    for table_name in FOUNDATION_TABLES:
+        metadata.tables[table_name].create(engine)
+
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = Config("alembic.ini")
+    command.upgrade(config, "head")
+
+    upgraded = inspect(engine)
+    assert SYMBOL_LIFECYCLE_COLUMNS.issubset(
+        {column["name"] for column in upgraded.get_columns("symbols")}
+    )
+    with engine.connect() as connection:
+        revision = connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one()
+    assert revision == "20260717_0001"
