@@ -148,6 +148,30 @@ def test_yfinance_daily_assets_store_seed_universes(monkeypatch) -> None:
     ]
 
 
+def test_equity_universe_assets_refresh_canonical_exchanges(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_pipeline(exchange: str, *, trigger: str) -> object:
+        calls.append((exchange, trigger))
+        return _result(f"{exchange.lower()}_universe_snapshot")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_equity_universe_snapshot_pipeline",
+        fake_pipeline,
+    )
+
+    daily_assets.nse_universe_snapshot(dagster.build_op_context())
+    daily_assets.tsx_universe_snapshot(dagster.build_op_context())
+    daily_assets.us_universe_snapshot(dagster.build_op_context())
+
+    assert calls == [
+        ("NSE", "dagster"),
+        ("TSX", "dagster"),
+        ("US", "dagster"),
+    ]
+
+
 def test_dukascopy_intraday_asset_stores_to_timescale(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
-from uuid import UUID, uuid4
+from typing import TYPE_CHECKING, Any
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pandas as pd
 from sqlalchemy import (
@@ -31,6 +31,9 @@ from sqlalchemy.dialects.postgresql import insert
 from trade_research.features.daily_technical import FEATURE_COLUMNS_V1_0
 from trade_research.schemas import Symbol
 from trade_research.targets.daily_forward import DAILY_FORWARD_TARGET_COLUMNS_V1_0
+
+if TYPE_CHECKING:
+    from trade_research.universe.persisted import UniverseReconciliationPlan
 
 metadata = MetaData()
 
@@ -1098,6 +1101,366 @@ class TimescaleStore:
                 )
                 for row in rows
             ]
+
+    def latest_accepted_universe_snapshot(self, exchange: str) -> dict[str, Any] | None:
+        query = (
+            universe_snapshots_table.select()
+            .where(universe_snapshots_table.c.exchange == exchange.upper())
+            .where(universe_snapshots_table.c.status == "accepted")
+            .order_by(
+                universe_snapshots_table.c.fetched_at.desc(),
+                universe_snapshots_table.c.snapshot_id.desc(),
+            )
+            .limit(1)
+        )
+        with self.engine.begin() as connection:
+            row = connection.execute(query).mappings().first()
+        return dict(row) if row is not None else None
+
+    def universe_symbol_state(self, exchange: str) -> list[dict[str, Any]]:
+        query = (
+            symbols_table.select()
+            .where(symbols_table.c.exchange == exchange.upper())
+            .order_by(symbols_table.c.symbol)
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def persisted_universe_symbols(self, exchange: str) -> list[Symbol]:
+        latest = self.latest_accepted_universe_snapshot(exchange)
+        if latest is None:
+            return []
+        query = (
+            select(
+                symbols_table.c.symbol,
+                symbols_table.c.exchange,
+                symbols_table.c.yahoo_symbol,
+                symbols_table.c.name,
+                symbols_table.c.currency,
+                symbols_table.c.source,
+                symbols_table.c.source_url,
+            )
+            .select_from(
+                universe_snapshot_members_table.join(
+                    symbols_table,
+                    (
+                        universe_snapshot_members_table.c.exchange_symbol
+                        == symbols_table.c.symbol
+                    )
+                    & (symbols_table.c.exchange == exchange.upper()),
+                )
+            )
+            .where(
+                universe_snapshot_members_table.c.snapshot_id
+                == str(latest["snapshot_id"])
+            )
+            .where(symbols_table.c.is_active.is_(True))
+            .order_by(symbols_table.c.symbol)
+        )
+        with self.engine.begin() as connection:
+            rows = connection.execute(query).mappings()
+            return [Symbol(**dict(row)) for row in rows]
+
+    def record_universe_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        exchange: str,
+        source: str,
+        status: str,
+        fetched_at: datetime,
+        symbol_count: int,
+        validation_json: Mapping[str, Any],
+        error_message: str | None,
+    ) -> None:
+        statement = insert(universe_snapshots_table).values(
+            snapshot_id=snapshot_id,
+            exchange=exchange.upper(),
+            source=source,
+            status=status,
+            fetched_at=fetched_at,
+            symbol_count=symbol_count,
+            validation_json=dict(validation_json),
+            error_message=error_message,
+            created_at=datetime.now(UTC),
+        )
+        update_columns = {
+            column.name: getattr(statement.excluded, column.name)
+            for column in universe_snapshots_table.columns
+            if column.name != "snapshot_id"
+        }
+        with self.engine.begin() as connection:
+            connection.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["snapshot_id"],
+                    set_=update_columns,
+                )
+            )
+
+    def persist_accepted_universe_snapshot(
+        self,
+        *,
+        plan: UniverseReconciliationPlan,
+        source: str,
+        validation_json: Mapping[str, Any],
+    ) -> None:
+        snapshot_statement = insert(universe_snapshots_table).values(
+            snapshot_id=plan.snapshot_id,
+            exchange=plan.exchange,
+            source=source,
+            status="accepted",
+            fetched_at=plan.fetched_at,
+            symbol_count=len(plan.members),
+            validation_json=dict(validation_json),
+            error_message=None,
+            created_at=datetime.now(UTC),
+        )
+        snapshot_updates = {
+            column.name: getattr(snapshot_statement.excluded, column.name)
+            for column in universe_snapshots_table.columns
+            if column.name != "snapshot_id"
+        }
+        symbol_rows = [
+            {
+                "symbol": item.symbol,
+                "exchange": item.exchange,
+                "yahoo_symbol": item.provider_symbol,
+                "name": item.name,
+                "currency": item.currency,
+                "source": item.source,
+                "source_url": item.source_url,
+                "is_active": item.is_active,
+                "canonical_instrument_id": item.canonical_instrument_id,
+                "first_seen_at": item.first_seen_at,
+                "last_seen_at": item.last_seen_at,
+                "inactive_at": item.inactive_at,
+                "inactive_reason": item.inactive_reason,
+                "consecutive_missing_refreshes": item.consecutive_missing_refreshes,
+                "last_universe_snapshot_id": item.last_universe_snapshot_id,
+                "fetched_at": plan.fetched_at,
+            }
+            for item in plan.instruments
+        ]
+        member_rows = [
+            {
+                "snapshot_id": plan.snapshot_id,
+                "canonical_instrument_id": item.canonical_instrument_id,
+                "exchange_symbol": item.symbol,
+                "provider_symbol": item.provider_symbol,
+                "name": item.name,
+                "raw_metadata": {
+                    "currency": item.currency,
+                    "source": item.source,
+                    "source_url": item.source_url,
+                },
+            }
+            for item in plan.members
+        ]
+        provider_rows = [
+            {
+                "source": "yfinance",
+                "instrument_key": f"YF|{item.provider_symbol}",
+                "exchange": item.exchange,
+                "segment": f"{item.exchange}_EQ",
+                "asset_type": "EQUITY",
+                "trading_symbol": item.symbol,
+                "name": item.name,
+                "active": item.is_active,
+                "fetched_at": plan.fetched_at,
+                "raw": {
+                    "canonical_instrument_id": item.canonical_instrument_id,
+                    "provider_symbol": item.provider_symbol,
+                    "snapshot_id": plan.snapshot_id,
+                    "currency": item.currency,
+                    "source": item.source,
+                    "source_url": item.source_url,
+                },
+            }
+            for item in plan.instruments
+            if item.provider_symbol
+        ]
+        event_rows = [
+            {
+                "event_id": item.event_id,
+                "canonical_instrument_id": item.canonical_instrument_id,
+                "exchange": item.exchange,
+                "event_type": item.event_type,
+                "old_value": item.old_value,
+                "new_value": item.new_value,
+                "snapshot_id": item.snapshot_id,
+                "created_at": item.created_at,
+            }
+            for item in plan.events
+        ]
+        work_rows = [
+            {
+                "work_item_id": item.work_item_id,
+                "idempotency_key": item.idempotency_key,
+                "work_type": "new_symbol_backfill",
+                "provider": "yfinance",
+                "exchange": item.exchange,
+                "canonical_instrument_id": item.canonical_instrument_id,
+                "provider_symbol": item.provider_symbol,
+                "interval": "1d",
+                "window_start": item.window_start,
+                "window_end": item.window_end,
+                "priority": 30,
+                "status": "queued",
+                "attempt_count": 0,
+                "max_attempts": 9,
+                "next_attempt_at": item.created_at,
+                "created_at": item.created_at,
+                "updated_at": item.created_at,
+            }
+            for item in plan.work_items
+        ]
+
+        with self.engine.begin() as connection:
+            connection.execute(
+                snapshot_statement.on_conflict_do_update(
+                    index_elements=["snapshot_id"],
+                    set_=snapshot_updates,
+                )
+            )
+            if symbol_rows:
+                for chunk in _chunks(symbol_rows, size=1_000):
+                    symbol_statement = insert(symbols_table).values(chunk)
+                    symbol_updates = {
+                        column.name: getattr(symbol_statement.excluded, column.name)
+                        for column in symbols_table.columns
+                        if column.name not in {"symbol", "exchange"}
+                    }
+                    connection.execute(
+                        symbol_statement.on_conflict_do_update(
+                            index_elements=["symbol", "exchange"],
+                            set_=symbol_updates,
+                        )
+                    )
+            if member_rows:
+                for chunk in _chunks(member_rows, size=1_000):
+                    member_statement = insert(universe_snapshot_members_table).values(
+                        chunk
+                    )
+                    member_updates = {
+                        column.name: getattr(member_statement.excluded, column.name)
+                        for column in universe_snapshot_members_table.columns
+                        if column.name not in {"snapshot_id", "canonical_instrument_id"}
+                    }
+                    connection.execute(
+                        member_statement.on_conflict_do_update(
+                            index_elements=["snapshot_id", "canonical_instrument_id"],
+                            set_=member_updates,
+                        )
+                    )
+            if provider_rows:
+                for chunk in _chunks(provider_rows, size=1_000):
+                    provider_statement = insert(provider_instruments_table).values(chunk)
+                    provider_updates = {
+                        column.name: getattr(provider_statement.excluded, column.name)
+                        for column in provider_instruments_table.columns
+                        if column.name not in {"source", "instrument_key"}
+                    }
+                    connection.execute(
+                        provider_statement.on_conflict_do_update(
+                            index_elements=["source", "instrument_key"],
+                            set_=provider_updates,
+                        )
+                    )
+            self._persist_yfinance_aliases(connection, plan)
+            if event_rows:
+                for chunk in _chunks(event_rows, size=1_000):
+                    connection.execute(
+                        insert(symbol_lifecycle_events_table)
+                        .values(chunk)
+                        .on_conflict_do_nothing(index_elements=["event_id"])
+                    )
+            if work_rows:
+                for chunk in _chunks(work_rows, size=1_000):
+                    connection.execute(
+                        insert(pipeline_work_items_table)
+                        .values(chunk)
+                        .on_conflict_do_nothing(index_elements=["idempotency_key"])
+                    )
+
+    @staticmethod
+    def _persist_yfinance_aliases(connection: Any, plan: UniverseReconciliationPlan) -> None:
+        members = [item for item in plan.members if item.provider_symbol]
+        if not members:
+            return
+        canonical_ids = [item.canonical_instrument_id for item in members]
+        current_aliases = list(
+            connection.execute(
+                instrument_aliases_table.select()
+                .where(
+                    instrument_aliases_table.c.canonical_instrument_id.in_(canonical_ids)
+                )
+                .where(instrument_aliases_table.c.provider == "yfinance")
+                .where(instrument_aliases_table.c.is_current.is_(True))
+            ).mappings()
+        )
+        current_by_instrument: dict[str, list[Mapping[str, Any]]] = {}
+        for alias in current_aliases:
+            current_by_instrument.setdefault(
+                str(alias["canonical_instrument_id"]), []
+            ).append(alias)
+
+        changed_members = [
+            item
+            for item in members
+            if not any(
+                alias["provider_symbol"] == item.provider_symbol
+                for alias in current_by_instrument.get(item.canonical_instrument_id, [])
+            )
+        ]
+        if not changed_members:
+            return
+        changed_ids = [item.canonical_instrument_id for item in changed_members]
+        old_provider_symbols = [
+            str(alias["provider_symbol"])
+            for canonical_id in changed_ids
+            for alias in current_by_instrument.get(canonical_id, [])
+        ]
+        connection.execute(
+            instrument_aliases_table.update()
+            .where(instrument_aliases_table.c.canonical_instrument_id.in_(changed_ids))
+            .where(instrument_aliases_table.c.provider == "yfinance")
+            .where(instrument_aliases_table.c.is_current.is_(True))
+            .values(valid_to=plan.fetched_at, is_current=False)
+        )
+        if old_provider_symbols:
+            connection.execute(
+                provider_instruments_table.update()
+                .where(provider_instruments_table.c.source == "yfinance")
+                .where(
+                    provider_instruments_table.c.instrument_key.in_(
+                        [f"YF|{symbol}" for symbol in old_provider_symbols]
+                    )
+                )
+                .values(active=False, fetched_at=plan.fetched_at)
+            )
+        alias_rows = []
+        for item in changed_members:
+            alias_identity = (
+                f"{plan.snapshot_id}:{item.canonical_instrument_id}:"
+                f"yfinance:{item.provider_symbol}"
+            )
+            alias_rows.append(
+                {
+                    "alias_id": str(uuid5(NAMESPACE_URL, alias_identity)),
+                    "canonical_instrument_id": item.canonical_instrument_id,
+                    "provider": "yfinance",
+                    "provider_symbol": item.provider_symbol,
+                    "valid_from": plan.fetched_at,
+                    "valid_to": None,
+                    "is_current": True,
+                }
+            )
+        for chunk in _chunks(alias_rows, size=1_000):
+            connection.execute(
+                insert(instrument_aliases_table)
+                .values(chunk)
+                .on_conflict_do_nothing(index_elements=["alias_id"])
+            )
 
     def upsert_exchange_holidays(
         self,

@@ -8,12 +8,30 @@ from trade_research.dagster.daily_assets import (
     factor_research_v1,
     fx_intraday_gap_validation,
     ml_dataset_v1,
+    nse_universe_snapshot,
     processed_dataset_validation,
+    tsx_universe_snapshot,
     upstox_daily_ohlcv,
+    us_universe_snapshot,
     yfinance_canada_daily_ohlcv,
     yfinance_fx_crypto_intraday_ohlcv,
     yfinance_fx_intraday_gap_validation,
     yfinance_us_daily_ohlcv,
+)
+
+nse_universe_refresh_job = define_asset_job(
+    name="nse_universe_refresh_job",
+    selection=[nse_universe_snapshot],
+)
+
+tsx_universe_refresh_job = define_asset_job(
+    name="tsx_universe_refresh_job",
+    selection=[tsx_universe_snapshot],
+)
+
+us_universe_refresh_job = define_asset_job(
+    name="us_universe_refresh_job",
+    selection=[us_universe_snapshot],
 )
 
 daily_research_pipeline_job = define_asset_job(
@@ -97,9 +115,36 @@ yfinance_fx_intraday_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+nse_universe_refresh_schedule = ScheduleDefinition(
+    name="nse_universe_refresh_schedule",
+    job=nse_universe_refresh_job,
+    cron_schedule="0 8 * * 1-5",
+    execution_timezone="Asia/Kolkata",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+tsx_universe_refresh_schedule = ScheduleDefinition(
+    name="tsx_universe_refresh_schedule",
+    job=tsx_universe_refresh_job,
+    cron_schedule="0 8 * * 1-5",
+    execution_timezone="America/Toronto",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+us_universe_refresh_schedule = ScheduleDefinition(
+    name="us_universe_refresh_schedule",
+    job=us_universe_refresh_job,
+    cron_schedule="0 8 * * 1-5",
+    execution_timezone="America/New_York",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 defs = Definitions(
     assets=[
         upstox_daily_ohlcv,
+        nse_universe_snapshot,
+        tsx_universe_snapshot,
+        us_universe_snapshot,
         yfinance_us_daily_ohlcv,
         yfinance_canada_daily_ohlcv,
         dukascopy_fx_intraday_ohlcv,
@@ -119,11 +164,17 @@ defs = Definitions(
         north_america_daily_yfinance_job,
         fx_intraday_dukascopy_job,
         yfinance_fx_intraday_job,
+        nse_universe_refresh_job,
+        tsx_universe_refresh_job,
+        us_universe_refresh_job,
     ],
     schedules=[
         daily_research_schedule,
         north_america_daily_yfinance_schedule,
         fx_intraday_dukascopy_schedule,
         yfinance_fx_intraday_schedule,
+        nse_universe_refresh_schedule,
+        tsx_universe_refresh_schedule,
+        us_universe_refresh_schedule,
     ],
 )

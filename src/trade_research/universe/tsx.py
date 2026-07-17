@@ -11,6 +11,7 @@ DEFAULT_TSX_SHEET_URL = (
 
 class TSXUniverseProvider(UniverseProvider):
     exchange = "TSX"
+    source = "tsx_google_sheet"
 
     def __init__(self, csv_url: str = DEFAULT_TSX_SHEET_URL) -> None:
         self.csv_url = csv_url

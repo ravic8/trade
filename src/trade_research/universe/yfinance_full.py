@@ -17,6 +17,7 @@ OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/symdir/otherlisted.txt"
 
 class YFinanceUSUniverseProvider(UniverseProvider):
     exchange = "US"
+    source = "nasdaq_trader_symbol_directory"
 
     def __init__(
         self,
@@ -101,6 +102,7 @@ class YFinanceUSUniverseProvider(UniverseProvider):
 
 class YFinanceCanadaUniverseProvider(UniverseProvider):
     exchange = "CA"
+    source = "tsx_google_sheet"
 
     def __init__(self, tsx_provider: TSXUniverseProvider | None = None) -> None:
         self.tsx_provider = tsx_provider or TSXUniverseProvider()
@@ -168,7 +170,7 @@ def _read_pipe_table(text: str) -> pd.DataFrame:
 
 def _clean_us_ticker(value: object) -> str:
     ticker = str(value or "").strip().upper()
-    if ticker in {"", "NAN"}:
+    if ticker in {"", "NAN"} or "$" in ticker:
         return ""
     return ticker
 
