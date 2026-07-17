@@ -1,4 +1,6 @@
 from datetime import date
+from threading import Lock
+from time import sleep
 
 import pandas as pd
 
@@ -6,7 +8,9 @@ import trade_research.pipelines.yfinance_daily as yfinance_daily
 from trade_research.config import Settings
 from trade_research.data.rate_limits import RateLimitDecision
 from trade_research.pipelines.yfinance_daily import (
+    _execute_yfinance_daily_batches_with_controls,
     _fetch_yfinance_daily_batches_with_controls,
+    _retry_database_write,
     _yfinance_batches,
     _yfinance_mapping,
     run_yfinance_daily_ohlcv_pipeline,
@@ -16,11 +20,19 @@ from trade_research.pipelines.yfinance_daily import (
 
 class _RecordingLimiter:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, int]] = []
 
-    def acquire(self, provider: str, endpoint_group: str) -> RateLimitDecision:
-        self.calls.append((provider, endpoint_group))
+    def acquire(
+        self,
+        provider: str,
+        endpoint_group: str,
+        weight: int = 1,
+    ) -> RateLimitDecision:
+        self.calls.append((provider, endpoint_group, weight))
         return RateLimitDecision(backend="memory", wait_seconds=0.0, rate_limited=False)
+
+    def update_rate_per_minute(self, provider: str, limit: int) -> None:
+        return None
 
 
 class _RecordingStore:
@@ -221,6 +233,78 @@ class _FakeYFinanceProvider:
         return pd.DataFrame(rows)
 
 
+class _TransientYFinanceProvider(_FakeYFinanceProvider):
+    def fetch_daily_ohlcv(
+        self,
+        symbols: list[dict[str, str]],
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        if not self.calls:
+            self.calls.append(([item["yahoo_symbol"] for item in symbols], start, end))
+            raise TimeoutError("Yahoo request timed out")
+        return super().fetch_daily_ohlcv(symbols, start, end)
+
+
+class _PartialYFinanceProvider(_FakeYFinanceProvider):
+    def fetch_daily_ohlcv(
+        self,
+        symbols: list[dict[str, str]],
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        requested = list(symbols)
+        if not self.calls:
+            requested = requested[:1]
+        return super().fetch_daily_ohlcv(requested, start, end)
+
+
+class _ConcurrencyTrackingProvider(_FakeYFinanceProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active = 0
+        self.max_active = 0
+        self.lock = Lock()
+
+    def fetch_daily_ohlcv(
+        self,
+        symbols: list[dict[str, str]],
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        with self.lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            sleep(0.02)
+            return super().fetch_daily_ohlcv(symbols, start, end)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+class _EmptyYFinanceProvider(_FakeYFinanceProvider):
+    def fetch_daily_ohlcv(
+        self,
+        symbols: list[dict[str, str]],
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        self.calls.append(([item["yahoo_symbol"] for item in symbols], start, end))
+        return pd.DataFrame()
+
+
+class _InvalidYFinanceProvider(_FakeYFinanceProvider):
+    def fetch_daily_ohlcv(
+        self,
+        symbols: list[dict[str, str]],
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        self.calls.append(([item["yahoo_symbol"] for item in symbols], start, end))
+        raise RuntimeError("symbol may be delisted")
+
+
 def test_yfinance_mapping_uses_seed_symbols() -> None:
     mapping = _yfinance_mapping("canada_seed")
 
@@ -274,13 +358,170 @@ def test_fetch_yfinance_batches_limits_and_logs_request() -> None:
     assert failures == []
     assert len(frames) == 1
     assert provider.calls == [(["AAPL", "MSFT"], date(2026, 7, 1), date(2026, 7, 3))]
-    assert limiter.calls == [("yfinance", "download")]
-    assert len(store.logs) == 1
+    assert limiter.calls == [("yfinance", "download", 2)]
+    assert len(store.logs) == 2
     log = store.logs[0]
     assert log["provider"] == "yfinance"
     assert log["endpoint_group"] == "download"
-    assert log["request_key"] == "AAPL,MSFT:1d:2026-07-01:2026-07-03"
+    assert log["request_key"] == "AAPL:1d:2026-07-01:2026-07-03"
     assert log["status"] == "success"
+
+
+def test_yahoo_executor_reacquires_weighted_permits_for_immediate_retry() -> None:
+    provider = _TransientYFinanceProvider()
+    limiter = _RecordingLimiter()
+    store = _RecordingStore()
+    rows = _daily_fetch_rows("AAPL", "MSFT")
+    settings = Settings(
+        _env_file=None,
+        provider_rate_limit_backend="none",
+        yfinance_retry_wait_multiplier_seconds=0,
+        yfinance_retry_wait_max_seconds=0,
+    )
+
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
+        rows=rows,
+        limiter=limiter,
+        db=store,
+        run_id="run-retry",
+        batch_size=2,
+        settings=settings,
+    )
+
+    assert execution.failures == []
+    assert execution.attempts == 2
+    assert execution.retried_tickers == 2
+    assert limiter.calls == [
+        ("yfinance", "download", 2),
+        ("yfinance", "download", 2),
+    ]
+    assert [log["status"] for log in store.logs] == [
+        "timeout",
+        "timeout",
+        "success",
+        "success",
+    ]
+    assert [log["retry_count"] for log in store.logs] == [0, 0, 1, 1]
+
+
+def test_yahoo_executor_retries_only_missing_tickers_from_partial_batch() -> None:
+    provider = _PartialYFinanceProvider()
+    limiter = _RecordingLimiter()
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
+        rows=_daily_fetch_rows("AAPL", "MSFT"),
+        limiter=limiter,
+        db=None,
+        run_id="run-partial",
+        batch_size=2,
+        settings=Settings(
+            _env_file=None,
+            provider_rate_limit_backend="none",
+            yfinance_retry_wait_multiplier_seconds=0,
+            yfinance_retry_wait_max_seconds=0,
+        ),
+    )
+
+    assert execution.failures == []
+    assert execution.partial_batches == 1
+    assert limiter.calls == [
+        ("yfinance", "download", 2),
+        ("yfinance", "download", 1),
+    ]
+    assert provider.calls[0][0] == ["AAPL"]
+    assert provider.calls[1][0] == ["MSFT"]
+    assert {outcome["symbol"] for outcome in execution.ticker_outcomes} == {
+        "AAPL",
+        "MSFT",
+    }
+
+
+def test_yahoo_executor_uses_bounded_batch_concurrency() -> None:
+    provider = _ConcurrencyTrackingProvider()
+    limiter = _RecordingLimiter()
+
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
+        rows=_daily_fetch_rows("A", "B", "C", "D"),
+        limiter=limiter,
+        db=None,
+        run_id="run-concurrency",
+        batch_size=1,
+        settings=Settings(
+            _env_file=None,
+            provider_rate_limit_backend="none",
+            yfinance_initial_concurrency=2,
+            yfinance_maximum_concurrency=4,
+        ),
+    )
+
+    assert execution.max_workers == 2
+    assert provider.max_active == 2
+    assert len(execution.ticker_outcomes) == 4
+
+
+def test_database_write_retries_without_repeating_provider_fetch() -> None:
+    attempts = []
+
+    def write() -> int:
+        attempts.append(len(attempts) + 1)
+        if len(attempts) < 3:
+            raise RuntimeError("temporary database failure")
+        return 7
+
+    assert _retry_database_write(write) == 7
+    assert attempts == [1, 2, 3]
+
+
+def test_empty_response_exhausts_immediate_retries_per_ticker() -> None:
+    provider = _EmptyYFinanceProvider()
+    limiter = _RecordingLimiter()
+
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
+        rows=_daily_fetch_rows("AAPL"),
+        limiter=limiter,
+        db=None,
+        run_id="run-empty",
+        batch_size=1,
+        settings=Settings(
+            _env_file=None,
+            provider_rate_limit_backend="none",
+            yfinance_retry_wait_multiplier_seconds=0,
+            yfinance_retry_wait_max_seconds=0,
+        ),
+    )
+
+    assert execution.attempts == 3
+    assert len(execution.failures) == 1
+    assert execution.ticker_outcomes[0]["status"] == "empty_response"
+    assert len(limiter.calls) == 3
+
+
+def test_invalid_symbol_is_terminal_without_retries() -> None:
+    provider = _InvalidYFinanceProvider()
+    limiter = _RecordingLimiter()
+
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
+        rows=_daily_fetch_rows("DELISTED"),
+        limiter=limiter,
+        db=None,
+        run_id="run-invalid",
+        batch_size=1,
+        settings=Settings(
+            _env_file=None,
+            provider_rate_limit_backend="none",
+            yfinance_retry_wait_multiplier_seconds=0,
+            yfinance_retry_wait_max_seconds=0,
+        ),
+    )
+
+    assert execution.attempts == 1
+    assert execution.ticker_outcomes[0]["status"] == "invalid_symbol"
+    assert execution.ticker_outcomes[0]["retryable"] is False
+    assert len(limiter.calls) == 1
 
 
 def test_run_yfinance_daily_pipeline_writes_artifacts_without_db(tmp_path, monkeypatch) -> None:
@@ -354,3 +595,16 @@ def test_run_yfinance_missing_pipeline_filters_and_fetches_missing_window(
     assert provider.calls == [(["AAPL"], date(2026, 7, 8), date(2026, 7, 8))]
     assert store.logs[0]["request_key"] == "AAPL:1d:2026-07-08:2026-07-08"
     assert store.finished_runs[0]["status"] == "completed"
+
+
+def _daily_fetch_rows(*symbols: str) -> list[dict[str, str]]:
+    return [
+        {
+            "symbol": symbol,
+            "instrument_key": f"YF|{symbol}",
+            "yahoo_symbol": symbol,
+            "fetch_start": "2026-07-01",
+            "fetch_end": "2026-07-03",
+        }
+        for symbol in symbols
+    ]

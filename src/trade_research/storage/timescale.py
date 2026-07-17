@@ -940,6 +940,61 @@ class TimescaleStore:
                 connection.execute(provider_request_log_table.insert().values(chunk))
         return len(rows)
 
+    def adaptive_rate_state(self, provider: str) -> dict[str, Any] | None:
+        query = adaptive_rate_state_table.select().where(
+            adaptive_rate_state_table.c.provider == provider.strip().lower()
+        )
+        with self.engine.connect() as connection:
+            row = connection.execute(query).mappings().first()
+        return dict(row) if row is not None else None
+
+    def upsert_adaptive_rate_state(self, state: Mapping[str, Any]) -> int:
+        provider = _clean_string(state.get("provider"))
+        if not provider:
+            raise ValueError("Adaptive-rate state requires a provider.")
+        values = {
+            "provider": provider.lower(),
+            "current_rpm": int(state["current_rpm"]),
+            "last_safe_rpm": _nullable_int(state.get("last_safe_rpm")),
+            "minimum_rpm": int(state["minimum_rpm"]),
+            "maximum_rpm": int(state["maximum_rpm"]),
+            "current_concurrency": int(state["current_concurrency"]),
+            "consecutive_healthy_windows": int(
+                state.get("consecutive_healthy_windows") or 0
+            ),
+            "circuit_state": _clean_string(state.get("circuit_state")) or "closed",
+            "cooldown_until": (
+                _as_utc(state["cooldown_until"])
+                if state.get("cooldown_until") is not None
+                else None
+            ),
+            "last_429_at": (
+                _as_utc(state["last_429_at"])
+                if state.get("last_429_at") is not None
+                else None
+            ),
+            "recent_error_rate": float(state.get("recent_error_rate") or 0.0),
+            "latency_baseline_ms": (
+                float(state["latency_baseline_ms"])
+                if state.get("latency_baseline_ms") is not None
+                else None
+            ),
+            "updated_at": _as_utc(state.get("updated_at") or datetime.now(UTC)),
+        }
+        statement = insert(adaptive_rate_state_table).values(values)
+        with self.engine.begin() as connection:
+            connection.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[adaptive_rate_state_table.c.provider],
+                    set_={
+                        column: getattr(statement.excluded, column)
+                        for column in values
+                        if column != "provider"
+                    },
+                )
+            )
+        return 1
+
     def daily_ohlcv_fetch_retry_candidates(
         self,
         run_id: str | None = None,

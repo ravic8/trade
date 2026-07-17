@@ -688,6 +688,14 @@ YFINANCE_MINIMUM_RPM=30
 YFINANCE_MAXIMUM_RPM=600
 YFINANCE_INITIAL_CONCURRENCY=4
 YFINANCE_MAXIMUM_CONCURRENCY=8
+YFINANCE_IMMEDIATE_RETRY_ATTEMPTS=3
+YFINANCE_RETRY_WAIT_MULTIPLIER_SECONDS=2
+YFINANCE_RETRY_WAIT_MAX_SECONDS=15
+YFINANCE_ADAPTIVE_EVALUATION_WINDOW_SECONDS=60
+YFINANCE_ADAPTIVE_HEALTHY_WINDOWS_BEFORE_INCREASE=2
+YFINANCE_ADAPTIVE_INCREASE_RPM=30
+YFINANCE_ADAPTIVE_ERROR_THRESHOLD=0.10
+YFINANCE_ADAPTIVE_COOLDOWN_SECONDS=60
 YFINANCE_INCREMENTAL_OVERLAP_SESSIONS=5
 YFINANCE_PROVIDER_GRACE_MINUTES
 YFINANCE_FULL_US_ENABLED
@@ -754,6 +762,28 @@ Exit criteria:
 - Add immediate retry and classification.
 - Deploy adaptive governor in `observe` mode.
 - Record per-ticker partial-batch outcomes.
+
+Implementation status: implemented on the Phase 4 branch. The daily Yahoo
+pipeline now uses `YahooDailyExecutor`, with application-owned worker
+concurrency and yfinance internal threading disabled. Every attempt acquires a
+ticker-weighted permit from the shared
+`provider-rate-limit:yfinance:all` Redis budget. Partial batches commit valid
+ticker frames and retry only missing tickers. Provider attempts are classified
+and recorded per ticker, including retry number, limiter wait, duration, HTTP
+status when available, and terminal/retryable outcome.
+
+The adaptive controller persists recommendations in `adaptive_rate_state`.
+Production defaults to `observe`: it enforces 300 logical ticker RPM and four
+workers while recording recommended RPM/concurrency changes. `adaptive` mode
+can apply controller changes, but must remain disabled until observation data
+is reviewed. Database writes use bounded immediate retries against the already
+downloaded frames, so a transient write failure does not immediately cause a
+second Yahoo download.
+
+Although Forex remains outside this rollout and its schedules stay stopped,
+the legacy yfinance intraday path uses the same global weighted budget. This
+prevents an accidental/manual legacy run from bypassing the IP-wide Yahoo
+guardrail.
 
 Exit criteria:
 

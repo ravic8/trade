@@ -166,7 +166,11 @@ def _fetch_yfinance_intraday_with_controls(
     run_id: str | None,
     failures: list[dict[str, str]],
 ) -> pd.DataFrame:
-    decision = limiter.acquire("yfinance", "intraday_download")
+    decision = limiter.acquire(
+        "yfinance",
+        "intraday_download",
+        weight=max(len(instruments), 1),
+    )
     started = perf_counter()
     status = "success"
     error_message = ""
