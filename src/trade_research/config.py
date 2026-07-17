@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     yfinance_full_us_enabled: bool = False
     yfinance_full_tsx_enabled: bool = False
     yfinance_nse_enabled: bool = False
+    equity_universe_minimum_nse_symbols: int = Field(default=1_000, ge=1)
+    equity_universe_minimum_tsx_symbols: int = Field(default=500, ge=1)
+    equity_universe_minimum_us_symbols: int = Field(default=3_000, ge=1)
+    equity_universe_maximum_change_ratio: float = Field(default=0.20, ge=0, le=1)
+    equity_universe_missing_snapshots_before_inactive: int = Field(default=2, ge=2, le=10)
     legacy_upstox_nse_enabled: bool = True
     forex_pipelines_enabled: bool = False
     dukascopy_historical_concurrency: int = Field(default=2, ge=1, le=16)

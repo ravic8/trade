@@ -21,6 +21,7 @@ def test_yfinance_us_universe_parses_nasdaq_symbol_directory(monkeypatch) -> Non
             "ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|"
             "Test Issue|NASDAQ Symbol\n"
             "BRK.B|Berkshire Hathaway Inc. Class B|N|BRK.B|N|100|N|BRK.B\n"
+            "BAC$E|Bank of America Depositary Shares|N|BAC$E|N|100|N|BAC$E\n"
             "SPY|SPDR S&P 500 ETF Trust|P|SPY|Y|100|N|SPY\n"
             "AAC.U|Ares Acquisition Corporation III Units|N|AAC.U|N|100|N|AAC.U\n"
         ),

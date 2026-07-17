@@ -15,6 +15,7 @@ NSE_EQUITY_URLS = [
 
 class NSEUniverseProvider(UniverseProvider):
     exchange = "NSE"
+    source = "nse_equity_list"
 
     def __init__(self, urls: list[str] | None = None) -> None:
         self.urls = urls or NSE_EQUITY_URLS

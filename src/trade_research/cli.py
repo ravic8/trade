@@ -28,6 +28,7 @@ from trade_research.pipelines import (
     run_daily_pipeline_health_pipeline,
     run_daily_target_pipeline,
     run_dukascopy_intraday_ohlcv_pipeline,
+    run_equity_universe_snapshot_pipeline,
     run_factor_research_pipeline,
     run_latest_predictions_v1_pipeline,
     run_lightgbm_predictions_v1_pipeline,
@@ -87,6 +88,49 @@ def universe(
         table.add_row(item.symbol, item.yahoo_symbol or "", item.name or "")
     console.print(table)
     console.print(f"{len(symbols)} symbols")
+
+
+@app.command("refresh-equity-universe")
+def refresh_equity_universe(
+    exchange: Annotated[
+        str,
+        typer.Argument(help="Canonical equity exchange: NSE, TSX, or US."),
+    ],
+    allow_large_change: Annotated[
+        bool,
+        typer.Option(
+            help=(
+                "Accept a source count change above the configured safety threshold. "
+                "Schema, duplicate, minimum-count, and mapping checks still apply."
+            )
+        ),
+    ] = False,
+) -> None:
+    result = run_equity_universe_snapshot_pipeline(
+        exchange,
+        allow_large_change=allow_large_change,
+        trigger="cli",
+    )
+    table = Table(title=f"{str(result.metrics['exchange'])} Universe Snapshot")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Snapshot", str(result.metrics["snapshot_id"]))
+    table.add_row("Status", str(result.metrics["snapshot_status"]))
+    table.add_row("Source", str(result.metrics["source"]))
+    table.add_row("Symbols", str(result.metrics["symbol_count"]))
+    table.add_row("Lifecycle events", str(result.metrics["events_written"]))
+    table.add_row("Backfills queued", str(result.metrics["work_items_queued"]))
+    table.add_row(
+        "Backfill execution enabled",
+        str(result.metrics["backfill_execution_enabled"]),
+    )
+    console.print(table)
+    for warning in result.warnings:
+        console.print(f"[yellow]Warning: {warning}[/yellow]")
+    if result.status != "pass":
+        for issue in result.blocking_issues:
+            console.print(f"[red]Blocked: {issue}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command("market-session")

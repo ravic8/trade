@@ -21,6 +21,9 @@ from trade_research.pipelines.ml_dataset import run_ml_dataset_v1_pipeline
 from trade_research.pipelines.processed_validation import (
     run_processed_dataset_validation_pipeline,
 )
+from trade_research.pipelines.universe_snapshot import (
+    run_equity_universe_snapshot_pipeline,
+)
 from trade_research.pipelines.walk_forward import run_walk_forward_folds_v1_pipeline
 from trade_research.pipelines.yfinance_daily import (
     run_yfinance_daily_ohlcv_pipeline,
@@ -38,6 +41,7 @@ __all__ = [
     "run_daily_target_pipeline",
     "run_dukascopy_intraday_gap_validation_pipeline",
     "run_dukascopy_intraday_ohlcv_pipeline",
+    "run_equity_universe_snapshot_pipeline",
     "run_factor_research_pipeline",
     "run_latest_predictions_v1_pipeline",
     "run_lightgbm_predictions_v1_pipeline",
