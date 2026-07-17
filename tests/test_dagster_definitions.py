@@ -37,3 +37,12 @@ def test_phase2_universe_refresh_jobs_and_schedules_are_stopped_by_default() -> 
         assert job.name == f"{exchange}_universe_refresh_job"
         assert schedule.name == f"{exchange}_universe_refresh_schedule"
         assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
+
+
+def test_phase3_exchange_session_jobs_and_schedules_are_stopped_by_default() -> None:
+    for exchange in ("nse", "tsx", "us"):
+        job = getattr(definitions, f"{exchange}_exchange_sessions_job")
+        schedule = getattr(definitions, f"{exchange}_exchange_sessions_schedule")
+        assert job.name == f"{exchange}_exchange_sessions_job"
+        assert schedule.name == f"{exchange}_exchange_sessions_schedule"
+        assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED

@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     equity_universe_minimum_us_symbols: int = Field(default=3_000, ge=1)
     equity_universe_maximum_change_ratio: float = Field(default=0.20, ge=0, le=1)
     equity_universe_missing_snapshots_before_inactive: int = Field(default=2, ge=2, le=10)
+    materialized_exchange_sessions_enabled: bool = False
+    exchange_session_history_years: int = Field(default=10, ge=1, le=20)
+    exchange_session_future_years: int = Field(default=1, ge=1, le=5)
+    exchange_session_minimum_open_days_per_year: int = Field(default=220, ge=1, le=366)
+    exchange_session_maximum_open_days_per_year: int = Field(default=260, ge=1, le=366)
+    exchange_session_shadow_max_discrepancies: int = Field(default=5, ge=0, le=100)
+    exchange_session_observed_open_minimum_instruments: int = Field(default=10, ge=1)
     legacy_upstox_nse_enabled: bool = True
     forex_pipelines_enabled: bool = False
     dukascopy_historical_concurrency: int = Field(default=2, ge=1, le=16)
@@ -125,6 +132,13 @@ class Settings(BaseSettings):
         if self.yfinance_initial_concurrency > self.yfinance_maximum_concurrency:
             raise ValueError(
                 "yfinance concurrency settings must satisfy initial <= maximum"
+            )
+        if (
+            self.exchange_session_minimum_open_days_per_year
+            > self.exchange_session_maximum_open_days_per_year
+        ):
+            raise ValueError(
+                "exchange session open-day settings must satisfy minimum <= maximum"
             )
         return self
 

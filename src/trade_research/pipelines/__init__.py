@@ -14,6 +14,9 @@ from trade_research.pipelines.dukascopy_intraday import (
     run_dukascopy_intraday_gap_validation_pipeline,
     run_dukascopy_intraday_ohlcv_pipeline,
 )
+from trade_research.pipelines.exchange_sessions import (
+    run_exchange_session_materialization_pipeline,
+)
 from trade_research.pipelines.factor_research import run_factor_research_pipeline
 from trade_research.pipelines.latest_predictions import run_latest_predictions_v1_pipeline
 from trade_research.pipelines.lightgbm_models import run_lightgbm_predictions_v1_pipeline
@@ -42,6 +45,7 @@ __all__ = [
     "run_dukascopy_intraday_gap_validation_pipeline",
     "run_dukascopy_intraday_ohlcv_pipeline",
     "run_equity_universe_snapshot_pipeline",
+    "run_exchange_session_materialization_pipeline",
     "run_factor_research_pipeline",
     "run_latest_predictions_v1_pipeline",
     "run_lightgbm_predictions_v1_pipeline",

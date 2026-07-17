@@ -11,11 +11,11 @@ from trade_research.config import get_settings
 from trade_research.data.rate_limits import ProviderRateLimiter, build_provider_rate_limiter
 from trade_research.data.upstox import audit_daily_ohlcv
 from trade_research.data.yfinance_provider import YFinanceDailyProvider
-from trade_research.market_calendar import (
-    ExchangeHolidays,
-    expected_trading_dates,
-    fetch_exchange_holidays,
+from trade_research.exchange_sessions import (
+    expected_dates_for_instrument,
+    resolve_expected_session_dates,
 )
+from trade_research.market_calendar import fetch_exchange_holidays
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.daily_ohlcv import (
     build_daily_fetch_coverage,
@@ -83,19 +83,35 @@ def run_yfinance_daily_ohlcv_pipeline(
         f"data/processed/equities/yfinance_{universe_id}_daily_ohlcv_fetch_coverage.csv"
     )
 
-    end = (
-        _parse_pipeline_date(to_date, "to_date")
-        if to_date
-        else date.today() - timedelta(days=settlement_lag_days)
-    )
+    db = TimescaleStore(settings.database_url) if store_db else None
+    if db is not None:
+        db.initialize()
+    if to_date:
+        end = _parse_pipeline_date(to_date, "to_date")
+        end_source = "explicit"
+    elif settings.materialized_exchange_sessions_enabled:
+        if db is None:
+            raise ValueError(
+                "Materialized exchange-session planning requires store_db=True."
+            )
+        eligible_session = db.latest_provider_eligible_exchange_session(
+            exchange,
+            provider_grace_minutes=settings.yfinance_provider_grace_minutes,
+        )
+        if eligible_session is None:
+            raise ValueError(
+                f"No provider-eligible materialized session is available for {exchange}."
+            )
+        end = eligible_session["session_date"]
+        end_source = "materialized_exchange_sessions"
+    else:
+        end = date.today() - timedelta(days=settlement_lag_days)
+        end_source = "settlement_lag"
     base_start = (
         _parse_pipeline_date(from_date, "from_date") if from_date else _subtract_years(end, years)
     )
     is_full_window = from_date is not None
 
-    db = TimescaleStore(settings.database_url) if store_db else None
-    if db is not None:
-        db.initialize()
     latest_dates = (
         {}
         if db is None or from_date
@@ -129,6 +145,7 @@ def run_yfinance_daily_ohlcv_pipeline(
                 "mode": "full_window" if is_full_window else "incremental",
                 "base_start": base_start.isoformat(),
                 "end": end.isoformat(),
+                "end_source": end_source,
                 "settlement_lag_days": settlement_lag_days if to_date is None else None,
                 "mapped_symbols": len(mapping),
                 "batch_size": max(batch_size, 1),
@@ -243,6 +260,7 @@ def run_yfinance_daily_ohlcv_pipeline(
             "exchange": exchange,
             "base_start": base_start.isoformat(),
             "end": end.isoformat(),
+            "end_source": end_source,
             "mapped_symbols": int(len(mapping)),
             "fetch_symbols": int(len(fetch_plan)),
             "skipped_current_symbols": int(len(skipped_plan)),
@@ -286,15 +304,20 @@ def run_yfinance_missing_ohlcv_pipeline(
     mapping = _yfinance_mapping(universe)
     db = TimescaleStore(settings.database_url)
     db.initialize()
-    _ensure_exchange_holidays(db, exchange, start, end)
+    if not settings.materialized_exchange_sessions_enabled:
+        _ensure_exchange_holidays(db, exchange, start, end)
     expected_dates = _expected_daily_dates(db, exchange, start, end)
     expected_set = set(expected_dates)
-    expected_rows = len(expected_dates)
     instrument_keys = [str(key) for key in mapping["instrument_key"].dropna().tolist()]
     stored_dates = db.daily_ohlcv_dates_by_instrument(
         instrument_keys,
         start,
         end,
+        source="yfinance",
+        exchange=exchange,
+    )
+    first_trade_dates = db.first_daily_ohlcv_dates_by_instrument(
+        instrument_keys,
         source="yfinance",
         exchange=exchange,
     )
@@ -308,8 +331,8 @@ def run_yfinance_missing_ohlcv_pipeline(
     fetch_plan = _build_yfinance_missing_fetch_plan(
         mapping=mapping,
         expected_set=expected_set,
-        expected_rows=expected_rows,
         stored_dates=stored_dates,
+        first_trade_dates=first_trade_dates,
         avg_turnover=avg_turnover,
         coverage_status=coverage_status,
         min_avg_daily_turnover=min_avg_daily_turnover,
@@ -649,8 +672,8 @@ def _empty_daily_audit_frame() -> pd.DataFrame:
 def _build_yfinance_missing_fetch_plan(
     mapping: pd.DataFrame,
     expected_set: set[date],
-    expected_rows: int,
     stored_dates: dict[str, set[date]],
+    first_trade_dates: dict[str, date],
     avg_turnover: dict[str, float],
     coverage_status: str | None,
     min_avg_daily_turnover: float | None,
@@ -661,11 +684,23 @@ def _build_yfinance_missing_fetch_plan(
     rows: list[dict[str, Any]] = []
     for item in mapping.to_dict(orient="records"):
         key = str(item["instrument_key"])
-        present_dates = expected_set.intersection(stored_dates.get(key, set()))
-        missing_dates = sorted(expected_set.difference(present_dates))
+        instrument_stored_dates = stored_dates.get(key, set())
+        instrument_expected_dates = expected_dates_for_instrument(
+            sorted(expected_set),
+            coverage_start=min(expected_set) if expected_set else date.min,
+            first_trade_date=first_trade_dates.get(key),
+        )
+        instrument_expected_set = set(instrument_expected_dates)
+        instrument_expected_rows = len(instrument_expected_dates)
+        present_dates = instrument_expected_set.intersection(instrument_stored_dates)
+        missing_dates = sorted(instrument_expected_set.difference(present_dates))
         stored_count = len(present_dates)
-        coverage_pct = min(stored_count / expected_rows, 1.0) if expected_rows else 0.0
-        status = _coverage_status(stored_count, expected_rows)
+        coverage_pct = (
+            min(stored_count / instrument_expected_rows, 1.0)
+            if instrument_expected_rows
+            else 0.0
+        )
+        status = _coverage_status(stored_count, instrument_expected_rows)
         turnover = avg_turnover.get(key)
 
         if normalized_status and status != normalized_status:
@@ -692,7 +727,7 @@ def _build_yfinance_missing_fetch_plan(
                     "fetch_end": window_end.isoformat(),
                     "missing_rows": len(window_dates),
                     "stored_rows": stored_count,
-                    "expected_rows": expected_rows,
+                    "expected_rows": instrument_expected_rows,
                     "coverage_pct": coverage_pct,
                     "coverage_status": status,
                     "avg_daily_turnover": turnover,
@@ -767,32 +802,12 @@ def _expected_daily_dates(
                 trading_dates.append(current)
             current += timedelta(days=1)
         return trading_dates
-    holidays = _stored_exchange_holidays(store, exchange, start_date, end_date)
-    return expected_trading_dates(exchange, start_date, end_date, holidays=holidays)
-
-
-def _stored_exchange_holidays(
-    store: TimescaleStore,
-    exchange: str,
-    start_date: date,
-    end_date: date,
-) -> ExchangeHolidays | None:
-    closed_dates: set[date] = set()
-    early_close_dates: set[date] = set()
-    source_url = ""
-    for year in range(start_date.year, end_date.year + 1):
-        row = store.exchange_holidays(exchange, year)
-        if row is None:
-            return None
-        source_url = str(row.get("source_url") or source_url)
-        closed_dates.update(
-            date.fromisoformat(value) for value in row.get("closed_dates", [])
-        )
-        early_close_dates.update(
-            date.fromisoformat(value) for value in row.get("early_close_dates", [])
-        )
-    return ExchangeHolidays(
-        closed_dates=frozenset(closed_dates),
-        early_close_dates=frozenset(early_close_dates),
-        source_url=source_url,
+    settings = get_settings()
+    resolution = resolve_expected_session_dates(
+        store,
+        exchange,
+        start_date,
+        end_date,
+        use_materialized_sessions=settings.materialized_exchange_sessions_enabled,
     )
+    return list(resolution.dates)

@@ -8,15 +8,33 @@ from trade_research.dagster.daily_assets import (
     factor_research_v1,
     fx_intraday_gap_validation,
     ml_dataset_v1,
+    nse_exchange_sessions,
     nse_universe_snapshot,
     processed_dataset_validation,
+    tsx_exchange_sessions,
     tsx_universe_snapshot,
     upstox_daily_ohlcv,
+    us_exchange_sessions,
     us_universe_snapshot,
     yfinance_canada_daily_ohlcv,
     yfinance_fx_crypto_intraday_ohlcv,
     yfinance_fx_intraday_gap_validation,
     yfinance_us_daily_ohlcv,
+)
+
+nse_exchange_sessions_job = define_asset_job(
+    name="nse_exchange_sessions_job",
+    selection=[nse_exchange_sessions],
+)
+
+tsx_exchange_sessions_job = define_asset_job(
+    name="tsx_exchange_sessions_job",
+    selection=[tsx_exchange_sessions],
+)
+
+us_exchange_sessions_job = define_asset_job(
+    name="us_exchange_sessions_job",
+    selection=[us_exchange_sessions],
 )
 
 nse_universe_refresh_job = define_asset_job(
@@ -139,9 +157,36 @@ us_universe_refresh_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+nse_exchange_sessions_schedule = ScheduleDefinition(
+    name="nse_exchange_sessions_schedule",
+    job=nse_exchange_sessions_job,
+    cron_schedule="0 6 1 * *",
+    execution_timezone="Asia/Kolkata",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+tsx_exchange_sessions_schedule = ScheduleDefinition(
+    name="tsx_exchange_sessions_schedule",
+    job=tsx_exchange_sessions_job,
+    cron_schedule="0 6 1 * *",
+    execution_timezone="America/Toronto",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+us_exchange_sessions_schedule = ScheduleDefinition(
+    name="us_exchange_sessions_schedule",
+    job=us_exchange_sessions_job,
+    cron_schedule="0 6 1 * *",
+    execution_timezone="America/New_York",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 defs = Definitions(
     assets=[
         upstox_daily_ohlcv,
+        nse_exchange_sessions,
+        tsx_exchange_sessions,
+        us_exchange_sessions,
         nse_universe_snapshot,
         tsx_universe_snapshot,
         us_universe_snapshot,
@@ -167,6 +212,9 @@ defs = Definitions(
         nse_universe_refresh_job,
         tsx_universe_refresh_job,
         us_universe_refresh_job,
+        nse_exchange_sessions_job,
+        tsx_exchange_sessions_job,
+        us_exchange_sessions_job,
     ],
     schedules=[
         daily_research_schedule,
@@ -176,5 +224,8 @@ defs = Definitions(
         nse_universe_refresh_schedule,
         tsx_universe_refresh_schedule,
         us_universe_refresh_schedule,
+        nse_exchange_sessions_schedule,
+        tsx_exchange_sessions_schedule,
+        us_exchange_sessions_schedule,
     ],
 )

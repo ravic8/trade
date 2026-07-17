@@ -172,6 +172,30 @@ def test_equity_universe_assets_refresh_canonical_exchanges(monkeypatch) -> None
     ]
 
 
+def test_exchange_session_assets_materialize_canonical_exchanges(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_pipeline(exchange: str, *, trigger: str) -> object:
+        calls.append((exchange, trigger))
+        return _result(f"{exchange.lower()}_exchange_sessions")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_exchange_session_materialization_pipeline",
+        fake_pipeline,
+    )
+
+    daily_assets.nse_exchange_sessions(dagster.build_op_context())
+    daily_assets.tsx_exchange_sessions(dagster.build_op_context())
+    daily_assets.us_exchange_sessions(dagster.build_op_context())
+
+    assert calls == [
+        ("NSE", "dagster"),
+        ("TSX", "dagster"),
+        ("US", "dagster"),
+    ]
+
+
 def test_dukascopy_intraday_asset_stores_to_timescale(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

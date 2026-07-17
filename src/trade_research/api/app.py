@@ -26,11 +26,11 @@ from trade_research.data.coverage import CoveragePreviewInput, build_daily_cover
 from trade_research.data.on_demand import run_daily_ohlcv_request
 from trade_research.data.provider_capabilities import provider_capability
 from trade_research.data.upstox import validate_upstox_access_token
-from trade_research.market_calendar import (
-    ExchangeHolidays,
-    expected_trading_dates,
-    fetch_exchange_holidays,
+from trade_research.exchange_sessions import (
+    expected_dates_for_instrument,
+    resolve_expected_session_dates,
 )
+from trade_research.market_calendar import fetch_exchange_holidays
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.research.ml_artifacts import MLArtifactReader
@@ -1296,8 +1296,14 @@ def _expected_daily_dates(
             current += timedelta(days=1)
         return trading_dates
 
-    holidays = _stored_exchange_holidays(store, exchange, start_date, end_date)
-    return expected_trading_dates(exchange, start_date, end_date, holidays=holidays)
+    resolution = resolve_expected_session_dates(
+        store,
+        exchange,
+        start_date,
+        end_date,
+        use_materialized_sessions=settings.materialized_exchange_sessions_enabled,
+    )
+    return list(resolution.dates)
 
 
 def _build_yfinance_bulk_fetch_preview(
@@ -1322,8 +1328,6 @@ def _build_yfinance_bulk_fetch_preview(
         raise ValueError("coverage_status must be complete, partial, or empty.")
 
     expected_dates = _expected_daily_dates(store, exchange, start_date, end_date)
-    expected_set = set(expected_dates)
-    expected_rows = len(expected_dates)
     seed_rows = [
         {
             "symbol": symbol.symbol.upper(),
@@ -1350,6 +1354,24 @@ def _build_yfinance_bulk_fetch_preview(
         source="yfinance",
         exchange=exchange,
     )
+    first_date_loader = getattr(
+        store,
+        "first_daily_ohlcv_dates_by_instrument",
+        None,
+    )
+    first_trade_dates = (
+        first_date_loader(
+            [row["instrument_key"] for row in seed_rows],
+            source="yfinance",
+            exchange=exchange,
+        )
+        if first_date_loader is not None
+        else {
+            key: min(values)
+            for key, values in stored_dates.items()
+            if values
+        }
+    )
     avg_turnover_by_key = store.daily_ohlcv_average_turnover_by_instrument(
         [row["instrument_key"] for row in seed_rows],
         start_date,
@@ -1365,8 +1387,16 @@ def _build_yfinance_bulk_fetch_preview(
             avg_turnover is None or avg_turnover < min_avg_daily_turnover
         ):
             continue
-        present_dates = expected_set.intersection(stored_dates.get(key, set()))
-        missing_dates = sorted(expected_set.difference(present_dates))
+        instrument_stored_dates = stored_dates.get(key, set())
+        instrument_expected_dates = expected_dates_for_instrument(
+            expected_dates,
+            coverage_start=start_date,
+            first_trade_date=first_trade_dates.get(key),
+        )
+        instrument_expected_set = set(instrument_expected_dates)
+        expected_rows = len(instrument_expected_dates)
+        present_dates = instrument_expected_set.intersection(instrument_stored_dates)
+        missing_dates = sorted(instrument_expected_set.difference(present_dates))
         stored_count = len(present_dates)
         missing_count = len(missing_dates)
         status = _coverage_status(stored_count, expected_rows)
@@ -1519,6 +1549,8 @@ def _ensure_exchange_holidays(
     start_date: date,
     end_date: date,
 ) -> None:
+    if settings.materialized_exchange_sessions_enabled:
+        return
     if exchange.upper() not in {"NSE", "TSX", "US", "CA"}:
         return
 
@@ -1547,35 +1579,6 @@ def _ensure_exchange_holidays(
             early_close_dates=holidays.early_close_dates,
             source_url=holidays.source_url,
         )
-
-
-def _stored_exchange_holidays(
-    store: TimescaleStore,
-    exchange: str,
-    start_date: date,
-    end_date: date,
-) -> ExchangeHolidays | None:
-    closed_dates: set[date] = set()
-    early_close_dates: set[date] = set()
-    source_url = ""
-    for year in range(start_date.year, end_date.year + 1):
-        row = store.exchange_holidays(exchange, year)
-        if row is None:
-            return None
-        source_url = str(row.get("source_url") or source_url)
-        closed_dates.update(
-            date.fromisoformat(value) for value in row.get("closed_dates", [])
-        )
-        early_close_dates.update(
-            date.fromisoformat(value) for value in row.get("early_close_dates", [])
-        )
-    return ExchangeHolidays(
-        closed_dates=frozenset(closed_dates),
-        early_close_dates=frozenset(early_close_dates),
-        source_url=source_url,
-    )
-
-
 def _to_screener_result(row: dict) -> dict:
     return {
         "ticker": row["ticker"],

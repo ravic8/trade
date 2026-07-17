@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Protocol
 
+from trade_research.config import get_settings
+from trade_research.exchange_sessions import (
+    expected_dates_for_instrument,
+    resolve_expected_session_dates,
+)
 from trade_research.market_calendar import ExchangeHolidays, expected_trading_dates
 
 
@@ -35,6 +40,14 @@ class DailyCoverageStore(Protocol):
     ) -> dict | None:
         ...
 
+    def first_daily_ohlcv_dates_by_instrument(
+        self,
+        instrument_keys: list[str],
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> dict[str, date]:
+        ...
+
 
 @dataclass(frozen=True)
 class CoveragePreviewInput:
@@ -61,14 +74,34 @@ def build_daily_coverage_preview(
     resolution = _resolve_unique_instruments(requested_symbols, instruments)
     resolved = resolution["resolved"]
     instrument_keys = [item["instrument_key"] for item in resolved]
-    holidays = _stored_holidays(store, request.exchange, request.start_date, request.end_date)
-    expected_dates = expected_trading_dates(
-        request.exchange,
-        request.start_date,
-        request.end_date,
-        holidays=holidays,
-    )
-    expected_set = set(expected_dates)
+    settings = get_settings()
+    holidays = None
+    if settings.materialized_exchange_sessions_enabled:
+        session_resolution = resolve_expected_session_dates(
+            store,
+            request.exchange,
+            request.start_date,
+            request.end_date,
+            use_materialized_sessions=True,
+        )
+        expected_dates = list(session_resolution.dates)
+        calendar_source = session_resolution.source
+    else:
+        holidays = _stored_holidays(
+            store,
+            request.exchange,
+            request.start_date,
+            request.end_date,
+        )
+        expected_dates = expected_trading_dates(
+            request.exchange,
+            request.start_date,
+            request.end_date,
+            holidays=holidays,
+        )
+        calendar_source = (
+            "stored_exchange_holidays" if holidays is not None else "weekdays_only_fallback"
+        )
     stored_dates = store.daily_ohlcv_dates_by_instrument(
         instrument_keys,
         request.start_date,
@@ -76,15 +109,41 @@ def build_daily_coverage_preview(
         source=request.provider,
         exchange=request.exchange,
     )
+    first_date_loader = getattr(
+        store,
+        "first_daily_ohlcv_dates_by_instrument",
+        None,
+    )
+    first_trade_dates = (
+        first_date_loader(
+            instrument_keys,
+            source=request.provider,
+            exchange=request.exchange,
+        )
+        if first_date_loader is not None
+        else {
+            key: min(values)
+            for key, values in stored_dates.items()
+            if values
+        }
+    )
 
     tasks = []
+    total_expected = 0
     total_present = 0
     total_missing = 0
     for item in resolved:
         key = item["instrument_key"]
+        instrument_expected_dates = expected_dates_for_instrument(
+            expected_dates,
+            coverage_start=request.start_date,
+            first_trade_date=first_trade_dates.get(key),
+        )
+        instrument_expected_set = set(instrument_expected_dates)
         present_dates = stored_dates.get(key, set())
-        present_expected = expected_set.intersection(present_dates)
-        missing_dates = sorted(expected_set.difference(present_dates))
+        present_expected = instrument_expected_set.intersection(present_dates)
+        missing_dates = sorted(instrument_expected_set.difference(present_dates))
+        total_expected += len(instrument_expected_dates)
         total_present += len(present_expected)
         total_missing += len(missing_dates)
         for window_start, window_end, dates in _contiguous_windows(missing_dates):
@@ -111,7 +170,7 @@ def build_daily_coverage_preview(
         )
     if not expected_dates:
         warnings.append("No expected trading sessions in the requested date range.")
-    if holidays is None:
+    if not settings.materialized_exchange_sessions_enabled and holidays is None:
         warnings.append(
             "No stored exchange holiday calendar found; preview uses weekdays only."
         )
@@ -123,11 +182,12 @@ def build_daily_coverage_preview(
         "interval": request.interval,
         "start_date": request.start_date,
         "end_date": request.end_date,
+        "calendar_source": calendar_source,
         "symbols_requested": len(requested_symbols),
         "symbols_resolved": len(resolved),
         "unresolved_symbols": sorted(resolution["unresolved_symbols"]),
         "ambiguous_symbols": sorted(resolution["ambiguous_symbols"]),
-        "expected_rows": len(expected_dates) * len(resolved),
+        "expected_rows": total_expected,
         "already_present_rows": total_present,
         "missing_rows": total_missing,
         "estimated_provider_calls": len(tasks),

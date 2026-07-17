@@ -249,6 +249,7 @@ class DataCoveragePreviewResponse(BaseModel):
     interval: int
     start_date: date
     end_date: date
+    calendar_source: str | None = None
     symbols_requested: int = Field(ge=0)
     symbols_resolved: int = Field(ge=0)
     unresolved_symbols: list[str] = Field(default_factory=list)
