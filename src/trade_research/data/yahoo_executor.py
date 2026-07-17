@@ -295,6 +295,7 @@ def _ticker_outcomes(
 ) -> list[dict[str, Any]]:
     return [
         {
+            "work_item_id": row.get("work_item_id"),
             "symbol": str(row["symbol"]),
             "instrument_key": str(row["instrument_key"]),
             "yahoo_symbol": str(row["yahoo_symbol"]),

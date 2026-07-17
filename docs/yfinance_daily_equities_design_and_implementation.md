@@ -799,6 +799,33 @@ Exit criteria:
 - Generate only missing ten-year work for active symbols.
 - Keep incremental work above backfill priority.
 
+Implementation status: implemented on the Phase 5 branch. The shared
+`DailyWorkPlanner` emits deterministic work identities for incremental,
+new-symbol, gap-repair, and initial-backfill windows. Initial backfill reads
+stored yfinance coverage in bounded symbol chunks and enqueues only contiguous
+missing exchange-session windows. Incremental work uses the configured
+five-session overlap and is claimed ahead of historical backfill.
+
+`TimescaleStore` now provides atomic PostgreSQL claims using `FOR UPDATE SKIP
+LOCKED`, worker-owned heartbeats, stale-lock recovery, idempotent enqueue, and
+guarded terminal/retry transitions. Durable retry uses the planned `5m -> 15m
+-> 1h -> 4h -> 12h -> 24h` ladder and changes an incremental retry to the
+second priority tier. Attempts that exhaust `max_attempts` become terminal.
+
+The bounded worker correlates every Phase 4 ticker outcome to its durable work
+item, persists candles, adjustments, and provider request logs before
+acknowledgement, and retries only failed ticker items. CLI commands are:
+
+```bash
+trade-research plan-yfinance-daily-work
+trade-research run-yfinance-daily-worker
+```
+
+Dagster registers `yfinance_daily_work_planner_schedule` and
+`yfinance_daily_work_worker_schedule`, both stopped by default. Do not enable
+them during Phase 5 deployment; universe cutover and staged schedule activation
+begin in Phase 6. Forex schedules remain stopped.
+
 Exit criteria:
 
 - Executor restarts do not lose or duplicate work.

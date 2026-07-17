@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     yfinance_adaptive_cooldown_seconds: int = Field(default=60, ge=1, le=3600)
     yfinance_incremental_overlap_sessions: int = Field(default=5, ge=0, le=30)
     yfinance_provider_grace_minutes: int = Field(default=120, ge=0, le=720)
+    yfinance_backfill_years: int = Field(default=10, ge=1, le=20)
+    yfinance_work_planner_chunk_size: int = Field(default=250, ge=1, le=2_000)
+    yfinance_work_claim_size: int = Field(default=100, ge=1, le=1_000)
+    yfinance_work_heartbeat_seconds: int = Field(default=30, ge=5, le=300)
+    yfinance_work_stale_minutes: int = Field(default=10, ge=1, le=1_440)
+    yfinance_work_max_attempts: int = Field(default=9, ge=1, le=30)
     yfinance_full_us_enabled: bool = False
     yfinance_full_tsx_enabled: bool = False
     yfinance_nse_enabled: bool = False
@@ -147,6 +153,10 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "yfinance retry waits must satisfy multiplier <= maximum"
+            )
+        if self.yfinance_work_heartbeat_seconds >= self.yfinance_work_stale_minutes * 60:
+            raise ValueError(
+                "yfinance work heartbeat must be shorter than the stale-lock timeout"
             )
         if (
             self.exchange_session_minimum_open_days_per_year
