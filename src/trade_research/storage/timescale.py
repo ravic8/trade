@@ -1515,6 +1515,108 @@ class TimescaleStore:
             return None
         return dict(row)
 
+    def upsert_exchange_sessions(
+        self,
+        sessions: Iterable[Mapping[str, Any]],
+    ) -> int:
+        rows = [dict(row) for row in sessions]
+        if not rows:
+            return 0
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(exchange_sessions_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in exchange_sessions_table.columns
+                    if column.name not in {"exchange", "session_date"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["exchange", "session_date"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def exchange_sessions(
+        self,
+        exchange: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        query = (
+            exchange_sessions_table.select()
+            .where(exchange_sessions_table.c.exchange == exchange.upper())
+            .where(exchange_sessions_table.c.session_date >= start_date)
+            .where(exchange_sessions_table.c.session_date <= end_date)
+            .order_by(exchange_sessions_table.c.session_date)
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def delete_exchange_sessions(
+        self,
+        exchange: str,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        statement = (
+            exchange_sessions_table.delete()
+            .where(exchange_sessions_table.c.exchange == exchange.upper())
+            .where(exchange_sessions_table.c.session_date >= start_date)
+            .where(exchange_sessions_table.c.session_date <= end_date)
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+        return int(result.rowcount or 0)
+
+    def latest_provider_eligible_exchange_session(
+        self,
+        exchange: str,
+        *,
+        at: datetime | None = None,
+        provider_grace_minutes: int = 0,
+    ) -> dict[str, Any] | None:
+        eligible_before = _as_utc(at or datetime.now(UTC)) - timedelta(
+            minutes=provider_grace_minutes
+        )
+        query = (
+            exchange_sessions_table.select()
+            .where(exchange_sessions_table.c.exchange == exchange.upper())
+            .where(exchange_sessions_table.c.is_trading_day.is_(True))
+            .where(exchange_sessions_table.c.validation_status.like("valid%"))
+            .where(exchange_sessions_table.c.market_close_utc <= eligible_before)
+            .order_by(exchange_sessions_table.c.session_date.desc())
+            .limit(1)
+        )
+        with self.engine.begin() as connection:
+            row = connection.execute(query).mappings().first()
+        return dict(row) if row is not None else None
+
+    def observed_daily_session_dates(
+        self,
+        exchange: str,
+        start_date: date,
+        end_date: date,
+        *,
+        minimum_instruments: int = 10,
+    ) -> set[date]:
+        query = (
+            select(ohlcv_daily_table.c.date)
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.date >= start_date)
+            .where(ohlcv_daily_table.c.date <= end_date)
+            .group_by(ohlcv_daily_table.c.date)
+            .having(
+                func.count(func.distinct(ohlcv_daily_table.c.instrument_key))
+                >= minimum_instruments
+            )
+        )
+        with self.engine.begin() as connection:
+            return set(connection.execute(query).scalars())
+
     def fetchable_symbols(
         self,
         symbols: list[Symbol],
@@ -2222,6 +2324,32 @@ class TimescaleStore:
             if candle_date is not None:
                 dates_by_key.setdefault(str(instrument_key), set()).add(candle_date)
         return dates_by_key
+
+    def first_daily_ohlcv_dates_by_instrument(
+        self,
+        instrument_keys: list[str],
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> dict[str, date]:
+        if not instrument_keys:
+            return {}
+        query = (
+            select(
+                ohlcv_daily_table.c.instrument_key,
+                func.min(ohlcv_daily_table.c.date).label("first_date"),
+            )
+            .where(ohlcv_daily_table.c.source == source)
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.instrument_key.in_(instrument_keys))
+            .group_by(ohlcv_daily_table.c.instrument_key)
+        )
+        with self.engine.begin() as connection:
+            rows = connection.execute(query).all()
+        return {
+            str(instrument_key): first_date
+            for instrument_key, first_date in rows
+            if first_date is not None
+        }
 
     def daily_ohlcv_average_turnover_by_instrument(
         self,

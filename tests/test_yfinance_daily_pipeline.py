@@ -81,6 +81,16 @@ class _FakeTimescaleStore:
         }
         return {key: dates.get(key, set()) for key in instrument_keys}
 
+    def first_daily_ohlcv_dates_by_instrument(
+        self,
+        instrument_keys: list[str],
+        source: str = "yfinance",
+        exchange: str = "US",
+    ) -> dict[str, date]:
+        del source, exchange
+        dates = {"YF|AAPL": date(2026, 7, 6), "YF|MSFT": date(2026, 7, 6)}
+        return {key: dates[key] for key in instrument_keys if key in dates}
+
     def daily_ohlcv_average_turnover_by_instrument(
         self,
         instrument_keys: list[str],

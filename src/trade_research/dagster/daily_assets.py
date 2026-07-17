@@ -14,6 +14,7 @@ from trade_research.pipelines import (
     run_dukascopy_intraday_gap_validation_pipeline,
     run_dukascopy_intraday_ohlcv_pipeline,
     run_equity_universe_snapshot_pipeline,
+    run_exchange_session_materialization_pipeline,
     run_factor_research_pipeline,
     run_ml_dataset_v1_pipeline,
     run_processed_dataset_validation_pipeline,
@@ -22,6 +23,39 @@ from trade_research.pipelines import (
     run_yfinance_intraday_ohlcv_pipeline,
 )
 from trade_research.validation import resolve_latest_expected_trading_date
+
+
+@asset(
+    group_name="exchange_calendars",
+    compute_kind="python",
+    description="Materialize validated NSE sessions for history, current year, and next year.",
+)
+def nse_exchange_sessions(context) -> PipelineRunResult:
+    result = run_exchange_session_materialization_pipeline("NSE", trigger="dagster")
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="exchange_calendars",
+    compute_kind="python",
+    description="Materialize validated TSX sessions for history, current year, and next year.",
+)
+def tsx_exchange_sessions(context) -> PipelineRunResult:
+    result = run_exchange_session_materialization_pipeline("TSX", trigger="dagster")
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="exchange_calendars",
+    compute_kind="python",
+    description="Materialize validated US sessions for history, current year, and next year.",
+)
+def us_exchange_sessions(context) -> PipelineRunResult:
+    result = run_exchange_session_materialization_pipeline("US", trigger="dagster")
+    context.add_output_metadata(_result_metadata(result))
+    return result
 
 
 @asset(

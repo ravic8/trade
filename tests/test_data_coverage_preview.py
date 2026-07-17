@@ -1,5 +1,7 @@
 from datetime import date
 
+import trade_research.data.coverage as coverage_module
+from trade_research.config import Settings
 from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
 
 
@@ -56,6 +58,18 @@ class FakeCoverageStore:
             for key in instrument_keys
         }
 
+    def first_daily_ohlcv_dates_by_instrument(
+        self,
+        instrument_keys: list[str],
+        source: str = "upstox",
+        exchange: str = "NSE",
+    ) -> dict[str, date]:
+        return {
+            key: min(self.stored_dates[key])
+            for key in instrument_keys
+            if self.stored_dates.get(key)
+        }
+
     def exchange_holidays(
         self,
         exchange: str,
@@ -95,6 +109,24 @@ class AmbiguousCoverageStore(FakeCoverageStore):
                 }
             ]
         )
+
+
+class MaterializedCoverageStore(FakeCoverageStore):
+    def exchange_sessions(self, exchange: str, start_date: date, end_date: date):
+        open_dates = {date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 6)}
+        rows = []
+        current = start_date
+        while current <= end_date:
+            rows.append(
+                {
+                    "exchange": exchange,
+                    "session_date": current,
+                    "is_trading_day": current in open_dates,
+                    "validation_status": "valid",
+                }
+            )
+            current = date.fromordinal(current.toordinal() + 1)
+        return rows
 
 
 def test_daily_coverage_preview_returns_missing_windows_without_fetching() -> None:
@@ -210,3 +242,28 @@ def test_daily_coverage_preview_rejects_non_daily_request() -> None:
         assert "Only daily candles" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_daily_coverage_preview_switches_to_materialized_sessions(monkeypatch) -> None:
+    monkeypatch.setattr(
+        coverage_module,
+        "get_settings",
+        lambda: Settings(_env_file=None, materialized_exchange_sessions_enabled=True),
+    )
+
+    preview = build_daily_coverage_preview(
+        CoveragePreviewInput(
+            provider="upstox",
+            exchange="NSE",
+            symbols=("AAA",),
+            unit="days",
+            interval=1,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 6),
+        ),
+        store=MaterializedCoverageStore(),
+    )
+
+    assert preview["calendar_source"] == "materialized_exchange_sessions"
+    assert preview["expected_rows"] == 3
+    assert preview["missing_rows"] == 1

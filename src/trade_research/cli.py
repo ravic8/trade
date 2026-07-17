@@ -29,6 +29,7 @@ from trade_research.pipelines import (
     run_daily_target_pipeline,
     run_dukascopy_intraday_ohlcv_pipeline,
     run_equity_universe_snapshot_pipeline,
+    run_exchange_session_materialization_pipeline,
     run_factor_research_pipeline,
     run_latest_predictions_v1_pipeline,
     run_lightgbm_predictions_v1_pipeline,
@@ -152,6 +153,47 @@ def market_session(
     )
     table.add_row("Calendar source", decision.source_url)
     console.print(table)
+
+
+@app.command("refresh-exchange-sessions")
+def refresh_exchange_sessions(
+    exchange: Annotated[
+        str,
+        typer.Argument(help="Canonical equity exchange: NSE, TSX, or US."),
+    ],
+    as_of_date: Annotated[
+        str | None,
+        typer.Option(help="Reference date in YYYY-MM-DD format. Defaults to today."),
+    ] = None,
+) -> None:
+    result = run_exchange_session_materialization_pipeline(
+        exchange,
+        as_of_date=(
+            _parse_cli_date(as_of_date, "--as-of-date") if as_of_date else None
+        ),
+        trigger="cli",
+    )
+    table = Table(title=f"{str(result.metrics['exchange'])} Materialized Sessions")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Status", result.status)
+    table.add_row("Window", f"{result.metrics['start_date']} to {result.metrics['end_date']}")
+    table.add_row("Rows", str(result.metrics["session_rows"]))
+    table.add_row("Trading days", str(result.metrics["trading_days"]))
+    table.add_row("Closed days", str(result.metrics["closed_days"]))
+    table.add_row("Early closes", str(result.metrics["early_closes"]))
+    table.add_row(
+        "Shadow discrepancies",
+        str(result.metrics["shadow_discrepancy_count"]),
+    )
+    table.add_row("Planning enabled", str(result.metrics["planning_enabled"]))
+    console.print(table)
+    for warning in result.warnings:
+        console.print(f"[yellow]Warning: {warning}[/yellow]")
+    if result.status == "fail":
+        for issue in result.blocking_issues:
+            console.print(f"[red]Blocked: {issue}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command("init-db")
