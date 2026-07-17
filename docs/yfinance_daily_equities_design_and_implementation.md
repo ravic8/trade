@@ -832,6 +832,34 @@ Exit criteria:
 - Existing valid yfinance data is reused.
 - Failed windows progress automatically through durable retry.
 
+### Phase 5.1: Production Migration Hotfix
+
+Production validation found that the API image omitted `alembic.ini` and the
+`migrations/` directory, while `deploy/deploy.sh` never invoked Alembic. New
+tables had been created by the compatibility `create_all` path, but the legacy
+`symbols` table was missing all Phase 1 lifecycle columns and the database had
+no `alembic_version` table.
+
+The hotfix packages the complete Alembic runtime in `Dockerfile.api`. Deployment
+now builds the new image, starts and waits for PostgreSQL, and executes
+`alembic upgrade head` from a one-off container before replacing any application
+service. Migration or database-readiness failure aborts the release while the
+previous application containers remain running.
+
+The existing Phase 1 migration is intentionally reconciliation-safe: it adds
+missing lifecycle columns to an existing `symbols` table and skips foundation
+tables that already exist. A regression test covers this exact mixed state and
+verifies that revision `20260717_0001` is recorded. Production must take a fresh
+backup before first deploying this hotfix, and must not run an Alembic downgrade
+during the rollout because populated calendar and queue tables are retained.
+
+Exit criteria:
+
+- The API image contains Alembic configuration and migration scripts.
+- Schema migration succeeds before application service replacement.
+- A failed migration aborts deployment without replacing the prior release.
+- Legacy `symbols` rows gain lifecycle columns without data loss.
+
 ### Phase 6: US Cutover
 
 - Replace `us_seed` scheduling with the persisted full active US universe.

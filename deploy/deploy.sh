@@ -78,6 +78,33 @@ if [[ "$dagster_webserver_was_running" == true ]]; then
   "${compose[@]}" --profile admin build dagster-webserver
 fi
 
+log "starting PostgreSQL for schema migration"
+"${compose[@]}" up -d postgres
+
+database_ready=false
+for attempt in {1..30}; do
+  if "${compose[@]}" exec -T postgres \
+    pg_isready \
+      -U "${PROD_POSTGRES_USER:-trade}" \
+      -d "${PROD_POSTGRES_DB:-trade_research}" >/dev/null; then
+    database_ready=true
+    break
+  fi
+  sleep 2
+  log "PostgreSQL readiness retry $attempt/30"
+done
+
+if [[ "$database_ready" != true ]]; then
+  log "PostgreSQL did not become ready for schema migration"
+  "${compose[@]}" ps postgres >&2
+  "${compose[@]}" logs --tail=120 postgres >&2
+  exit 1
+fi
+
+log "applying database migrations"
+"${compose[@]}" run --rm --no-deps api \
+  alembic -c /app/alembic.ini upgrade head
+
 log "starting production stack"
 "${compose[@]}" up -d --remove-orphans
 if [[ "$dagster_webserver_was_running" == true ]]; then
