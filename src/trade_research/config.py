@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     yfinance_maximum_rpm: int = Field(default=600, ge=1, le=1200)
     yfinance_initial_concurrency: int = Field(default=4, ge=1, le=32)
     yfinance_maximum_concurrency: int = Field(default=8, ge=1, le=32)
+    yfinance_immediate_retry_attempts: int = Field(default=3, ge=1, le=5)
+    yfinance_retry_wait_multiplier_seconds: float = Field(default=2.0, ge=0, le=30)
+    yfinance_retry_wait_max_seconds: float = Field(default=15.0, ge=0, le=300)
+    yfinance_adaptive_evaluation_window_seconds: int = Field(default=60, ge=1, le=3600)
+    yfinance_adaptive_healthy_windows_before_increase: int = Field(default=2, ge=1, le=20)
+    yfinance_adaptive_increase_rpm: int = Field(default=30, ge=1, le=600)
+    yfinance_adaptive_error_threshold: float = Field(default=0.10, ge=0, le=1)
+    yfinance_adaptive_cooldown_seconds: int = Field(default=60, ge=1, le=3600)
     yfinance_incremental_overlap_sessions: int = Field(default=5, ge=0, le=30)
     yfinance_provider_grace_minutes: int = Field(default=120, ge=0, le=720)
     yfinance_full_us_enabled: bool = False
@@ -132,6 +140,13 @@ class Settings(BaseSettings):
         if self.yfinance_initial_concurrency > self.yfinance_maximum_concurrency:
             raise ValueError(
                 "yfinance concurrency settings must satisfy initial <= maximum"
+            )
+        if (
+            self.yfinance_retry_wait_multiplier_seconds
+            > self.yfinance_retry_wait_max_seconds
+        ):
+            raise ValueError(
+                "yfinance retry waits must satisfy multiplier <= maximum"
             )
         if (
             self.exchange_session_minimum_open_days_per_year

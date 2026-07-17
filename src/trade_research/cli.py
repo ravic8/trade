@@ -23,6 +23,7 @@ from trade_research.modeling.latest_predictions import LatestPredictionConfig
 from trade_research.modeling.lightgbm_models import LightGBMRunConfig
 from trade_research.modeling.walk_forward import WalkForwardManifestConfig
 from trade_research.pipelines import (
+    PipelineRunResult,
     run_baseline_predictions_v1_pipeline,
     run_daily_feature_pipeline,
     run_daily_pipeline_health_pipeline,
@@ -753,6 +754,7 @@ def fetch_yfinance_daily(
     )
     console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
     console.print(f"Batch size: {result.metrics['batch_size']}")
+    _print_yahoo_execution_controls(result)
     console.print(f"Skipped/current symbols: {result.metrics['skipped_current_symbols']}")
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
     if store_db:
@@ -840,6 +842,7 @@ def fetch_yfinance_missing(
     console.print(f"Fetch windows: {result.metrics['fetch_windows']}")
     console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
     console.print(f"Batch size: {result.metrics['batch_size']}")
+    _print_yahoo_execution_controls(result)
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
     console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
     console.print(
@@ -852,6 +855,23 @@ def fetch_yfinance_missing(
     )
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
+
+
+def _print_yahoo_execution_controls(result: PipelineRunResult) -> None:
+    console.print(
+        "Yahoo execution: "
+        f"{result.metrics['adaptive_rate_mode']} mode, "
+        f"{result.metrics['enforced_rpm']} enforced RPM, "
+        f"{result.metrics['recommended_rpm']} recommended RPM, "
+        f"{result.metrics['yfinance_concurrency']} enforced workers, "
+        f"{result.metrics['recommended_concurrency']} recommended workers"
+    )
+    console.print(
+        "Yahoo outcomes: "
+        f"{result.metrics['yahoo_attempts']} attempts, "
+        f"{result.metrics['retried_tickers']} retried tickers, "
+        f"{result.metrics['partial_batches']} partial batches"
+    )
 
 
 @app.command("fetch-dukascopy-intraday")

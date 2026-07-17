@@ -13,6 +13,7 @@ class YFinanceDailyProvider:
 
     def __init__(self, auto_adjust: bool = False) -> None:
         self.auto_adjust = auto_adjust
+        self._session: Any | None = None
 
     def fetch_daily_ohlcv(
         self,
@@ -37,8 +38,19 @@ class YFinanceDailyProvider:
             auto_adjust=self.auto_adjust,
             progress=False,
             threads=False,
+            timeout=30,
+            session=self._worker_session(),
         )
         return normalize_yfinance_daily(raw, symbols)
+
+    def _worker_session(self) -> Any:
+        if self._session is None:
+            try:
+                from curl_cffi import requests
+            except ImportError as exc:  # pragma: no cover - yfinance runtime dependency
+                raise RuntimeError("yfinance requires curl_cffi for isolated sessions.") from exc
+            self._session = requests.Session(impersonate="chrome")
+        return self._session
 
 
 class YFinanceIntradayProvider:

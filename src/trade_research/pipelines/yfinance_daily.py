@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, timedelta
+from collections.abc import Callable
+from datetime import date, timedelta
 from pathlib import Path
-from time import perf_counter
 from typing import Any, Protocol
 
 import pandas as pd
+from tenacity import Retrying, stop_after_attempt, wait_random_exponential
 
-from trade_research.config import get_settings
+from trade_research.config import Settings, get_settings
+from trade_research.data.adaptive_rate import YahooAdaptiveRateGovernor
 from trade_research.data.rate_limits import ProviderRateLimiter, build_provider_rate_limiter
 from trade_research.data.upstox import audit_daily_ohlcv
+from trade_research.data.yahoo_executor import (
+    YahooDailyBatchTask,
+    YahooDailyExecutor,
+    YahooExecutionSummary,
+)
 from trade_research.data.yfinance_provider import YFinanceDailyProvider
 from trade_research.exchange_sessions import (
     expected_dates_for_instrument,
@@ -162,15 +169,16 @@ def run_yfinance_daily_ohlcv_pipeline(
         )
 
     limiter = build_provider_rate_limiter(settings)
-    candle_provider = provider or YFinanceDailyProvider(auto_adjust=False)
-    frames, failures = _fetch_yfinance_daily_batches_with_controls(
-        provider=candle_provider,
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
         rows=fetch_plan.to_dict(orient="records"),
         limiter=limiter,
         db=db,
         run_id=str(run_id) if run_id is not None else None,
         batch_size=max(batch_size, 1),
+        settings=settings,
     )
+    frames, failures = execution.frames, execution.failures
 
     ohlcv = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     failures_frame = pd.DataFrame(failures, columns=["symbol", "instrument_key", "error"])
@@ -197,31 +205,43 @@ def run_yfinance_daily_ohlcv_pipeline(
     fetch_coverage.to_csv(fetch_coverage_output, index=False)
 
     rows_written = (
-        db.upsert_daily_ohlcv(ohlcv, exchange=exchange, source="yfinance")
+        _retry_database_write(
+            lambda: db.upsert_daily_ohlcv(ohlcv, exchange=exchange, source="yfinance")
+        )
         if db is not None and not ohlcv.empty
         else 0
     )
     price_adjustment_rows = (
-        db.upsert_daily_price_adjustments(ohlcv, exchange=exchange, source="yfinance")
+        _retry_database_write(
+            lambda: db.upsert_daily_price_adjustments(
+                ohlcv,
+                exchange=exchange,
+                source="yfinance",
+            )
+        )
         if db is not None and not ohlcv.empty
         else 0
     )
     audits_written = (
-        db.insert_data_quality_audits(
-            audit,
-            dataset_name=f"yfinance_{universe_id}_daily_ohlcv",
-            source="yfinance",
-            interval="1d",
+        _retry_database_write(
+            lambda: db.insert_data_quality_audits(
+                audit,
+                dataset_name=f"yfinance_{universe_id}_daily_ohlcv",
+                source="yfinance",
+                interval="1d",
+            )
         )
         if db is not None and not audit.empty
         else 0
     )
     fetch_coverage_rows = (
-        db.insert_daily_ohlcv_fetch_coverage(
-            str(run_id),
-            fetch_coverage,
-            source="yfinance",
-            exchange=exchange,
+        _retry_database_write(
+            lambda: db.insert_daily_ohlcv_fetch_coverage(
+                str(run_id),
+                fetch_coverage,
+                source="yfinance",
+                exchange=exchange,
+            )
         )
         if db is not None and run_id is not None and not fetch_coverage.empty
         else 0
@@ -274,6 +294,19 @@ def run_yfinance_daily_ohlcv_pipeline(
             "fetched_rows": int(len(ohlcv)),
             "failure_rows": int(len(failures)),
             "batch_size": int(max(batch_size, 1)),
+            "effective_batch_size": int(min(max(batch_size, 1), settings.yfinance_minimum_rpm)),
+            "yahoo_attempts": execution.attempts,
+            "retried_tickers": execution.retried_tickers,
+            "partial_batches": execution.partial_batches,
+            "ticker_outcomes": len(execution.ticker_outcomes),
+            "yfinance_concurrency": execution.rate_state.get("enforced_concurrency"),
+            "recommended_concurrency": execution.rate_state.get(
+                "recommended_concurrency"
+            ),
+            "worker_capacity": settings.yfinance_maximum_concurrency,
+            "adaptive_rate_mode": execution.rate_state.get("mode"),
+            "enforced_rpm": execution.rate_state.get("enforced_rpm"),
+            "recommended_rpm": execution.rate_state.get("recommended_rpm"),
             "timescale_rows": int(rows_written),
             "timescale_price_adjustment_rows": int(price_adjustment_rows),
             "timescale_audit_rows": int(audits_written),
@@ -385,15 +418,16 @@ def run_yfinance_missing_ohlcv_pipeline(
         },
     )
     limiter = build_provider_rate_limiter(settings)
-    candle_provider = provider or YFinanceDailyProvider(auto_adjust=False)
-    frames, failures = _fetch_yfinance_daily_batches_with_controls(
-        provider=candle_provider,
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
         rows=fetch_plan.to_dict(orient="records"),
         limiter=limiter,
         db=db,
         run_id=str(run_id),
         batch_size=max(batch_size, 1),
+        settings=settings,
     )
+    frames, failures = execution.frames, execution.failures
     ohlcv = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     failures_frame = pd.DataFrame(failures, columns=["symbol", "instrument_key", "error"])
     fetch_coverage = build_daily_fetch_coverage(planned, ohlcv, failures_frame)
@@ -416,31 +450,43 @@ def run_yfinance_missing_ohlcv_pipeline(
     fetch_coverage.to_csv(fetch_coverage_output, index=False)
 
     rows_written = (
-        db.upsert_daily_ohlcv(ohlcv, exchange=exchange, source="yfinance")
+        _retry_database_write(
+            lambda: db.upsert_daily_ohlcv(ohlcv, exchange=exchange, source="yfinance")
+        )
         if not ohlcv.empty
         else 0
     )
     price_adjustment_rows = (
-        db.upsert_daily_price_adjustments(ohlcv, exchange=exchange, source="yfinance")
+        _retry_database_write(
+            lambda: db.upsert_daily_price_adjustments(
+                ohlcv,
+                exchange=exchange,
+                source="yfinance",
+            )
+        )
         if not ohlcv.empty
         else 0
     )
     audits_written = (
-        db.insert_data_quality_audits(
-            audit,
-            dataset_name=f"yfinance_{universe_id}_missing_daily_ohlcv",
-            source="yfinance",
-            interval="1d",
+        _retry_database_write(
+            lambda: db.insert_data_quality_audits(
+                audit,
+                dataset_name=f"yfinance_{universe_id}_missing_daily_ohlcv",
+                source="yfinance",
+                interval="1d",
+            )
         )
         if not audit.empty
         else 0
     )
     fetch_coverage_rows = (
-        db.insert_daily_ohlcv_fetch_coverage(
-            str(run_id),
-            fetch_coverage,
-            source="yfinance",
-            exchange=exchange,
+        _retry_database_write(
+            lambda: db.insert_daily_ohlcv_fetch_coverage(
+                str(run_id),
+                fetch_coverage,
+                source="yfinance",
+                exchange=exchange,
+            )
         )
         if not fetch_coverage.empty
         else 0
@@ -492,6 +538,19 @@ def run_yfinance_missing_ohlcv_pipeline(
             "fetched_rows": int(len(ohlcv)),
             "failure_rows": int(len(failures)),
             "batch_size": int(max(batch_size, 1)),
+            "effective_batch_size": int(min(max(batch_size, 1), settings.yfinance_minimum_rpm)),
+            "yahoo_attempts": execution.attempts,
+            "retried_tickers": execution.retried_tickers,
+            "partial_batches": execution.partial_batches,
+            "ticker_outcomes": len(execution.ticker_outcomes),
+            "yfinance_concurrency": execution.rate_state.get("enforced_concurrency"),
+            "recommended_concurrency": execution.rate_state.get(
+                "recommended_concurrency"
+            ),
+            "worker_capacity": settings.yfinance_maximum_concurrency,
+            "adaptive_rate_mode": execution.rate_state.get("mode"),
+            "enforced_rpm": execution.rate_state.get("enforced_rpm"),
+            "recommended_rpm": execution.rate_state.get("recommended_rpm"),
             "timescale_rows": int(rows_written),
             "timescale_price_adjustment_rows": int(price_adjustment_rows),
             "timescale_audit_rows": int(audits_written),
@@ -515,95 +574,72 @@ def _fetch_yfinance_daily_batches_with_controls(
     run_id: str | None,
     batch_size: int,
 ) -> tuple[list[pd.DataFrame], list[dict[str, str]]]:
-    frames: list[pd.DataFrame] = []
-    failures: list[dict[str, str]] = []
-    for batch in _yfinance_batches(rows, batch_size=max(batch_size, 1)):
-        start = _parse_pipeline_date(str(batch[0]["fetch_start"]), "fetch_start")
-        end = _parse_pipeline_date(str(batch[0]["fetch_end"]), "fetch_end")
-        symbols = [
-            {
-                "symbol": str(row["symbol"]),
-                "instrument_key": str(row["instrument_key"]),
-                "yahoo_symbol": str(row["yahoo_symbol"]),
-            }
-            for row in batch
-        ]
-        decision = limiter.acquire("yfinance", "download")
-        started = perf_counter()
-        status = "success"
-        error_message = ""
-        try:
-            frame = provider.fetch_daily_ohlcv(symbols, start=start, end=end)
-            if not frame.empty:
-                frames.append(frame)
-        except Exception as exc:
-            status = "error"
-            error_message = str(exc)
-            for row in batch:
-                failures.append(
-                    {
-                        "symbol": str(row["symbol"]),
-                        "instrument_key": str(row["instrument_key"]),
-                        "error": error_message,
-                    }
-                )
-        finally:
-            duration_ms = (perf_counter() - started) * 1000
-            _record_yfinance_request(
-                db=db,
-                run_id=run_id,
-                batch=batch,
-                start=start,
-                end=end,
-                status=status,
-                error_message=error_message,
-                rate_limited=decision.rate_limited,
-                wait_seconds=decision.wait_seconds,
-                duration_ms=duration_ms,
-            )
-    return frames, failures
+    execution = _execute_yfinance_daily_batches_with_controls(
+        provider=provider,
+        rows=rows,
+        limiter=limiter,
+        db=db,
+        run_id=run_id,
+        batch_size=batch_size,
+        settings=get_settings(),
+    )
+    return execution.frames, execution.failures
 
 
-def _record_yfinance_request(
+def _execute_yfinance_daily_batches_with_controls(
+    provider: YFinanceBatchProvider | None,
+    rows: list[dict[str, Any]],
+    limiter: ProviderRateLimiter,
     db: TimescaleStore | None,
     run_id: str | None,
-    batch: list[dict[str, Any]],
-    start: date,
-    end: date,
-    status: str,
-    error_message: str,
-    rate_limited: bool,
-    wait_seconds: float,
-    duration_ms: float,
-) -> None:
-    if db is None:
-        return
-    symbols = [str(row["yahoo_symbol"]) for row in batch]
-    try:
-        db.insert_provider_request_logs(
-            [
-                {
-                    "run_id": run_id,
-                    "provider": "yfinance",
-                    "endpoint_group": "download",
-                    "request_key": f"{','.join(symbols)}:1d:{start.isoformat()}:{end.isoformat()}",
-                    "instrument_key": ",".join(str(row["instrument_key"]) for row in batch),
-                    "symbol": ",".join(str(row["symbol"]) for row in batch),
-                    "interval": "1d",
-                    "window_start": start,
-                    "window_end": end,
-                    "status": status,
-                    "error_message": error_message,
-                    "retry_count": 0,
-                    "rate_limited": rate_limited,
-                    "wait_seconds": wait_seconds,
-                    "duration_ms": duration_ms,
-                    "created_at": datetime.now(UTC),
-                }
-            ]
+    batch_size: int,
+    settings: Settings,
+) -> YahooExecutionSummary:
+    effective_batch_size = min(max(batch_size, 1), settings.yfinance_minimum_rpm)
+    tasks = []
+    for index, batch in enumerate(_yfinance_batches(rows, batch_size=effective_batch_size)):
+        start = _parse_pipeline_date(str(batch[0]["fetch_start"]), "fetch_start")
+        end = _parse_pipeline_date(str(batch[0]["fetch_end"]), "fetch_end")
+        tasks.append(
+            YahooDailyBatchTask(
+                index=index,
+                rows=batch,
+                start=start,
+                end=end,
+                run_id=run_id,
+            )
         )
-    except Exception:
-        return
+
+    governor = YahooAdaptiveRateGovernor(settings, limiter, db)
+    executor = YahooDailyExecutor(
+        provider_factory=(
+            (lambda: provider)
+            if provider is not None
+            else (lambda: YFinanceDailyProvider(auto_adjust=False))
+        ),
+        limiter=limiter,
+        governor=governor,
+        max_workers=governor.concurrency,
+        worker_capacity=settings.yfinance_maximum_concurrency,
+        maximum_attempts=settings.yfinance_immediate_retry_attempts,
+        retry_wait_multiplier_seconds=settings.yfinance_retry_wait_multiplier_seconds,
+        retry_wait_max_seconds=settings.yfinance_retry_wait_max_seconds,
+    )
+    execution = executor.execute(tasks)
+    if db is not None and execution.request_logs:
+        _retry_database_write(
+            lambda: db.insert_provider_request_logs(execution.request_logs)
+        )
+    return execution
+
+
+def _retry_database_write(operation: Callable[[], int]) -> int:
+    retryer = Retrying(
+        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(multiplier=0.25, max=2.0),
+        reraise=True,
+    )
+    return int(retryer(operation))
 
 
 def _yfinance_mapping(universe: str) -> pd.DataFrame:
