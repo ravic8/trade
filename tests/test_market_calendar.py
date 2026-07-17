@@ -1,14 +1,20 @@
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
+import trade_research.market_calendar as market_calendar_module
 from trade_research.market_calendar import (
     NSE_FALLBACK_CLOSED_DATES,
     ExchangeHolidays,
+    MarketCalendarError,
     build_us_exchange_holidays,
     expected_trading_dates,
     fetch_exchange_holidays,
+    fetch_nse_holidays,
     parse_tsx_holidays,
     session_decision,
+    validated_exchange_calendar_years,
 )
 
 
@@ -110,6 +116,51 @@ def test_nse_fallback_holidays_include_2025_trading_closures() -> None:
     assert datetime(2025, 8, 27).date() in holidays
     assert datetime(2025, 10, 2).date() in holidays
     assert datetime(2025, 12, 25).date() in holidays
+
+
+def test_exchange_calendar_range_rejects_year_one() -> None:
+    with pytest.raises(ValueError, match="earlier than 1990"):
+        validated_exchange_calendar_years(
+            date(1, 1, 1),
+            date(2026, 1, 1),
+            reference_date=date(2026, 7, 17),
+        )
+
+
+def test_exchange_calendar_range_rejects_excessive_span() -> None:
+    with pytest.raises(ValueError, match="at most 21 calendar years"):
+        validated_exchange_calendar_years(
+            date(1990, 1, 1),
+            date(2011, 1, 1),
+            reference_date=date(2026, 7, 17),
+        )
+
+
+def test_nse_holiday_fetch_rejects_an_unavailable_year(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"CM": [{"tradingDate": "26-Jan-2026"}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def get(self, url: str) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(market_calendar_module.httpx, "Client", FakeClient)
+
+    with pytest.raises(MarketCalendarError, match="unavailable for 2024"):
+        fetch_nse_holidays(2024)
 
 
 def test_session_decision_skips_exchange_holiday(monkeypatch) -> None:

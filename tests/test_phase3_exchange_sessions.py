@@ -18,6 +18,7 @@ from trade_research.exchange_sessions import (
 from trade_research.market_calendar import ExchangeHolidays
 from trade_research.pipelines import exchange_sessions as exchange_sessions_pipeline
 from trade_research.pipelines.exchange_sessions import (
+    _stored_holiday_records,
     run_exchange_session_materialization_pipeline,
 )
 from trade_research.pipelines.yfinance_daily import _build_yfinance_missing_fetch_plan
@@ -27,6 +28,7 @@ class MemorySessionStore:
     def __init__(self, sessions=None) -> None:
         self.sessions = sessions or []
         self.holidays: dict[tuple[str, int], dict] = {}
+        self.observed_dates: set[date] = set()
 
     def exchange_sessions(self, exchange: str, start_date: date, end_date: date):
         return [
@@ -91,6 +93,20 @@ class MemorySessionStore:
         deleted = len(self.sessions) - len(retained)
         self.sessions = retained
         return deleted
+
+    def observed_daily_session_dates(
+        self,
+        exchange: str,
+        start_date: date,
+        end_date: date,
+        *,
+        minimum_instruments: int = 10,
+    ) -> set[date]:
+        return {
+            value
+            for value in self.observed_dates
+            if start_date <= value <= end_date
+        }
 
 
 def test_phase3_defaults_keep_planning_in_shadow_mode() -> None:
@@ -248,6 +264,50 @@ def test_materialized_resolution_requires_every_calendar_date() -> None:
         )
 
 
+def test_empty_stored_holiday_record_is_not_used_for_legacy_resolution() -> None:
+    store = MemorySessionStore()
+    store.holidays[("NSE", 2024)] = {
+        "closed_dates": [],
+        "early_close_dates": [],
+        "source_url": "poisoned-empty-record",
+    }
+
+    resolution = resolve_expected_session_dates(
+        store,
+        "NSE",
+        date(2024, 1, 25),
+        date(2024, 1, 26),
+        use_materialized_sessions=False,
+    )
+
+    assert resolution.source == "weekdays_only_fallback"
+    assert resolution.dates == (date(2024, 1, 25), date(2024, 1, 26))
+
+
+def test_expected_session_resolution_rejects_year_one() -> None:
+    with pytest.raises(ValueError, match="earlier than 1990"):
+        resolve_expected_session_dates(
+            MemorySessionStore(),
+            "NSE",
+            date(1, 1, 1),
+            date(2026, 1, 1),
+            use_materialized_sessions=True,
+        )
+
+
+def test_empty_stored_holiday_record_is_excluded_from_shadow_input() -> None:
+    store = MemorySessionStore()
+    store.holidays[("NSE", 2024)] = {
+        "closed_dates": [],
+        "early_close_dates": [],
+        "source_url": "poisoned-empty-record",
+    }
+
+    records = _stored_holiday_records(store, "NSE", 2024, 2024)
+
+    assert records == {}
+
+
 def test_session_classification_respects_close_and_provider_grace() -> None:
     session = next(
         item
@@ -391,6 +451,99 @@ def test_materialization_pipeline_persists_valid_full_year(monkeypatch) -> None:
     assert result.metrics["shadow_discrepancy_count"] == 0
     assert result.metrics["planning_enabled"] is False
     assert len(store.sessions) == 365
+
+
+def test_materialization_ignores_poisoned_empty_year_and_keeps_special_sessions(
+    monkeypatch,
+) -> None:
+    store = MemorySessionStore()
+    store.holidays[("NSE", 2024)] = {
+        "closed_dates": [],
+        "early_close_dates": [],
+        "source_url": "poisoned-empty-record",
+    }
+    store.holidays[("NSE", 2025)] = {
+        "closed_dates": [
+            value.isoformat()
+            for value in sorted(
+                {
+                    date(2025, 2, 26),
+                    date(2025, 3, 14),
+                    date(2025, 3, 31),
+                    date(2025, 4, 10),
+                    date(2025, 4, 14),
+                    date(2025, 4, 18),
+                    date(2025, 5, 1),
+                    date(2025, 8, 15),
+                    date(2025, 8, 27),
+                    date(2025, 10, 2),
+                    date(2025, 10, 21),
+                    date(2025, 10, 22),
+                    date(2025, 11, 5),
+                    date(2025, 12, 25),
+                }
+            )
+        ],
+        "early_close_dates": [],
+        "source_url": "valid-2025-fallback",
+    }
+    store.observed_dates = {
+        date(2024, 11, 1),
+        date(2025, 2, 1),
+        date(2025, 10, 21),
+        date(2026, 2, 1),
+    }
+    monkeypatch.setattr(
+        exchange_sessions_pipeline,
+        "get_settings",
+        lambda: Settings(_env_file=None),
+    )
+
+    result = run_exchange_session_materialization_pipeline(
+        "NSE",
+        repository=store,
+        as_of_date=date(2026, 7, 17),
+        history_years=2,
+        future_years=0,
+        holiday_loader=lambda exchange, year: ExchangeHolidays(
+            closed_dates=frozenset(
+                {
+                    date(2026, 1, 15),
+                    date(2026, 1, 26),
+                    date(2026, 2, 15),
+                    date(2026, 3, 3),
+                    date(2026, 3, 4),
+                    date(2026, 3, 26),
+                    date(2026, 3, 31),
+                    date(2026, 4, 3),
+                    date(2026, 4, 14),
+                    date(2026, 5, 1),
+                    date(2026, 5, 28),
+                    date(2026, 6, 26),
+                    date(2026, 9, 14),
+                    date(2026, 10, 2),
+                    date(2026, 10, 20),
+                    date(2026, 11, 10),
+                    date(2026, 11, 24),
+                    date(2026, 12, 25),
+                }
+            ),
+            early_close_dates=frozenset(),
+            source_url="official-test",
+        ),
+        generated_at=datetime(2026, 7, 17, tzinfo=UTC),
+        trigger="test",
+    )
+
+    assert result.status == "warn"
+    assert result.rows == 1096
+    assert result.metrics["shadow_compared_years"] == [2025, 2026]
+    assert result.metrics["shadow_discrepancy_count"] == 3
+    assert result.metrics["shadow_materialized_only_dates"] == [
+        "2025-02-01",
+        "2025-10-21",
+        "2026-02-01",
+    ]
 
 
 def test_materialization_pipeline_skips_an_incomplete_future_year(monkeypatch) -> None:

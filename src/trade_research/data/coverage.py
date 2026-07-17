@@ -10,7 +10,11 @@ from trade_research.exchange_sessions import (
     expected_dates_for_instrument,
     resolve_expected_session_dates,
 )
-from trade_research.market_calendar import ExchangeHolidays, expected_trading_dates
+from trade_research.market_calendar import (
+    ExchangeHolidays,
+    expected_trading_dates,
+    validated_exchange_calendar_years,
+)
 
 
 class DailyCoverageStore(Protocol):
@@ -205,6 +209,7 @@ def _validate_daily_request(request: CoveragePreviewInput) -> None:
         raise ValueError("Only daily candles are supported for the MVP.")
     if request.start_date > request.end_date:
         raise ValueError("start_date must be on or before end_date.")
+    validated_exchange_calendar_years(request.start_date, request.end_date)
     if not _normalize_symbols(request.symbols):
         raise ValueError("At least one symbol is required.")
 

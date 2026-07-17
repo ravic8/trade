@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 import trade_research.data.coverage as coverage_module
 from trade_research.config import Settings
 from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
@@ -242,6 +244,22 @@ def test_daily_coverage_preview_rejects_non_daily_request() -> None:
         assert "Only daily candles" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_daily_coverage_preview_rejects_year_one_before_store_access() -> None:
+    with pytest.raises(ValueError, match="earlier than 1990"):
+        build_daily_coverage_preview(
+            CoveragePreviewInput(
+                provider="upstox",
+                exchange="NSE",
+                symbols=("AAA",),
+                unit="days",
+                interval=1,
+                start_date=date(1, 1, 1),
+                end_date=date(2026, 1, 2),
+            ),
+            store=FakeCoverageStore(),
+        )
 
 
 def test_daily_coverage_preview_switches_to_materialized_sessions(monkeypatch) -> None:

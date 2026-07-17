@@ -30,7 +30,10 @@ from trade_research.exchange_sessions import (
     expected_dates_for_instrument,
     resolve_expected_session_dates,
 )
-from trade_research.market_calendar import fetch_exchange_holidays
+from trade_research.market_calendar import (
+    fetch_exchange_holidays,
+    validated_exchange_calendar_years,
+)
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.research.ml_artifacts import MLArtifactReader
@@ -1554,12 +1557,11 @@ def _ensure_exchange_holidays(
     if exchange.upper() not in {"NSE", "TSX", "US", "CA"}:
         return
 
-    for year in range(start_date.year, end_date.year + 1):
+    for year in validated_exchange_calendar_years(start_date, end_date):
         cached = store.exchange_holidays(exchange, year)
         if cached is not None and (
             cached.get("closed_dates")
             or cached.get("early_close_dates")
-            or cached.get("source_url")
         ):
             continue
         try:

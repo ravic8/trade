@@ -51,7 +51,7 @@ class _FakeTimescaleStore:
         return {
             "exchange": exchange,
             "year": year,
-            "closed_dates": [],
+            "closed_dates": [f"{year}-01-01"],
             "early_close_dates": [],
             "source_url": "test-calendar",
         }

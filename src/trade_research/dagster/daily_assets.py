@@ -33,6 +33,7 @@ from trade_research.validation import resolve_latest_expected_trading_date
 def nse_exchange_sessions(context) -> PipelineRunResult:
     result = run_exchange_session_materialization_pipeline("NSE", trigger="dagster")
     context.add_output_metadata(_result_metadata(result))
+    _assert_pipeline_not_failed(result)
     return result
 
 
@@ -44,6 +45,7 @@ def nse_exchange_sessions(context) -> PipelineRunResult:
 def tsx_exchange_sessions(context) -> PipelineRunResult:
     result = run_exchange_session_materialization_pipeline("TSX", trigger="dagster")
     context.add_output_metadata(_result_metadata(result))
+    _assert_pipeline_not_failed(result)
     return result
 
 
@@ -55,6 +57,7 @@ def tsx_exchange_sessions(context) -> PipelineRunResult:
 def us_exchange_sessions(context) -> PipelineRunResult:
     result = run_exchange_session_materialization_pipeline("US", trigger="dagster")
     context.add_output_metadata(_result_metadata(result))
+    _assert_pipeline_not_failed(result)
     return result
 
 
@@ -386,6 +389,11 @@ def daily_pipeline_health(
 def _assert_upstream_not_failed(result: PipelineRunResult) -> None:
     if result.status == "fail":
         raise RuntimeError(f"Upstream pipeline failed: {result.name}")
+
+
+def _assert_pipeline_not_failed(result: PipelineRunResult) -> None:
+    if result.status == "fail":
+        raise RuntimeError(f"Pipeline failed: {result.name}")
 
 
 def _result_metadata(result: PipelineRunResult) -> dict[str, Any]:

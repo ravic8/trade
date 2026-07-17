@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trade_research.api.app import app
@@ -97,10 +98,11 @@ class FakeCoverageStore:
         max_age_days: int | None = None,
     ) -> dict:
         closed_dates = ["2026-01-05"] if exchange == "NSE" else []
+        early_close_dates = [] if exchange == "NSE" else ["2026-12-24"]
         return {
             "source_url": "test",
             "closed_dates": closed_dates,
-            "early_close_dates": [],
+            "early_close_dates": early_close_dates,
             "year": year,
         }
 
@@ -712,6 +714,33 @@ def test_data_coverage_preview_endpoint(monkeypatch) -> None:
     assert payload["tasks"][0]["fetch_start"] == "2026-01-06"
 
 
+def test_data_coverage_preview_rejects_year_one_before_holiday_fetch(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr(
+        "trade_research.api.app.fetch_exchange_holidays",
+        lambda exchange, year: pytest.fail("holiday fetch must not run"),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/data/coverage/preview",
+            json={
+                "provider": "upstox",
+                "exchange": "NSE",
+                "symbols": ["AAA"],
+                "unit": "days",
+                "interval": 1,
+                "start_date": "0001-01-01",
+                "end_date": "2026-01-06",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "earlier than 1990" in response.json()["detail"]
+
+
 def test_data_coverage_preview_fetches_missing_holiday_calendar(monkeypatch) -> None:
     store = ColdHolidayStore()
     monkeypatch.setattr("trade_research.api.app._store", lambda: store)
@@ -791,6 +820,24 @@ def test_data_availability_endpoint(monkeypatch) -> None:
     assert payload["rows"][0]["expected_rows"] == 3
     assert payload["rows"][0]["coverage_status"] == "partial"
     assert payload["rows"][0]["last_successful_run"] == "run-1"
+
+
+def test_data_availability_rejects_year_one_before_holiday_fetch(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr(
+        "trade_research.api.app.fetch_exchange_holidays",
+        lambda exchange, year: pytest.fail("holiday fetch must not run"),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?provider=upstox&exchange=NSE&interval=1d"
+            "&start_date=0001-01-01&end_date=2026-01-06"
+        )
+
+    assert response.status_code == 400
+    assert "earlier than 1990" in response.json()["detail"]
 
 
 def test_data_availability_supports_yfinance_seeded_universe(monkeypatch) -> None:

@@ -14,6 +14,7 @@ from trade_research.market_calendar import (
     EXCHANGE_CONFIGS,
     ExchangeHolidays,
     expected_trading_dates,
+    validated_exchange_calendar_years,
 )
 
 PANDAS_MARKET_CALENDARS_SOURCE_URL = (
@@ -319,6 +320,7 @@ def resolve_expected_session_dates(
     *,
     use_materialized_sessions: bool,
 ) -> ExpectedSessionResolution:
+    validated_exchange_calendar_years(start_date, end_date)
     canonical_exchange = canonical_equity_exchange(exchange)
     if use_materialized_sessions:
         rows = store.exchange_sessions(canonical_exchange, start_date, end_date)
@@ -395,7 +397,7 @@ def _stored_holidays(
     source_url = ""
     for year in range(start_date.year, end_date.year + 1):
         row = store.exchange_holidays(exchange, year)
-        if row is None:
+        if row is None or not _holiday_row_has_dates(row):
             return None
         source_url = str(row.get("source_url") or source_url)
         closed_dates.update(date.fromisoformat(value) for value in row.get("closed_dates", []))
@@ -407,6 +409,10 @@ def _stored_holidays(
         early_close_dates=frozenset(early_close_dates),
         source_url=source_url,
     )
+
+
+def _holiday_row_has_dates(row: Mapping[str, Any]) -> bool:
+    return bool(row.get("closed_dates") or row.get("early_close_dates"))
 
 
 def _session_mapping(

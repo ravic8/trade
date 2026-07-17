@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -15,7 +16,11 @@ from trade_research.exchange_sessions import (
     expected_dates_for_instrument,
     resolve_expected_session_dates,
 )
-from trade_research.market_calendar import fetch_exchange_holidays
+from trade_research.market_calendar import (
+    MarketCalendarError,
+    fetch_exchange_holidays,
+    validated_exchange_calendar_years,
+)
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.daily_ohlcv import (
     build_daily_fetch_coverage,
@@ -27,6 +32,8 @@ from trade_research.universe import (
     yfinance_universe,
     yfinance_universe_id,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class YFinanceBatchProvider(Protocol):
@@ -770,15 +777,23 @@ def _ensure_exchange_holidays(
     if exchange.upper() not in {"NSE", "TSX", "US", "CA"}:
         return
 
-    for year in range(start_date.year, end_date.year + 1):
+    for year in validated_exchange_calendar_years(start_date, end_date):
         cached = store.exchange_holidays(exchange, year)
         if cached is not None and (
             cached.get("closed_dates")
             or cached.get("early_close_dates")
-            or cached.get("source_url")
         ):
             continue
-        holidays = fetch_exchange_holidays(exchange, year)
+        try:
+            holidays = fetch_exchange_holidays(exchange, year)
+        except MarketCalendarError as exc:
+            logger.warning(
+                "exchange holiday calendar unavailable exchange=%s year=%s error=%s",
+                exchange,
+                year,
+                exc,
+            )
+            continue
         store.upsert_exchange_holidays(
             exchange=exchange,
             year=year,

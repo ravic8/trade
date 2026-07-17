@@ -196,6 +196,32 @@ def test_exchange_session_assets_materialize_canonical_exchanges(monkeypatch) ->
     ]
 
 
+@pytest.mark.parametrize(
+    ("asset_name", "exchange"),
+    [
+        ("nse_exchange_sessions", "NSE"),
+        ("tsx_exchange_sessions", "TSX"),
+        ("us_exchange_sessions", "US"),
+    ],
+)
+def test_exchange_session_assets_raise_when_materialization_fails(
+    monkeypatch,
+    asset_name: str,
+    exchange: str,
+) -> None:
+    monkeypatch.setattr(
+        daily_assets,
+        "run_exchange_session_materialization_pipeline",
+        lambda actual_exchange, *, trigger: _result(
+            f"{actual_exchange.lower()}_exchange_sessions",
+            status="fail",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=f"Pipeline failed: {exchange.lower()}"):
+        getattr(daily_assets, asset_name)(dagster.build_op_context())
+
+
 def test_dukascopy_intraday_asset_stores_to_timescale(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

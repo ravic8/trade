@@ -238,6 +238,25 @@ Primary key: `(exchange, session_date)`.
 Populate the previous ten years, current year, and at least the next year when
 available. Refresh monthly and at year rollover.
 
+Calendar inputs fail closed. Interactive and pipeline calendar requests accept
+years from 1990 through the next calendar year and at most 21 inclusive calendar
+years per request. An official source response with no closed or early-close
+dates is unavailable data, not a valid empty calendar. Empty cached holiday
+records are ignored by legacy resolution and shadow comparison, and must never
+block a valid materialized calendar. A failed materialization raises from its
+Dagster asset so the orchestrator records a failed run rather than a successful
+asset containing failure metadata.
+
+If an older deployment cached empty NSE records, remove only records where both
+date arrays are empty after deploying these guards and taking a database backup:
+
+```sql
+DELETE FROM exchange_holidays
+WHERE exchange = 'NSE'
+  AND json_array_length(closed_dates) = 0
+  AND json_array_length(early_close_dates) = 0;
+```
+
 Expected dates per instrument:
 
 ```text
