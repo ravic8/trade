@@ -4,6 +4,7 @@ set -Eeuo pipefail
 APP_DIR="${TRADE_APP_DIR:-/opt/trade/app}"
 ENV_FILE="${TRADE_ENV_FILE:-/opt/trade/.env}"
 BRANCH="${TRADE_DEPLOY_BRANCH:-main}"
+DEPLOY_REEXECUTED="${TRADE_DEPLOY_REEXECUTED:-false}"
 
 log() {
   printf '[trade-deploy] %s\n' "$*"
@@ -53,10 +54,18 @@ mkdir_from_var "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}"
 
 cd "$APP_DIR"
 
+starting_revision="$(git rev-parse HEAD)"
 log "updating $BRANCH in $APP_DIR"
 git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
+synchronized_revision="$(git rev-parse HEAD)"
+
+if [[ "$DEPLOY_REEXECUTED" != true \
+  && "$starting_revision" != "$synchronized_revision" ]]; then
+  log "restarting deployment with synchronized script at $synchronized_revision"
+  exec env TRADE_DEPLOY_REEXECUTED=true "$APP_DIR/deploy/deploy.sh"
+fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.yml")
 

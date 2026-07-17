@@ -308,6 +308,7 @@ After a PR is merged to `main`:
 GitHub Actions CI succeeds on main
   -> joins Tailscale
   -> SSHes to Ubuntu
+  -> synchronizes the checkout to origin/main
   -> runs deploy/deploy.sh
 ```
 
@@ -331,7 +332,9 @@ can add image tagging and automatic rollback.
 
 The deploy workflow is implemented in `.github/workflows/deploy.yml`. It runs
 after the `CI` workflow succeeds on `main`, and it can also be started manually
-with `workflow_dispatch`.
+with `workflow_dispatch`. The remote command synchronizes `main` before invoking
+the deployment script, so a change to `deploy/deploy.sh` is active during the
+same release that introduces it.
 
 The implemented script defaults to:
 
@@ -343,10 +346,13 @@ deploy/deploy.sh
 ```
 
 It loads `/opt/trade/.env`, creates the configured persistent directories,
-validates compose config, and builds images. It then starts PostgreSQL, waits
-for database readiness, and applies Alembic migrations from a one-off container
-using the newly built API image. Application containers are replaced only
-after migration succeeds. A migration failure leaves the prior application
+and synchronizes the configured deployment branch. When that synchronization
+changes the checked-out revision during a manual invocation, the script
+re-executes itself once from the synchronized revision before making deployment
+changes. It then validates compose config and builds images, starts PostgreSQL,
+waits for database readiness, and applies Alembic migrations from a one-off
+container using the newly built API image. Application containers are replaced
+only after migration succeeds. A migration failure leaves the prior application
 release running and fails the deployment. Finally, it checks
 `http://localhost:${PROD_WEB_PORT:-8080}/api/health`.
 
