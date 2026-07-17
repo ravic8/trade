@@ -342,6 +342,12 @@ It loads `/opt/trade/.env`, creates the configured persistent directories,
 validates compose config, builds images, starts the stack, and checks
 `http://localhost:${PROD_WEB_PORT:-8080}/api/health`.
 
+The private Dagster webserver remains opt-in through the `admin` Compose
+profile. If it is already running when a deployment starts, the deploy script
+also rebuilds and recreates it with the current release image and verifies its
+loopback-only HTTP endpoint. A stopped or never-started admin webserver remains
+stopped, so routine deployments do not enable the administrative UI.
+
 ## Persistent Server Paths
 
 Use stable server-owned paths outside the git checkout:
