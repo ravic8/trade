@@ -47,8 +47,16 @@ docker compose -f docker-compose.prod.yml up -d postgres redis qdrant api dagste
 If using the admin Dagster UI:
 
 ```bash
-docker compose -f docker-compose.prod.yml --profile admin up -d dagster-webserver
+docker compose -f docker-compose.prod.yml --profile admin up -d \
+  --build \
+  --no-deps \
+  dagster-webserver
 ```
+
+Once the admin webserver is running, `deploy/deploy.sh` detects it and includes
+its image refresh, container recreation, and loopback HTTP check in subsequent
+deployments. The deploy script does not start the admin profile when it is
+stopped.
 
 ### 2. Initialize Schema
 
