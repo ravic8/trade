@@ -60,6 +60,7 @@ exit 0
     )
 
     env = os.environ.copy()
+    env.pop("TRADE_DEPLOY_REEXECUTED", None)
     env.update(
         {
             "PATH": f"{fake_bin}:{env['PATH']}",
@@ -173,6 +174,94 @@ exit 0
     docker_calls = docker_log.read_text(encoding="utf-8")
     assert "run --rm --no-deps api alembic" in docker_calls
     assert "up -d --remove-orphans" not in docker_calls
+
+
+def test_deploy_reexecutes_synchronized_script_after_revision_change(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    revision_state = tmp_path / "revision"
+    docker_log = tmp_path / "docker.log"
+
+    _write_executable(
+        fake_bin / "git",
+        """#!/usr/bin/env bash
+if [[ "$1" == "rev-parse" && "$2" == "HEAD" ]]; then
+  if [[ -f "$FAKE_REVISION_STATE" ]]; then
+    printf '%s\n' 'new-revision'
+  else
+    printf '%s\n' 'old-revision'
+  fi
+elif [[ "$1" == "pull" ]]; then
+  printf '%s\n' 'new-revision' > "$FAKE_REVISION_STATE"
+fi
+exit 0
+""",
+    )
+    _write_executable(
+        fake_bin / "docker",
+        """#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+exit 0
+""",
+    )
+    _write_executable(fake_bin / "curl", "#!/usr/bin/env bash\nexit 0\n")
+
+    env_file = tmp_path / "production.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
+                f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
+                f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
+                f"PROD_REDIS_DATA_DIR={tmp_path / 'redis'}",
+                f"PROD_QDRANT_DATA_DIR={tmp_path / 'qdrant'}",
+                f"PROD_DAGSTER_HOME_DIR={tmp_path / 'dagster-home'}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.pop("TRADE_DEPLOY_REEXECUTED", None)
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TRADE_APP_DIR": str(repository_root),
+            "TRADE_ENV_FILE": str(env_file),
+            "FAKE_REVISION_STATE": str(revision_state),
+            "FAKE_DOCKER_LOG": str(docker_log),
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(repository_root / "deploy/deploy.sh")],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.stdout.count(
+        "restarting deployment with synchronized script at new-revision"
+    ) == 1
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert docker_calls.count(" build\n") == 1
+    assert docker_calls.count("up -d --remove-orphans") == 1
+
+
+def test_deploy_workflow_syncs_main_before_invoking_deploy_script() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    workflow = (repository_root / ".github/workflows/deploy.yml").read_text(
+        encoding="utf-8"
+    )
+
+    fetch = workflow.index("git fetch origin main")
+    pull = workflow.index("git pull --ff-only origin main")
+    deploy = workflow.index("./deploy/deploy.sh")
+    assert fetch < pull < deploy
 
 
 def test_api_image_contains_alembic_runtime_files() -> None:

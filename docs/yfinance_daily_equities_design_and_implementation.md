@@ -860,6 +860,27 @@ Exit criteria:
 - A failed migration aborts deployment without replacing the prior release.
 - Legacy `symbols` rows gain lifecycle columns without data loss.
 
+### Phase 5.2: Deployment Self-Update Hardening
+
+The first Phase 5.1 deployment started the pre-hotfix `deploy.sh` and pulled its
+replacement while that shell process was already running. The running process
+continued with the old control flow, rebuilt the application, and skipped the
+new migration step. A second invocation from the synchronized checkout applied
+the migration successfully.
+
+Automated deployment now synchronizes the server checkout to `origin/main`
+before invoking `deploy.sh`. The script also records its starting revision and,
+when its own synchronization changes that revision, re-executes the synchronized
+script exactly once before building images or changing services. The workflow
+pre-sync protects automated releases immediately; the revision guard provides
+the same behavior for direct manual invocations.
+
+Exit criteria:
+
+- Automated deployment invokes the script from the release being deployed.
+- A manual deployment that pulls a new revision re-executes that revision once.
+- Re-execution cannot loop and deployment mutations occur only once.
+
 ### Phase 6: US Cutover
 
 - Replace `us_seed` scheduling with the persisted full active US universe.

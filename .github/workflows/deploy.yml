@@ -56,4 +56,4 @@ jobs:
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=6 \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "cd '${deploy_path}' && ./deploy/deploy.sh"
+            "cd '${deploy_path}' && git fetch origin main && git checkout main && git pull --ff-only origin main && ./deploy/deploy.sh"
