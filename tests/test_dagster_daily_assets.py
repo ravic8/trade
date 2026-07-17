@@ -196,6 +196,26 @@ def test_exchange_session_assets_materialize_canonical_exchanges(monkeypatch) ->
     ]
 
 
+def test_phase5_queue_assets_call_durable_pipelines(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_planner(*, trigger: str) -> object:
+        calls.append(("planner", trigger))
+        return _result("yfinance_daily_work_planner")
+
+    def fake_worker(*, trigger: str) -> object:
+        calls.append(("worker", trigger))
+        return _result("yfinance_daily_work_queue")
+
+    monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_planner", fake_planner)
+    monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_queue", fake_worker)
+
+    daily_assets.yfinance_daily_work_plan(dagster.build_op_context())
+    daily_assets.yfinance_daily_work_worker(dagster.build_op_context())
+
+    assert calls == [("planner", "dagster"), ("worker", "dagster")]
+
+
 @pytest.mark.parametrize(
     ("asset_name", "exchange"),
     [

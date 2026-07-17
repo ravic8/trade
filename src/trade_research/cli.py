@@ -41,6 +41,8 @@ from trade_research.pipelines import (
     run_upstox_daily_ohlcv_retry_pipeline,
     run_walk_forward_folds_v1_pipeline,
     run_yfinance_daily_ohlcv_pipeline,
+    run_yfinance_daily_work_planner,
+    run_yfinance_daily_work_queue,
     run_yfinance_intraday_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
 )
@@ -767,6 +769,76 @@ def fetch_yfinance_daily(
             "Stored fetch coverage rows: "
             f"{result.metrics['timescale_fetch_coverage_rows']}"
         )
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("plan-yfinance-daily-work")
+def plan_yfinance_daily_work(
+    exchanges: Annotated[
+        str,
+        typer.Option(help="Comma-separated exchanges: NSE, TSX, US."),
+    ] = "NSE,TSX,US",
+    incremental: Annotated[
+        bool,
+        typer.Option(help="Plan current daily incremental work."),
+    ] = True,
+    initial_backfill: Annotated[
+        bool,
+        typer.Option(help="Plan missing ten-year active-symbol work."),
+    ] = True,
+    gap_repair: Annotated[
+        bool,
+        typer.Option(help="Also plan explicit missing-gap repair work."),
+    ] = False,
+) -> None:
+    exchange_list = [
+        value.strip().upper() for value in exchanges.split(",") if value.strip()
+    ]
+    try:
+        result = run_yfinance_daily_work_planner(
+            exchanges=exchange_list,
+            include_incremental=incremental,
+            include_initial_backfill=initial_backfill,
+            include_gap_repair=gap_repair,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"Active symbols: {result.metrics['active_symbols']}")
+    console.print(
+        "Durable work: "
+        f"{result.metrics['work_inserted']} inserted, "
+        f"{result.metrics['duplicates_reused']} existing idempotent items reused"
+    )
+    console.print(f"Queue state: {result.metrics['queue']}")
+
+
+@app.command("run-yfinance-daily-worker")
+def run_yfinance_daily_worker(
+    claim_size: Annotated[
+        int | None,
+        typer.Option(min=1, max=1000, help="Maximum durable items to claim."),
+    ] = None,
+    worker_id: Annotated[
+        str | None,
+        typer.Option(help="Optional stable worker identity for diagnostics."),
+    ] = None,
+) -> None:
+    result = run_yfinance_daily_work_queue(
+        worker_id=worker_id,
+        claim_size=claim_size,
+        trigger="cli",
+    )
+    console.print(
+        "Yahoo durable worker: "
+        f"{result.metrics['claimed']} claimed, "
+        f"{result.metrics['succeeded']} succeeded, "
+        f"{result.metrics['retry_wait']} retry-wait, "
+        f"{result.metrics['terminal']} terminal"
+    )
+    console.print(f"OHLCV rows written: {result.metrics.get('ohlcv_rows_written', 0)}")
+    console.print(f"Queue state: {result.metrics['queue']}")
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
 

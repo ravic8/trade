@@ -33,6 +33,7 @@ from trade_research.schemas import Symbol
 from trade_research.targets.daily_forward import DAILY_FORWARD_TARGET_COLUMNS_V1_0
 
 if TYPE_CHECKING:
+    from trade_research.data.daily_work import DailyWorkItem
     from trade_research.universe.persisted import UniverseReconciliationPlan
 
 metadata = MetaData()
@@ -1650,6 +1651,283 @@ class TimescaleStore:
             row = connection.execute(query).mappings().first()
         return dict(row) if row is not None else None
 
+    def active_yfinance_daily_instruments(
+        self,
+        exchange: str,
+    ) -> list[dict[str, Any]]:
+        """Return active members of the exchange's latest accepted snapshot."""
+        exchange_code = exchange.upper()
+        latest = self.latest_accepted_universe_snapshot(exchange_code)
+        if latest is None:
+            return []
+        query = (
+            select(
+                symbols_table.c.canonical_instrument_id,
+                symbols_table.c.symbol,
+                symbols_table.c.exchange,
+                symbols_table.c.yahoo_symbol.label("provider_symbol"),
+            )
+            .select_from(
+                universe_snapshot_members_table.join(
+                    symbols_table,
+                    (
+                        universe_snapshot_members_table.c.exchange_symbol
+                        == symbols_table.c.symbol
+                    )
+                    & (symbols_table.c.exchange == exchange_code),
+                )
+            )
+            .where(
+                universe_snapshot_members_table.c.snapshot_id
+                == str(latest["snapshot_id"])
+            )
+            .where(symbols_table.c.is_active.is_(True))
+            .where(symbols_table.c.yahoo_symbol.is_not(None))
+            .where(symbols_table.c.canonical_instrument_id.is_not(None))
+            .order_by(symbols_table.c.symbol)
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def enqueue_pipeline_work_items(
+        self,
+        work_items: Iterable[Mapping[str, Any] | DailyWorkItem],
+    ) -> int:
+        rows = [
+            dict(item) if isinstance(item, Mapping) else item.as_row()
+            for item in work_items
+        ]
+        if not rows:
+            return 0
+        inserted = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                result = connection.execute(
+                    insert(pipeline_work_items_table)
+                    .values(chunk)
+                    .on_conflict_do_nothing(index_elements=["idempotency_key"])
+                    .returning(pipeline_work_items_table.c.work_item_id)
+                )
+                inserted += len(result.scalars().all())
+        return inserted
+
+    def claim_pipeline_work_items(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        at: datetime | None = None,
+        provider: str = "yfinance",
+    ) -> list[dict[str, Any]]:
+        """Atomically claim ready work using PostgreSQL SKIP LOCKED."""
+        if limit <= 0:
+            return []
+        now = _as_utc(at or datetime.now(UTC))
+        ready = (
+            (pipeline_work_items_table.c.status == "queued")
+            | (
+                (pipeline_work_items_table.c.status == "retry_wait")
+                & (
+                    (pipeline_work_items_table.c.next_attempt_at.is_(None))
+                    | (pipeline_work_items_table.c.next_attempt_at <= now)
+                )
+            )
+        )
+        query = (
+            pipeline_work_items_table.select()
+            .where(pipeline_work_items_table.c.provider == provider)
+            .where(ready)
+            .where(
+                pipeline_work_items_table.c.attempt_count
+                < pipeline_work_items_table.c.max_attempts
+            )
+            .order_by(
+                pipeline_work_items_table.c.priority,
+                pipeline_work_items_table.c.created_at,
+                pipeline_work_items_table.c.work_item_id,
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        claimed: list[dict[str, Any]] = []
+        with self.engine.begin() as connection:
+            rows = list(connection.execute(query).mappings())
+            for row in rows:
+                values = {
+                    "status": "running",
+                    "attempt_count": int(row["attempt_count"]) + 1,
+                    "locked_by": worker_id,
+                    "locked_at": now,
+                    "updated_at": now,
+                    "completed_at": None,
+                }
+                connection.execute(
+                    pipeline_work_items_table.update()
+                    .where(
+                        pipeline_work_items_table.c.work_item_id
+                        == row["work_item_id"]
+                    )
+                    .values(**values)
+                )
+                claimed.append({**dict(row), **values})
+        return claimed
+
+    def heartbeat_pipeline_work_items(
+        self,
+        *,
+        worker_id: str,
+        work_item_ids: Iterable[str],
+        at: datetime | None = None,
+    ) -> int:
+        ids = list(dict.fromkeys(str(value) for value in work_item_ids))
+        if not ids:
+            return 0
+        now = _as_utc(at or datetime.now(UTC))
+        statement = (
+            pipeline_work_items_table.update()
+            .where(pipeline_work_items_table.c.work_item_id.in_(ids))
+            .where(pipeline_work_items_table.c.status == "running")
+            .where(pipeline_work_items_table.c.locked_by == worker_id)
+            .values(locked_at=now, updated_at=now)
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+        return int(result.rowcount or 0)
+
+    def transition_pipeline_work_item(
+        self,
+        *,
+        work_item_id: str,
+        worker_id: str,
+        status: str,
+        status_code: int | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        run_id: str | None = None,
+        at: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        if status not in {"succeeded", "retry_wait", "terminal", "cancelled"}:
+            raise ValueError(f"Unsupported pipeline work transition: {status}")
+        from trade_research.data.daily_work import (
+            WORK_PRIORITIES,
+            durable_retry_delay,
+        )
+
+        now = _as_utc(at or datetime.now(UTC))
+        identity = pipeline_work_items_table.c.work_item_id == work_item_id
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                pipeline_work_items_table.select()
+                .where(identity)
+                .where(pipeline_work_items_table.c.status == "running")
+                .where(pipeline_work_items_table.c.locked_by == worker_id)
+                .with_for_update()
+            ).mappings().first()
+            if row is None:
+                return None
+            resolved_status = status
+            attempt_count = int(row["attempt_count"])
+            if status == "retry_wait" and attempt_count >= int(row["max_attempts"]):
+                resolved_status = "terminal"
+                error_code = error_code or "maximum_attempts_exhausted"
+            values: dict[str, Any] = {
+                "status": resolved_status,
+                "locked_by": None,
+                "locked_at": None,
+                "run_id": run_id,
+                "last_status_code": status_code,
+                "last_error_code": error_code,
+                "last_error_message": error_message,
+                "updated_at": now,
+                "completed_at": (
+                    now
+                    if resolved_status in {"succeeded", "terminal", "cancelled"}
+                    else None
+                ),
+                "next_attempt_at": (
+                    now + durable_retry_delay(attempt_count)
+                    if resolved_status == "retry_wait"
+                    else None
+                ),
+            }
+            if (
+                resolved_status == "retry_wait"
+                and row["work_type"] == "daily_incremental"
+            ):
+                values["priority"] = WORK_PRIORITIES["daily_incremental_retry"]
+            connection.execute(
+                pipeline_work_items_table.update().where(identity).values(**values)
+            )
+            return {**dict(row), **values}
+
+    def recover_stale_pipeline_work_items(
+        self,
+        *,
+        stale_before: datetime,
+        at: datetime | None = None,
+        provider: str = "yfinance",
+    ) -> int:
+        now = _as_utc(at or datetime.now(UTC))
+        statement = (
+            pipeline_work_items_table.update()
+            .where(pipeline_work_items_table.c.provider == provider)
+            .where(pipeline_work_items_table.c.status == "running")
+            .where(pipeline_work_items_table.c.locked_at < _as_utc(stale_before))
+            .values(
+                status=case(
+                    (
+                        pipeline_work_items_table.c.attempt_count
+                        >= pipeline_work_items_table.c.max_attempts,
+                        "terminal",
+                    ),
+                    else_="queued",
+                ),
+                next_attempt_at=case(
+                    (
+                        pipeline_work_items_table.c.attempt_count
+                        >= pipeline_work_items_table.c.max_attempts,
+                        None,
+                    ),
+                    else_=now,
+                ),
+                locked_by=None,
+                locked_at=None,
+                last_error_code="stale_lock_recovered",
+                last_error_message=(
+                    "Worker heartbeat expired; work was recovered or finalized."
+                ),
+                updated_at=now,
+                completed_at=case(
+                    (
+                        pipeline_work_items_table.c.attempt_count
+                        >= pipeline_work_items_table.c.max_attempts,
+                        now,
+                    ),
+                    else_=None,
+                ),
+            )
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+        return int(result.rowcount or 0)
+
+    def pipeline_work_queue_summary(
+        self,
+        *,
+        provider: str = "yfinance",
+    ) -> dict[str, int]:
+        query = (
+            select(
+                pipeline_work_items_table.c.status,
+                func.count().label("count"),
+            )
+            .where(pipeline_work_items_table.c.provider == provider)
+            .group_by(pipeline_work_items_table.c.status)
+        )
+        with self.engine.begin() as connection:
+            rows = connection.execute(query).all()
+        return {str(status): int(count) for status, count in rows}
+
     def observed_daily_session_dates(
         self,
         exchange: str,
@@ -2304,20 +2582,25 @@ class TimescaleStore:
         self,
         instrument_keys: list[str],
         source: str = "upstox",
+        *,
+        valid_only: bool = False,
     ) -> dict[str, date]:
         if not instrument_keys:
             return {}
+        query = (
+            select(
+                ohlcv_daily_table.c.instrument_key,
+                func.max(ohlcv_daily_table.c.date).label("latest_date"),
+            )
+            .where(ohlcv_daily_table.c.source == source)
+            .where(ohlcv_daily_table.c.instrument_key.in_(instrument_keys))
+            .group_by(ohlcv_daily_table.c.instrument_key)
+        )
+        if valid_only:
+            query = query.where(ohlcv_daily_table.c.quality_status == "ok")
         with self.engine.begin() as connection:
             rows = (
-                connection.execute(
-                    select(
-                        ohlcv_daily_table.c.instrument_key,
-                        func.max(ohlcv_daily_table.c.date).label("latest_date"),
-                    )
-                    .where(ohlcv_daily_table.c.source == source)
-                    .where(ohlcv_daily_table.c.instrument_key.in_(instrument_keys))
-                    .group_by(ohlcv_daily_table.c.instrument_key)
-                )
+                connection.execute(query)
                 .mappings()
                 .all()
             )
@@ -2360,6 +2643,8 @@ class TimescaleStore:
         end_date: date,
         source: str = "upstox",
         exchange: str = "NSE",
+        *,
+        valid_only: bool = False,
     ) -> dict[str, set[date]]:
         if not instrument_keys:
             return {}
@@ -2372,6 +2657,8 @@ class TimescaleStore:
             .where(ohlcv_daily_table.c.date <= end_date)
             .order_by(ohlcv_daily_table.c.instrument_key, ohlcv_daily_table.c.date)
         )
+        if valid_only:
+            query = query.where(ohlcv_daily_table.c.quality_status == "ok")
         dates_by_key: dict[str, set[date]] = {key: set() for key in instrument_keys}
         with self.engine.begin() as connection:
             rows = connection.execute(query).all()

@@ -20,6 +20,8 @@ from trade_research.pipelines import (
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
     run_yfinance_daily_ohlcv_pipeline,
+    run_yfinance_daily_work_planner,
+    run_yfinance_daily_work_queue,
     run_yfinance_intraday_ohlcv_pipeline,
 )
 from trade_research.validation import resolve_latest_expected_trading_date
@@ -90,6 +92,28 @@ def tsx_universe_snapshot(context) -> PipelineRunResult:
 )
 def us_universe_snapshot(context) -> PipelineRunResult:
     result = run_equity_universe_snapshot_pipeline("US", trigger="dagster")
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="yfinance_daily_queue",
+    compute_kind="python",
+    description="Plan prioritized incremental and missing ten-year Yahoo daily work.",
+)
+def yfinance_daily_work_plan(context) -> PipelineRunResult:
+    result = run_yfinance_daily_work_planner(trigger="dagster")
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="yfinance_daily_queue",
+    compute_kind="yfinance",
+    description="Claim and execute one bounded batch of durable Yahoo daily work.",
+)
+def yfinance_daily_work_worker(context) -> PipelineRunResult:
+    result = run_yfinance_daily_work_queue(trigger="dagster")
     context.add_output_metadata(_result_metadata(result))
     return result
 

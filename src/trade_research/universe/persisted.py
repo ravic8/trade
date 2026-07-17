@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from trade_research.data.daily_work import work_item_idempotency_key
 from trade_research.exchanges import canonical_equity_exchange
 from trade_research.schemas import Symbol
 from trade_research.universe.base import UniverseProvider
@@ -568,9 +569,13 @@ def _new_symbol_backfill(
 ) -> UniverseBackfillWorkItem:
     window_end = created_at.date()
     window_start = _subtract_years(window_end, 10)
-    idempotency_key = (
-        "yfinance|new_symbol_backfill|"
-        f"{state.canonical_instrument_id}|1d|{window_start.isoformat()}|{window_end.isoformat()}"
+    idempotency_key = work_item_idempotency_key(
+        provider="yfinance",
+        work_type="new_symbol_backfill",
+        canonical_instrument_id=state.canonical_instrument_id,
+        interval="1d",
+        window_start=window_start,
+        window_end=window_end,
     )
     return UniverseBackfillWorkItem(
         work_item_id=str(uuid5(NAMESPACE_URL, idempotency_key)),

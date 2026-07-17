@@ -46,3 +46,12 @@ def test_phase3_exchange_session_jobs_and_schedules_are_stopped_by_default() -> 
         assert job.name == f"{exchange}_exchange_sessions_job"
         assert schedule.name == f"{exchange}_exchange_sessions_schedule"
         assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
+
+
+def test_phase5_yfinance_queue_jobs_and_schedules_are_stopped_by_default() -> None:
+    for role in ("planner", "worker"):
+        job = getattr(definitions, f"yfinance_daily_work_{role}_job")
+        schedule = getattr(definitions, f"yfinance_daily_work_{role}_schedule")
+        assert job.name == f"yfinance_daily_work_{role}_job"
+        assert schedule.name == f"yfinance_daily_work_{role}_schedule"
+        assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED

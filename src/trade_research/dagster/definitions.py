@@ -17,6 +17,8 @@ from trade_research.dagster.daily_assets import (
     us_exchange_sessions,
     us_universe_snapshot,
     yfinance_canada_daily_ohlcv,
+    yfinance_daily_work_plan,
+    yfinance_daily_work_worker,
     yfinance_fx_crypto_intraday_ohlcv,
     yfinance_fx_intraday_gap_validation,
     yfinance_us_daily_ohlcv,
@@ -50,6 +52,16 @@ tsx_universe_refresh_job = define_asset_job(
 us_universe_refresh_job = define_asset_job(
     name="us_universe_refresh_job",
     selection=[us_universe_snapshot],
+)
+
+yfinance_daily_work_planner_job = define_asset_job(
+    name="yfinance_daily_work_planner_job",
+    selection=[yfinance_daily_work_plan],
+)
+
+yfinance_daily_work_worker_job = define_asset_job(
+    name="yfinance_daily_work_worker_job",
+    selection=[yfinance_daily_work_worker],
 )
 
 daily_research_pipeline_job = define_asset_job(
@@ -157,6 +169,22 @@ us_universe_refresh_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+yfinance_daily_work_planner_schedule = ScheduleDefinition(
+    name="yfinance_daily_work_planner_schedule",
+    job=yfinance_daily_work_planner_job,
+    cron_schedule="0 6 * * *",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+yfinance_daily_work_worker_schedule = ScheduleDefinition(
+    name="yfinance_daily_work_worker_schedule",
+    job=yfinance_daily_work_worker_job,
+    cron_schedule="*/5 * * * *",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 nse_exchange_sessions_schedule = ScheduleDefinition(
     name="nse_exchange_sessions_schedule",
     job=nse_exchange_sessions_job,
@@ -190,6 +218,8 @@ defs = Definitions(
         nse_universe_snapshot,
         tsx_universe_snapshot,
         us_universe_snapshot,
+        yfinance_daily_work_plan,
+        yfinance_daily_work_worker,
         yfinance_us_daily_ohlcv,
         yfinance_canada_daily_ohlcv,
         dukascopy_fx_intraday_ohlcv,
@@ -212,6 +242,8 @@ defs = Definitions(
         nse_universe_refresh_job,
         tsx_universe_refresh_job,
         us_universe_refresh_job,
+        yfinance_daily_work_planner_job,
+        yfinance_daily_work_worker_job,
         nse_exchange_sessions_job,
         tsx_exchange_sessions_job,
         us_exchange_sessions_job,
@@ -224,6 +256,8 @@ defs = Definitions(
         nse_universe_refresh_schedule,
         tsx_universe_refresh_schedule,
         us_universe_refresh_schedule,
+        yfinance_daily_work_planner_schedule,
+        yfinance_daily_work_worker_schedule,
         nse_exchange_sessions_schedule,
         tsx_exchange_sessions_schedule,
         us_exchange_sessions_schedule,
