@@ -1,6 +1,7 @@
 from pathlib import Path
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +67,23 @@ class Settings(BaseSettings):
     upstox_rate_per_30_minutes: int = Field(default=1600, ge=1, le=2000)
     yfinance_batch_concurrency: int = Field(default=1, ge=1, le=8)
     yfinance_rate_per_minute: int = Field(default=30, ge=1, le=600)
+    yfinance_daily_enabled: bool = False
+    yfinance_adaptive_rate_mode: str = Field(
+        default="fixed",
+        pattern="^(fixed|observe|adaptive)$",
+    )
+    yfinance_initial_rpm: int = Field(default=300, ge=1, le=1200)
+    yfinance_minimum_rpm: int = Field(default=30, ge=1, le=600)
+    yfinance_maximum_rpm: int = Field(default=600, ge=1, le=1200)
+    yfinance_initial_concurrency: int = Field(default=4, ge=1, le=32)
+    yfinance_maximum_concurrency: int = Field(default=8, ge=1, le=32)
+    yfinance_incremental_overlap_sessions: int = Field(default=5, ge=0, le=30)
+    yfinance_provider_grace_minutes: int = Field(default=120, ge=0, le=720)
+    yfinance_full_us_enabled: bool = False
+    yfinance_full_tsx_enabled: bool = False
+    yfinance_nse_enabled: bool = False
+    legacy_upstox_nse_enabled: bool = True
+    forex_pipelines_enabled: bool = False
     dukascopy_historical_concurrency: int = Field(default=2, ge=1, le=16)
     dukascopy_rate_per_minute: int = Field(default=60, ge=1, le=600)
     timescale_write_chunk_rows: int = Field(default=1000, ge=100, le=10000)
@@ -88,6 +106,22 @@ class Settings(BaseSettings):
     feed_health_unsupported_retry_days: int = Field(default=7, ge=1, le=90)
     min_median_dollar_volume: float = Field(default=5_000_000, ge=0)
     bypass_calendar: bool = False
+
+    @model_validator(mode="after")
+    def validate_yfinance_foundation_settings(self) -> Self:
+        if not (
+            self.yfinance_minimum_rpm
+            <= self.yfinance_initial_rpm
+            <= self.yfinance_maximum_rpm
+        ):
+            raise ValueError(
+                "yfinance RPM settings must satisfy minimum <= initial <= maximum"
+            )
+        if self.yfinance_initial_concurrency > self.yfinance_maximum_concurrency:
+            raise ValueError(
+                "yfinance concurrency settings must satisfy initial <= maximum"
+            )
+        return self
 
 
 def get_settings() -> Settings:

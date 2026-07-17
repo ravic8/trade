@@ -9,6 +9,7 @@ description = "Market research agent for exchange universes, market data, screen
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.14",
   "beautifulsoup4>=4.12",
   "cryptography>=43.0",
   "dagster>=1.9",

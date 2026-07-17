@@ -14,10 +14,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     Float,
+    Index,
     MetaData,
     String,
     Table,
     Text,
+    UniqueConstraint,
     case,
     create_engine,
     func,
@@ -43,6 +45,19 @@ symbols_table = Table(
     Column("source", String, nullable=False),
     Column("source_url", String),
     Column("is_active", Boolean, nullable=False, default=True),
+    Column("canonical_instrument_id", String),
+    Column("first_seen_at", DateTime(timezone=True)),
+    Column("last_seen_at", DateTime(timezone=True)),
+    Column("inactive_at", DateTime(timezone=True)),
+    Column("inactive_reason", String),
+    Column(
+        "consecutive_missing_refreshes",
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+    ),
+    Column("last_universe_snapshot_id", String),
     Column("fetched_at", DateTime(timezone=True), nullable=False),
 )
 
@@ -464,6 +479,196 @@ daily_ohlcv_fetch_coverage_table = Table(
     Column("skip_reason", String),
     Column("error_message", String),
     Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+exchange_sessions_table = Table(
+    "exchange_sessions",
+    metadata,
+    Column("exchange", String, primary_key=True),
+    Column("session_date", Date, primary_key=True),
+    Column("is_trading_day", Boolean, nullable=False),
+    Column("market_open_utc", DateTime(timezone=True)),
+    Column("market_close_utc", DateTime(timezone=True)),
+    Column("is_early_close", Boolean, nullable=False, default=False, server_default="false"),
+    Column("source_url", String, nullable=False),
+    Column("calendar_version", String, nullable=False),
+    Column("validation_status", String, nullable=False),
+    Column("generated_at", DateTime(timezone=True), nullable=False),
+)
+
+universe_snapshots_table = Table(
+    "universe_snapshots",
+    metadata,
+    Column("snapshot_id", String, primary_key=True),
+    Column("exchange", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("fetched_at", DateTime(timezone=True), nullable=False),
+    Column("symbol_count", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("validation_json", JSON, nullable=False, default=dict, server_default="{}"),
+    Column("error_message", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+universe_snapshot_members_table = Table(
+    "universe_snapshot_members",
+    metadata,
+    Column("snapshot_id", String, primary_key=True),
+    Column("canonical_instrument_id", String, primary_key=True),
+    Column("exchange_symbol", String, nullable=False),
+    Column("provider_symbol", String),
+    Column("name", String),
+    Column("raw_metadata", JSON, nullable=False, default=dict, server_default="{}"),
+)
+
+instrument_aliases_table = Table(
+    "instrument_aliases",
+    metadata,
+    Column("alias_id", String, primary_key=True),
+    Column("canonical_instrument_id", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("provider_symbol", String, nullable=False),
+    Column("valid_from", DateTime(timezone=True), nullable=False),
+    Column("valid_to", DateTime(timezone=True)),
+    Column("is_current", Boolean, nullable=False, default=True, server_default="true"),
+    UniqueConstraint(
+        "canonical_instrument_id",
+        "provider",
+        "provider_symbol",
+        "valid_from",
+        name="uq_instrument_alias_identity",
+    ),
+)
+
+symbol_lifecycle_events_table = Table(
+    "symbol_lifecycle_events",
+    metadata,
+    Column("event_id", String, primary_key=True),
+    Column("canonical_instrument_id", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("event_type", String, nullable=False),
+    Column("old_value", JSON),
+    Column("new_value", JSON),
+    Column("snapshot_id", String),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+pipeline_work_items_table = Table(
+    "pipeline_work_items",
+    metadata,
+    Column("work_item_id", String, primary_key=True),
+    Column("idempotency_key", String, nullable=False),
+    Column("work_type", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("canonical_instrument_id", String, nullable=False),
+    Column("provider_symbol", String, nullable=False),
+    Column("interval", String, nullable=False),
+    Column("window_start", Date, nullable=False),
+    Column("window_end", Date, nullable=False),
+    Column("priority", BigInteger, nullable=False, default=100, server_default="100"),
+    Column("status", String, nullable=False),
+    Column("attempt_count", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("max_attempts", BigInteger, nullable=False, default=9, server_default="9"),
+    Column("next_attempt_at", DateTime(timezone=True)),
+    Column("locked_by", String),
+    Column("locked_at", DateTime(timezone=True)),
+    Column("run_id", String),
+    Column("parent_work_item_id", String),
+    Column("last_status_code", BigInteger),
+    Column("last_error_code", String),
+    Column("last_error_message", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True)),
+    UniqueConstraint("idempotency_key", name="uq_pipeline_work_items_idempotency_key"),
+)
+
+adaptive_rate_state_table = Table(
+    "adaptive_rate_state",
+    metadata,
+    Column("provider", String, primary_key=True),
+    Column("current_rpm", BigInteger, nullable=False),
+    Column("last_safe_rpm", BigInteger),
+    Column("minimum_rpm", BigInteger, nullable=False),
+    Column("maximum_rpm", BigInteger, nullable=False),
+    Column("current_concurrency", BigInteger, nullable=False),
+    Column(
+        "consecutive_healthy_windows",
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+    ),
+    Column("circuit_state", String, nullable=False, default="closed", server_default="closed"),
+    Column("cooldown_until", DateTime(timezone=True)),
+    Column("last_429_at", DateTime(timezone=True)),
+    Column("recent_error_rate", Float, nullable=False, default=0.0, server_default="0"),
+    Column("latency_baseline_ms", Float),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+daily_coverage_summary_table = Table(
+    "daily_coverage_summary",
+    metadata,
+    Column("source", String, primary_key=True),
+    Column("exchange", String, primary_key=True),
+    Column("instrument_key", String, primary_key=True),
+    Column("interval", String, primary_key=True),
+    Column("as_of_date", Date, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("first_expected_date", Date),
+    Column("first_stored_date", Date),
+    Column("latest_expected_date", Date),
+    Column("latest_stored_date", Date),
+    Column("expected_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("stored_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("missing_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("coverage_pct", Float, nullable=False, default=0.0, server_default="0"),
+    Column("coverage_status", String, nullable=False),
+    Column("freshness_status", String, nullable=False),
+    Column("last_successful_run", String),
+    Column("last_fetch_status", String),
+    Column("next_retry_at", DateTime(timezone=True)),
+    Column("attempt_count", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("lifecycle_status", String, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+Index(
+    "idx_exchange_sessions_open_date",
+    exchange_sessions_table.c.exchange,
+    exchange_sessions_table.c.is_trading_day,
+    exchange_sessions_table.c.session_date,
+)
+Index(
+    "idx_universe_snapshots_exchange_fetched",
+    universe_snapshots_table.c.exchange,
+    universe_snapshots_table.c.fetched_at,
+)
+Index(
+    "idx_instrument_aliases_current",
+    instrument_aliases_table.c.canonical_instrument_id,
+    instrument_aliases_table.c.provider,
+    instrument_aliases_table.c.is_current,
+)
+Index(
+    "idx_symbol_lifecycle_events_exchange_created",
+    symbol_lifecycle_events_table.c.exchange,
+    symbol_lifecycle_events_table.c.created_at,
+)
+Index(
+    "idx_pipeline_work_items_claim",
+    pipeline_work_items_table.c.status,
+    pipeline_work_items_table.c.next_attempt_at,
+    pipeline_work_items_table.c.priority,
+    pipeline_work_items_table.c.created_at,
+)
+Index(
+    "idx_daily_coverage_summary_exchange_status",
+    daily_coverage_summary_table.c.exchange,
+    daily_coverage_summary_table.c.coverage_status,
+    daily_coverage_summary_table.c.as_of_date,
 )
 
 
