@@ -738,6 +738,25 @@ def data_universe_reconciliation(
     )
 
 
+@app.get("/api/data/provider-history")
+def data_provider_history(
+    exchange: str = "TSX",
+    provider: str = "yfinance",
+) -> dict:
+    canonical_exchange = _canonical_data_exchange(exchange)
+    if canonical_exchange not in {"NSE", "TSX", "US"}:
+        raise HTTPException(status_code=400, detail="exchange must be NSE, TSX, or US")
+    if provider.lower() != "yfinance":
+        raise HTTPException(status_code=400, detail="Only provider=yfinance is supported.")
+    try:
+        return _store().provider_daily_history_summary(
+            canonical_exchange,
+            provider=provider.lower(),
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
 def data_pipeline_health() -> DataPipelineHealthResponse:
     settings = get_settings()

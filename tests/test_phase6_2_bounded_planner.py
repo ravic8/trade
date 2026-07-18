@@ -64,3 +64,6 @@ def test_production_compose_bounds_postgres_shared_memory_and_passes_flags() -> 
     assert compose.count("\n      YFINANCE_FULL_US_ENABLED:") == 3
     assert compose.count("\n      YFINANCE_FULL_TSX_ENABLED:") == 3
     assert compose.count("\n      YFINANCE_NSE_ENABLED:") == 3
+    assert compose.count("\n      YFINANCE_PROVIDER_HISTORY_EVIDENCE_ENABLED:") == 3
+    assert compose.count("\n      YFINANCE_SPARSE_HISTORY_MINIMUM_EXPECTED_ROWS:") == 3
+    assert compose.count("\n      YFINANCE_SPARSE_HISTORY_MAXIMUM_OBSERVED_ROWS:") == 3

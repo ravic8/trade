@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     yfinance_full_tsx_enabled: bool = False
     yfinance_tsx_canary_enabled: bool = False
     yfinance_tsx_canary_max_symbols: int = Field(default=100, ge=1, le=500)
+    yfinance_provider_history_evidence_enabled: bool = False
+    yfinance_sparse_history_minimum_expected_rows: int = Field(
+        default=220, ge=1, le=10_000
+    )
+    yfinance_sparse_history_maximum_observed_rows: int = Field(
+        default=5, ge=1, le=1_000
+    )
     yfinance_nse_enabled: bool = False
     tsx_official_issuer_url: str = "https://www.tsx.com/en/resource/571"
     tsx_official_directory_base_url: str = (

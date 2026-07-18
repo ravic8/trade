@@ -37,6 +37,7 @@ class DailyInstrument:
     pipeline_eligibility: str = "incremental"
     listing_status_effective_at: datetime | None = None
     provider_instrument_key: str | None = None
+    provider_history_start_date: date | None = None
 
     @property
     def instrument_key(self) -> str:
@@ -122,6 +123,7 @@ class DailyWorkPlanner:
         sessions: Sequence[date],
         stored_dates: Mapping[str, set[date]],
         *,
+        covered_windows: Mapping[str, Sequence[tuple[date, date]]] | None = None,
         now: datetime | None = None,
     ) -> list[DailyWorkItem]:
         return self._plan_missing_windows(
@@ -129,6 +131,7 @@ class DailyWorkPlanner:
             sessions,
             stored_dates,
             work_type="initial_backfill",
+            covered_windows=covered_windows,
             now=now,
         )
 
@@ -138,6 +141,7 @@ class DailyWorkPlanner:
         sessions: Sequence[date],
         stored_dates: Mapping[str, set[date]],
         *,
+        covered_windows: Mapping[str, Sequence[tuple[date, date]]] | None = None,
         now: datetime | None = None,
     ) -> list[DailyWorkItem]:
         return self._plan_missing_windows(
@@ -145,6 +149,7 @@ class DailyWorkPlanner:
             sessions,
             stored_dates,
             work_type="new_symbol_backfill",
+            covered_windows=covered_windows,
             now=now,
         )
 
@@ -154,6 +159,7 @@ class DailyWorkPlanner:
         sessions: Sequence[date],
         stored_dates: Mapping[str, set[date]],
         *,
+        covered_windows: Mapping[str, Sequence[tuple[date, date]]] | None = None,
         now: datetime | None = None,
     ) -> list[DailyWorkItem]:
         return self._plan_missing_windows(
@@ -161,6 +167,7 @@ class DailyWorkPlanner:
             sessions,
             stored_dates,
             work_type="gap_repair",
+            covered_windows=covered_windows,
             now=now,
         )
 
@@ -171,6 +178,7 @@ class DailyWorkPlanner:
         stored_dates: Mapping[str, set[date]],
         *,
         work_type: str,
+        covered_windows: Mapping[str, Sequence[tuple[date, date]]] | None,
         now: datetime | None,
     ) -> list[DailyWorkItem]:
         ordered_sessions = sorted(set(sessions))
@@ -183,7 +191,13 @@ class DailyWorkPlanner:
             if not instrument_sessions:
                 continue
             present = stored_dates.get(instrument.instrument_key, set())
-            missing = [session for session in instrument_sessions if session not in present]
+            verified_windows = (covered_windows or {}).get(instrument.instrument_key, ())
+            missing = [
+                session
+                for session in instrument_sessions
+                if session not in present
+                and not any(start <= session <= end for start, end in verified_windows)
+            ]
             for window_start, window_end in _contiguous_session_windows(
                 instrument_sessions, missing
             ):
@@ -297,14 +311,21 @@ def _eligible_sessions(
 ) -> list[date]:
     if instrument.pipeline_eligibility == "none":
         return []
+    eligible = list(sessions)
     effective_at = instrument.listing_status_effective_at
     if effective_at:
         effective_date = effective_at.date()
         if instrument.listing_status == "active":
-            return [session for session in sessions if session >= effective_date]
-        if instrument.listing_status in {"halted", "suspended", "delisted"}:
-            return [session for session in sessions if session <= effective_date]
-    return list(sessions)
+            eligible = [session for session in eligible if session >= effective_date]
+        elif instrument.listing_status in {"halted", "suspended", "delisted"}:
+            eligible = [session for session in eligible if session <= effective_date]
+    if instrument.provider_history_start_date is not None:
+        eligible = [
+            session
+            for session in eligible
+            if session >= instrument.provider_history_start_date
+        ]
+    return eligible
 
 
 def _as_utc(value: datetime) -> datetime:
