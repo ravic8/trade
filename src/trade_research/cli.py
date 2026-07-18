@@ -36,6 +36,7 @@ from trade_research.pipelines import (
     run_latest_predictions_v1_pipeline,
     run_lightgbm_predictions_v1_pipeline,
     run_ml_dataset_v1_pipeline,
+    run_nse_yfinance_cutover_readiness,
     run_prediction_backtest_v1_pipeline,
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
@@ -46,6 +47,7 @@ from trade_research.pipelines import (
     run_yfinance_daily_work_queue,
     run_yfinance_intraday_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
+    run_yfinance_nse_canary_planner,
     run_yfinance_provider_history_evidence_bootstrap,
     run_yfinance_tsx_canary_planner,
 )
@@ -955,6 +957,80 @@ def plan_yfinance_tsx_canary(
         )
 
 
+@app.command("plan-yfinance-nse-canary")
+def plan_yfinance_nse_canary(
+    symbol_limit: Annotated[
+        int,
+        typer.Option(min=1, max=5_000, help="Maximum NSE symbols to plan."),
+    ] = 1,
+    enqueue: Annotated[
+        bool,
+        typer.Option(
+            "--enqueue/--dry-run",
+            help="Persist work only when the bounded NSE canary flag is enabled.",
+        ),
+    ] = False,
+) -> None:
+    try:
+        result = run_yfinance_nse_canary_planner(
+            symbol_limit=symbol_limit,
+            enqueue=enqueue,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    nse = result.metrics["exchanges"]["NSE"]
+    console.print(f"NSE canary: {'ENQUEUED' if enqueue else 'DRY RUN'}")
+    console.print(
+        f"Symbols: {nse['active_symbols']} selected from "
+        f"{nse['eligible_symbols_before_limit']} eligible"
+    )
+    quarantined = nse.get("provider_quarantined_symbols", [])
+    if quarantined:
+        console.print(
+            "[yellow]Provider-history quarantine: "
+            + ", ".join(quarantined)
+            + "[/yellow]"
+        )
+    console.print(
+        f"Durable work: {result.metrics['work_generated']} generated, "
+        f"{result.metrics['work_inserted']} inserted"
+    )
+    console.print(f"Window: {nse['window_start']} to {nse['window_end']}")
+    console.print(f"Queue state: {result.metrics['queue']}")
+    if not enqueue:
+        console.print(
+            "[yellow]Dry run only. Enable the bounded NSE canary flag before using "
+            "--enqueue.[/yellow]"
+        )
+
+
+@app.command("check-nse-yfinance-cutover")
+def check_nse_yfinance_cutover() -> None:
+    result = run_nse_yfinance_cutover_readiness(trigger="cli")
+    metrics = result.metrics
+    console.print(f"NSE Yahoo cutover: {result.status.upper()}")
+    console.print(
+        "Overlap: "
+        f"{metrics.get('overlapping_symbols', 0)} symbols, "
+        f"{metrics.get('row_overlap_ratio', 0):.2%} rows"
+    )
+    console.print(
+        "Raw close match: "
+        f"{metrics.get('close_match_ratio', 0):.2%} "
+        f"at {metrics.get('close_tolerance', 0):.2%} tolerance"
+    )
+    console.print(
+        "Freshness lag: "
+        f"Upstox={metrics.get('upstox_session_lag', 'n/a')} sessions, "
+        f"Yahoo={metrics.get('yfinance_session_lag', 'n/a')} sessions"
+    )
+    for issue in result.blocking_issues:
+        console.print(f"[red]Blocked: {issue}[/red]")
+    if result.status == "fail":
+        raise typer.Exit(code=1)
+
+
 @app.command("refresh-yfinance-history-evidence")
 def refresh_yfinance_history_evidence(
     exchange: Annotated[
@@ -1309,6 +1385,10 @@ def build_daily_features(
         str,
         typer.Option(help="Input Parquet path prefix under DATA_DIR."),
     ] = "processed/equities/nse_daily_ohlcv_upstox",
+    ohlcv_source: Annotated[
+        str,
+        typer.Option(help="Timescale OHLCV provider: upstox or yfinance."),
+    ] = "upstox",
     output_name: Annotated[
         str,
         typer.Option(help="Feature Parquet path prefix under DATA_DIR."),
@@ -1344,6 +1424,13 @@ def build_daily_features(
         bool,
         typer.Option("--incremental/--full-rebuild", help="Only compute the new feature rows."),
     ] = False,
+    replace_exchange: Annotated[
+        bool,
+        typer.Option(
+            "--replace-exchange/--keep-existing",
+            help="Delete the stored NSE feature version before a full provider rebuild.",
+        ),
+    ] = False,
     lookback_days: Annotated[
         int,
         typer.Option(help="Calendar-day warmup window for incremental feature computation."),
@@ -1353,6 +1440,7 @@ def build_daily_features(
         result = run_daily_feature_pipeline(
             input_source=input_source,
             input_name=input_name,
+            ohlcv_source=ohlcv_source,
             output_name=output_name,
             feature_version=feature_version,
             audit_output=audit_output,
@@ -1361,6 +1449,7 @@ def build_daily_features(
             strict_invalid_rows=strict_invalid_rows,
             store_db=store_db,
             incremental=incremental,
+            replace_exchange=replace_exchange,
             lookback_days=lookback_days,
         )
     except ValueError as exc:
@@ -1393,6 +1482,10 @@ def build_daily_targets(
         str,
         typer.Option(help="Input Parquet path prefix under DATA_DIR."),
     ] = "processed/equities/nse_daily_ohlcv_upstox",
+    ohlcv_source: Annotated[
+        str,
+        typer.Option(help="Timescale OHLCV provider: upstox or yfinance."),
+    ] = "upstox",
     output_name: Annotated[
         str,
         typer.Option(help="Target Parquet path prefix under DATA_DIR."),
@@ -1431,6 +1524,13 @@ def build_daily_targets(
             help="Recompute only the target dirty window from TimescaleDB.",
         ),
     ] = False,
+    replace_exchange: Annotated[
+        bool,
+        typer.Option(
+            "--replace-exchange/--keep-existing",
+            help="Delete the stored NSE target version before a full provider rebuild.",
+        ),
+    ] = False,
     recompute_lookback_days: Annotated[
         int,
         typer.Option(help="Calendar-day target dirty window for incremental computation."),
@@ -1440,6 +1540,7 @@ def build_daily_targets(
         result = run_daily_target_pipeline(
             input_source=input_source,
             input_name=input_name,
+            ohlcv_source=ohlcv_source,
             output_name=output_name,
             target_version=target_version,
             audit_output=audit_output,
@@ -1448,6 +1549,7 @@ def build_daily_targets(
             strict_invalid_rows=strict_invalid_rows,
             store_db=store_db,
             incremental=incremental,
+            replace_exchange=replace_exchange,
             recompute_lookback_days=recompute_lookback_days,
         )
     except ValueError as exc:

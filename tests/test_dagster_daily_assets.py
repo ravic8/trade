@@ -37,6 +37,7 @@ def test_daily_feature_asset_calls_pipeline_after_validation(monkeypatch) -> Non
     assert result.name == "daily_features"
     assert captured == {
         "input_source": "timescale",
+        "ohlcv_source": "upstox",
         "store_db": True,
         "incremental": True,
         "lookback_days": 320,
@@ -75,6 +76,7 @@ def test_daily_target_asset_uses_timescale(monkeypatch) -> None:
     assert result.name == "daily_targets"
     assert captured == {
         "input_source": "timescale",
+        "ohlcv_source": "upstox",
         "store_db": True,
         "incremental": True,
         "recompute_lookback_days": 90,

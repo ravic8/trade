@@ -17,6 +17,7 @@ from trade_research.pipelines import (
     run_exchange_session_materialization_pipeline,
     run_factor_research_pipeline,
     run_ml_dataset_v1_pipeline,
+    run_nse_daily_ohlcv_primary_pipeline,
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
     run_yfinance_daily_ohlcv_pipeline,
@@ -134,6 +135,25 @@ def upstox_daily_ohlcv(context) -> PipelineRunResult:
         max_concurrent_fetches=settings.upstox_historical_concurrency,
     )
     context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="daily_research",
+    compute_kind="python",
+    description=(
+        "Provider-neutral NSE daily OHLCV boundary. It uses Upstox by default and "
+        "requires the Yahoo overlap gate before cutover."
+    ),
+)
+def nse_daily_ohlcv(context) -> PipelineRunResult:
+    latest = resolve_latest_expected_trading_date()
+    result = run_nse_daily_ohlcv_primary_pipeline(
+        to_date=latest.latest_expected_trading_date.isoformat(),
+        trigger="dagster",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    _assert_pipeline_not_failed(result)
     return result
 
 
@@ -262,7 +282,7 @@ def yfinance_fx_intraday_gap_validation(
     group_name="daily_research",
     compute_kind="python",
     ins={
-        "daily_ohlcv": AssetIn("upstox_daily_ohlcv"),
+        "daily_ohlcv": AssetIn("nse_daily_ohlcv"),
         "daily_features": AssetIn("daily_features_v1"),
         "daily_targets": AssetIn("daily_targets_v1"),
     },
@@ -285,7 +305,7 @@ def processed_dataset_validation(
 @asset(
     group_name="daily_research",
     compute_kind="python",
-    ins={"daily_ohlcv": AssetIn("upstox_daily_ohlcv")},
+    ins={"daily_ohlcv": AssetIn("nse_daily_ohlcv")},
     description="Build the frozen daily technical feature layer from daily OHLCV.",
 )
 def daily_features_v1(
@@ -295,6 +315,7 @@ def daily_features_v1(
     _assert_upstream_not_failed(daily_ohlcv)
     result = run_daily_feature_pipeline(
         input_source="timescale",
+        ohlcv_source=get_settings().nse_daily_primary_source,
         store_db=True,
         incremental=True,
         lookback_days=320,
@@ -307,7 +328,7 @@ def daily_features_v1(
 @asset(
     group_name="daily_research",
     compute_kind="python",
-    ins={"daily_ohlcv": AssetIn("upstox_daily_ohlcv")},
+    ins={"daily_ohlcv": AssetIn("nse_daily_ohlcv")},
     description="Build the frozen daily forward-return target layer from daily OHLCV.",
 )
 def daily_targets_v1(
@@ -317,6 +338,7 @@ def daily_targets_v1(
     _assert_upstream_not_failed(daily_ohlcv)
     result = run_daily_target_pipeline(
         input_source="timescale",
+        ohlcv_source=get_settings().nse_daily_primary_source,
         store_db=True,
         incremental=True,
         recompute_lookback_days=90,

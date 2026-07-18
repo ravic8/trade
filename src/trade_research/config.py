@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     yfinance_full_tsx_enabled: bool = False
     yfinance_tsx_canary_enabled: bool = False
     yfinance_tsx_canary_max_symbols: int = Field(default=100, ge=1, le=500)
+    yfinance_nse_canary_enabled: bool = False
+    yfinance_nse_canary_max_symbols: int = Field(default=100, ge=1, le=5_000)
     yfinance_provider_history_evidence_enabled: bool = False
     yfinance_sparse_history_minimum_expected_rows: int = Field(
         default=220, ge=1, le=10_000
@@ -105,6 +107,17 @@ class Settings(BaseSettings):
         default=5, ge=1, le=1_000
     )
     yfinance_nse_enabled: bool = False
+    nse_daily_primary_source: str = Field(default="upstox", pattern="^(upstox|yfinance)$")
+    nse_provider_comparison_sessions: int = Field(default=20, ge=5, le=250)
+    nse_provider_comparison_minimum_symbols: int = Field(default=100, ge=1)
+    nse_provider_comparison_minimum_row_overlap: float = Field(
+        default=0.95, ge=0, le=1
+    )
+    nse_provider_comparison_close_tolerance: float = Field(default=0.01, ge=0, le=1)
+    nse_provider_comparison_minimum_close_match: float = Field(
+        default=0.98, ge=0, le=1
+    )
+    nse_provider_comparison_maximum_session_lag: int = Field(default=1, ge=0, le=10)
     tsx_official_issuer_url: str = "https://www.tsx.com/en/resource/571"
     tsx_official_directory_base_url: str = (
         "https://www.tsx.com/json/company-directory"
@@ -165,6 +178,13 @@ class Settings(BaseSettings):
             > self.exchange_session_maximum_open_days_per_year
         ):
             raise ValueError("exchange session open-day settings must satisfy minimum <= maximum")
+        if self.nse_daily_primary_source == "yfinance" and not (
+            self.yfinance_daily_enabled and self.yfinance_nse_enabled
+        ):
+            raise ValueError(
+                "NSE yfinance primary requires YFINANCE_DAILY_ENABLED and "
+                "YFINANCE_NSE_ENABLED"
+            )
         return self
 
 

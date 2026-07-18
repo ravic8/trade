@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 import pandas as pd
 
 from trade_research.features import DailyTechnicalFeatureBuilder
-from trade_research.storage.timescale import TimescaleStore
+from trade_research.storage.timescale import TimescaleStore, metadata
 
 
 def test_daily_feature_rows_normalize_for_storage() -> None:
@@ -36,6 +36,39 @@ def test_daily_feature_rows_normalize_for_storage() -> None:
     assert row["open_interest"] is None
     assert row["ret_1d"] is None
     assert row["quality_status"] == "warning"
+
+
+def test_replace_daily_features_removes_old_provider_keys_atomically() -> None:
+    store = TimescaleStore("sqlite://")
+    metadata.create_all(store.engine)
+    old = DailyTechnicalFeatureBuilder().build(
+        pd.DataFrame(
+            [
+                {
+                    "Date": date(2025, 1, 1),
+                    "Open": 99.0,
+                    "High": 101.0,
+                    "Low": 98.0,
+                    "Close": 100.0,
+                    "Volume": 100,
+                    "InstrumentKey": "NSE_EQ|TEST",
+                    "Symbol": "TEST",
+                }
+            ]
+        )
+    )
+    new = old.copy()
+    new["instrument_key"] = "YF|TEST.NS"
+    store.upsert_daily_features(old)
+
+    deleted, inserted = store.replace_daily_features(
+        new, "daily_v1_ohlcv_technical_v1_0"
+    )
+    frame = store.daily_feature_frame("daily_v1_ohlcv_technical_v1_0")
+
+    assert deleted == 1
+    assert inserted == 1
+    assert frame["instrument_key"].tolist() == ["YF|TEST.NS"]
 
 
 def test_stock_coverage_rows_normalize_for_storage() -> None:

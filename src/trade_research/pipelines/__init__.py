@@ -21,6 +21,11 @@ from trade_research.pipelines.factor_research import run_factor_research_pipelin
 from trade_research.pipelines.latest_predictions import run_latest_predictions_v1_pipeline
 from trade_research.pipelines.lightgbm_models import run_lightgbm_predictions_v1_pipeline
 from trade_research.pipelines.ml_dataset import run_ml_dataset_v1_pipeline
+from trade_research.pipelines.nse_cutover import (
+    compare_nse_provider_frames,
+    run_nse_daily_ohlcv_primary_pipeline,
+    run_nse_yfinance_cutover_readiness,
+)
 from trade_research.pipelines.processed_validation import (
     run_processed_dataset_validation_pipeline,
 )
@@ -39,12 +44,14 @@ from trade_research.pipelines.yfinance_intraday import run_yfinance_intraday_ohl
 from trade_research.pipelines.yfinance_work_queue import (
     run_yfinance_daily_work_planner,
     run_yfinance_daily_work_queue,
+    run_yfinance_nse_canary_planner,
     run_yfinance_tsx_canary_planner,
 )
 
 __all__ = [
     "PipelineRunResult",
     "build_daily_fetch_coverage",
+    "compare_nse_provider_frames",
     "plan_daily_fetch_windows",
     "run_baseline_predictions_v1_pipeline",
     "run_daily_feature_pipeline",
@@ -58,6 +65,8 @@ __all__ = [
     "run_latest_predictions_v1_pipeline",
     "run_lightgbm_predictions_v1_pipeline",
     "run_ml_dataset_v1_pipeline",
+    "run_nse_daily_ohlcv_primary_pipeline",
+    "run_nse_yfinance_cutover_readiness",
     "run_prediction_backtest_v1_pipeline",
     "run_processed_dataset_validation_pipeline",
     "run_yfinance_provider_history_evidence_bootstrap",
@@ -67,6 +76,7 @@ __all__ = [
     "run_yfinance_daily_ohlcv_pipeline",
     "run_yfinance_daily_work_planner",
     "run_yfinance_daily_work_queue",
+    "run_yfinance_nse_canary_planner",
     "run_yfinance_tsx_canary_planner",
     "run_yfinance_intraday_ohlcv_pipeline",
     "run_yfinance_missing_ohlcv_pipeline",

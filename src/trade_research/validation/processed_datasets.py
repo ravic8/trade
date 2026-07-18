@@ -43,6 +43,7 @@ def validate_processed_datasets(
     data_dir: Path | str = "data",
     pass_coverage_threshold: float = 0.90,
     warn_coverage_threshold: float = 0.70,
+    processed_ohlcv: str = PROCESSED_OHLCV,
 ) -> ProcessedDatasetValidationResult:
     data_root = Path(data_dir)
     validation_dir = data_root / VALIDATION_DIR
@@ -51,10 +52,10 @@ def validate_processed_datasets(
     generated: list[Path] = []
     blocking: list[str] = []
     warnings: list[str] = []
-    source_paths = _source_paths(data_root)
+    source_paths = _source_paths(data_root, processed_ohlcv=processed_ohlcv)
     files_inspected: dict[str, dict[str, Any]] = {}
 
-    processed_path = data_root / PROCESSED_OHLCV
+    processed_path = data_root / processed_ohlcv
     cleaned_path = data_root / CLEANED_OHLCV
     feature_path = data_root / FEATURES
     target_path = data_root / TARGETS
@@ -614,9 +615,9 @@ def validate_alignment(
     return joined, summary
 
 
-def _source_paths(data_root: Path) -> dict[str, Path]:
+def _source_paths(data_root: Path, *, processed_ohlcv: str = PROCESSED_OHLCV) -> dict[str, Path]:
     paths = {
-        "processed_ohlcv": data_root / PROCESSED_OHLCV,
+        "processed_ohlcv": data_root / processed_ohlcv,
         "cleaned_ohlcv": data_root / CLEANED_OHLCV,
         "features": data_root / FEATURES,
         "targets": data_root / TARGETS,

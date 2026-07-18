@@ -21,6 +21,7 @@ from trade_research.targets import (
 def run_daily_target_pipeline(
     input_source: str = "parquet",
     input_name: str = "processed/equities/nse_daily_ohlcv_upstox",
+    ohlcv_source: str = "upstox",
     output_name: str = "processed/targets/daily_v1_forward_returns",
     target_version: str = DAILY_FORWARD_TARGET_VERSION_V1_0,
     audit_output: Path = Path("data/processed/targets/daily_v1_forward_returns_audit.csv"),
@@ -29,6 +30,7 @@ def run_daily_target_pipeline(
     strict_invalid_rows: bool = False,
     store_db: bool = False,
     incremental: bool = False,
+    replace_exchange: bool = False,
     recompute_lookback_days: int = 90,
     export_db_snapshot: bool = True,
 ) -> PipelineRunResult:
@@ -37,6 +39,12 @@ def run_daily_target_pipeline(
     normalized_source = input_source.lower()
     if normalized_source not in {"parquet", "timescale"}:
         raise ValueError("input_source must be parquet or timescale.")
+    if ohlcv_source not in {"upstox", "yfinance"}:
+        raise ValueError("ohlcv_source must be upstox or yfinance.")
+    if replace_exchange and (not store_db or incremental):
+        raise ValueError(
+            "replace_exchange requires store_db=True and a full rebuild."
+        )
 
     db: TimescaleStore | None = None
     recompute_start = None
@@ -49,7 +57,11 @@ def run_daily_target_pipeline(
             latest_target_date = db.latest_daily_target_date(target_version)
             if latest_target_date is not None:
                 recompute_start = latest_target_date - timedelta(days=recompute_lookback_days)
-        source_frame = db.daily_ohlcv_frame(limit=limit, start_date=recompute_start)
+        source_frame = db.daily_ohlcv_frame(
+            source=ohlcv_source,
+            limit=limit,
+            start_date=recompute_start,
+        )
 
     if source_frame.empty:
         raise ValueError("No daily OHLCV rows found for target generation.")
@@ -61,12 +73,20 @@ def run_daily_target_pipeline(
     ).build(source_frame)
 
     db_rows = 0
+    deleted_rows = 0
     audit_rows = 0
     run_id: str | None = None
     if store_db:
         db = db or TimescaleStore(settings.database_url)
         db.initialize()
-        db_rows = db.upsert_daily_targets(targets)
+        if replace_exchange:
+            deleted_rows, db_rows = db.replace_daily_targets(
+                targets,
+                target_version,
+                exchange="NSE",
+            )
+        else:
+            db_rows = db.upsert_daily_targets(targets)
         if export_db_snapshot:
             targets_for_artifact = db.daily_target_frame(target_version=target_version, limit=limit)
         else:
@@ -86,7 +106,7 @@ def run_daily_target_pipeline(
         assert db is not None
         run_id = db.insert_target_run(
             asdict(summary),
-            source="upstox",
+            source=ohlcv_source,
             started_at=started_at,
         )
         audit_rows = db.insert_target_audits(
@@ -115,9 +135,12 @@ def run_daily_target_pipeline(
             **summary_dict,
             "invalid_ohlcv_count": invalid_ohlcv_count,
             "timescale_rows": db_rows,
+            "timescale_deleted_rows": deleted_rows,
             "timescale_audit_rows": audit_rows,
             "timescale_run_id": run_id,
             "incremental": bool(incremental),
+            "replace_exchange": bool(replace_exchange),
+            "ohlcv_source": ohlcv_source,
             "recompute_start": recompute_start.isoformat() if recompute_start else None,
             "computed_rows": int(len(targets)),
             "artifact_rows": int(len(targets_for_artifact)),
