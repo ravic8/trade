@@ -12,6 +12,7 @@ from trade_research.config import Settings
 from trade_research.pipelines import yfinance_work_queue
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.schemas import Symbol
+from trade_research.storage.timescale import TimescaleStore
 from trade_research.universe.persisted import reconcile_universe_snapshot
 from trade_research.universe.tsx_reconciliation import (
     ReconciledTSXUniverseProvider,
@@ -193,7 +194,7 @@ def test_general_planner_cannot_bypass_disabled_exchange_flags(monkeypatch) -> N
         yfinance_work_queue.run_yfinance_daily_work_planner(exchanges=("TSX",))
 
 
-def test_phase7_2_migration_adds_reconciliation_columns(
+def test_phase7_2_1_migration_adds_columns_and_cancels_prelisting_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -212,7 +213,42 @@ def test_phase7_2_migration_adds_reconciliation_columns(
             )
         )
 
-    command.upgrade(Config("alembic.ini"), "head")
+    config = Config("alembic.ini")
+    command.upgrade(config, "20260718_0004")
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO symbols ("
+                "symbol, exchange, yahoo_symbol, is_active, canonical_instrument_id, "
+                "listing_status, listing_status_effective_at"
+                ") VALUES "
+                "('AAUC', 'TSX', 'AAUC.TO', true, 'eq_aauc', 'active', "
+                "'2023-09-11 00:00:00'), "
+                "('ABXX', 'TSX', 'ABXX.TO', true, 'eq_abxx', 'active', "
+                "'2023-01-01 00:00:00')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO pipeline_work_items ("
+                "work_item_id, idempotency_key, work_type, provider, exchange, "
+                "canonical_instrument_id, provider_symbol, interval, window_start, "
+                "window_end, priority, status, attempt_count, max_attempts, "
+                "next_attempt_at, created_at, updated_at"
+                ") VALUES "
+                "('old-aauc', 'old-aauc', 'initial_backfill', 'yfinance', 'TSX', "
+                "'eq_aauc', 'AAUC.TO', '1d', '2016-07-18', '2023-09-08', 50, "
+                "'queued', 0, 9, '2026-07-18 09:44:27', "
+                "'2026-07-18 09:44:27', '2026-07-18 09:44:27'), "
+                "('valid-abxx', 'valid-abxx', 'initial_backfill', 'yfinance', 'TSX', "
+                "'eq_abxx', 'ABXX.TO', '1d', '2023-01-03', '2026-07-17', 50, "
+                "'queued', 0, 9, '2026-07-18 09:44:27', "
+                "'2026-07-18 09:44:27', '2026-07-18 09:44:27')"
+            )
+        )
+
+    command.upgrade(config, "head")
 
     columns = {
         column["name"]
@@ -220,6 +256,15 @@ def test_phase7_2_migration_adds_reconciliation_columns(
     }
     with engine.connect() as connection:
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        work = {
+            row[0]: (row[1], row[2])
+            for row in connection.execute(
+                text(
+                    "SELECT provider_symbol, status, last_error_code "
+                    "FROM pipeline_work_items ORDER BY provider_symbol"
+                )
+            ).all()
+        }
 
     assert {
         "instrument_type",
@@ -229,7 +274,32 @@ def test_phase7_2_migration_adds_reconciliation_columns(
         "official_security_type",
         "official_source_updated_at",
     }.issubset(columns)
-    assert revision == "20260718_0004"
+    assert revision == "20260718_0005"
+    assert work["AAUC.TO"] == ("cancelled", "outside_listing_window")
+    assert work["ABXX.TO"] == ("queued", None)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE pipeline_work_items SET status = 'queued', "
+                "last_error_code = NULL, last_error_message = NULL, "
+                "completed_at = NULL WHERE provider_symbol = 'AAUC.TO'"
+            )
+        )
+    cancelled = TimescaleStore(database_url).cancel_pipeline_work_items_before_listing(
+        exchange="TSX",
+        at=datetime(2026, 7, 18, tzinfo=UTC),
+    )
+    with engine.connect() as connection:
+        runtime_status = connection.execute(
+            text(
+                "SELECT status, last_error_code FROM pipeline_work_items "
+                "WHERE provider_symbol = 'AAUC.TO'"
+            )
+        ).one()
+
+    assert cancelled == 1
+    assert runtime_status == ("cancelled", "outside_listing_window")
 
 
 def test_production_compose_passes_guarded_tsx_canary_settings() -> None:

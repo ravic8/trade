@@ -1880,6 +1880,52 @@ class TimescaleStore:
                 inserted += len(result.scalars().all())
         return inserted
 
+    def cancel_pipeline_work_items_before_listing(
+        self,
+        *,
+        exchange: str,
+        provider: str = "yfinance",
+        at: datetime | None = None,
+    ) -> int:
+        """Cancel pending work whose entire window predates an active listing."""
+        now = _as_utc(at or datetime.now(UTC))
+        listing_match = (
+            select(1)
+            .select_from(symbols_table)
+            .where(
+                symbols_table.c.canonical_instrument_id
+                == pipeline_work_items_table.c.canonical_instrument_id
+            )
+            .where(symbols_table.c.exchange == exchange.upper())
+            .where(symbols_table.c.listing_status == "active")
+            .where(symbols_table.c.listing_status_effective_at.is_not(None))
+            .where(
+                pipeline_work_items_table.c.window_end
+                < func.date(symbols_table.c.listing_status_effective_at)
+            )
+            .exists()
+        )
+        statement = (
+            pipeline_work_items_table.update()
+            .where(pipeline_work_items_table.c.exchange == exchange.upper())
+            .where(pipeline_work_items_table.c.provider == provider)
+            .where(pipeline_work_items_table.c.status.in_(("queued", "retry_wait")))
+            .where(listing_match)
+            .values(
+                status="cancelled",
+                last_error_code="outside_listing_window",
+                last_error_message=(
+                    "Work window ends before the active instrument listing boundary."
+                ),
+                next_attempt_at=None,
+                completed_at=now,
+                updated_at=now,
+            )
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+        return int(result.rowcount or 0)
+
     def claim_pipeline_work_items(
         self,
         *,

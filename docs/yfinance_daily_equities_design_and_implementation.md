@@ -1153,6 +1153,37 @@ Guarded Phase 7.2 production rollout:
    bounded batches, soaks incremental operation, and only then starts the TSX
    universe schedule.
 
+#### Phase 7.2.1: Active Listing-Boundary Hotfix
+
+The 25-symbol TSX canary exposed a repeat-planning defect for active securities
+whose official listing date falls inside the ten-year calendar. The planner
+correctly persisted the TMX date but treated it only as an upper bound for
+halted or delisted instruments. Active instruments therefore received
+pre-listing work. `AAUC.TO` was re-queued for the sessions before its September
+11, 2023 listing, and `ABRA.TO` retried an empty pre-listing window even though
+its valid Yahoo history was already stored.
+
+Revision `20260718_0005` makes the lifecycle boundary bidirectional:
+
+- active instruments use `listing_status_effective_at` as the first expected
+  session for initial, gap-repair, and incremental planning;
+- halted, suspended, and delisted instruments continue to use their effective
+  date as the last expected session;
+- planner enqueue cancels queued or retry-wait work whose entire window ends
+  before an active listing date, using the audited reason
+  `outside_listing_window`;
+- the worker repeats the same guard after claiming so stale work never reaches
+  Yahoo even if it was created by an older application version;
+- the data migration cancels existing affected TSX work while preserving valid
+  work such as the unprocessed `ABXX.TO` canary item.
+
+Guarded recovery keeps the full TSX and canary flags false and both the TSX
+universe and global worker schedules stopped during deployment. After migration
+`0005`, operators verify the obsolete `AAUC.TO` and `ABRA.TO` items are
+cancelled, re-enable only the bounded canary flag, rerun the cumulative
+25-symbol planner, and process the one remaining valid item before advancing to
+100.
+
 ### Phase 8: NSE Cutover
 
 - Backfill active NSE symbols through yfinance.

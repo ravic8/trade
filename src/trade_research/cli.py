@@ -891,7 +891,8 @@ def run_yfinance_daily_worker(
         f"{result.metrics['claimed']} claimed, "
         f"{result.metrics['succeeded']} succeeded, "
         f"{result.metrics['retry_wait']} retry-wait, "
-        f"{result.metrics['terminal']} terminal"
+        f"{result.metrics['terminal']} terminal, "
+        f"{result.metrics.get('cancelled', 0)} cancelled"
     )
     console.print(f"OHLCV rows written: {result.metrics.get('ohlcv_rows_written', 0)}")
     console.print(f"Queue state: {result.metrics['queue']}")

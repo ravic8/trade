@@ -87,18 +87,21 @@ class DailyWorkPlanner:
         ordered_sessions = sorted(set(sessions))
         if not ordered_sessions:
             return []
-        end = ordered_sessions[-1]
-        session_index = {session: index for index, session in enumerate(ordered_sessions)}
         observed_at = _as_utc(now or datetime.now(UTC))
         work: list[DailyWorkItem] = []
         for instrument in instruments:
-            if instrument.pipeline_eligibility != "incremental":
+            instrument_sessions = _eligible_sessions(instrument, ordered_sessions)
+            if not instrument_sessions:
                 continue
+            end = instrument_sessions[-1]
+            session_index = {
+                session: index for index, session in enumerate(instrument_sessions)
+            }
             latest = latest_dates.get(instrument.instrument_key)
             if latest is None or latest >= end:
                 continue
             preceding_index = max(
-                _session_index_at_or_before(ordered_sessions, session_index, latest)
+                _session_index_at_or_before(instrument_sessions, session_index, latest)
                 - max(overlap_sessions, 0),
                 0,
             )
@@ -106,7 +109,7 @@ class DailyWorkPlanner:
                 self._item(
                     instrument,
                     work_type="daily_incremental",
-                    window_start=ordered_sessions[preceding_index],
+                    window_start=instrument_sessions[preceding_index],
                     window_end=end,
                     now=observed_at,
                 )
@@ -295,8 +298,12 @@ def _eligible_sessions(
     if instrument.pipeline_eligibility == "none":
         return []
     effective_at = instrument.listing_status_effective_at
-    if instrument.listing_status in {"halted", "suspended", "delisted"} and effective_at:
-        return [session for session in sessions if session <= effective_at.date()]
+    if effective_at:
+        effective_date = effective_at.date()
+        if instrument.listing_status == "active":
+            return [session for session in sessions if session >= effective_date]
+        if instrument.listing_status in {"halted", "suspended", "delisted"}:
+            return [session for session in sessions if session <= effective_date]
     return list(sessions)
 
 
