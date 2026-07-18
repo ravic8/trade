@@ -8,6 +8,7 @@ from trade_research.dagster.daily_assets import (
     factor_research_v1,
     fx_intraday_gap_validation,
     ml_dataset_v1,
+    nse_daily_ohlcv,
     nse_exchange_sessions,
     nse_universe_snapshot,
     processed_dataset_validation,
@@ -67,7 +68,7 @@ yfinance_daily_work_worker_job = define_asset_job(
 daily_research_pipeline_job = define_asset_job(
     name="daily_research_pipeline_job",
     selection=[
-        upstox_daily_ohlcv,
+        nse_daily_ohlcv,
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
@@ -80,7 +81,7 @@ daily_research_pipeline_job = define_asset_job(
 factor_research_job = define_asset_job(
     name="factor_research_job",
     selection=[
-        upstox_daily_ohlcv,
+        nse_daily_ohlcv,
         daily_features_v1,
         daily_targets_v1,
         processed_dataset_validation,
@@ -212,6 +213,7 @@ us_exchange_sessions_schedule = ScheduleDefinition(
 defs = Definitions(
     assets=[
         upstox_daily_ohlcv,
+        nse_daily_ohlcv,
         nse_exchange_sessions,
         tsx_exchange_sessions,
         us_exchange_sessions,

@@ -24,6 +24,7 @@ from trade_research.storage import ParquetStore, TimescaleStore
 def run_daily_feature_pipeline(
     input_source: str = "parquet",
     input_name: str = "processed/equities/nse_daily_ohlcv_upstox",
+    ohlcv_source: str = "upstox",
     output_name: str = "processed/features/daily_v1_ohlcv_technical",
     feature_version: str = FEATURE_VERSION_V1_0,
     audit_output: Path = Path("data/processed/features/daily_v1_ohlcv_technical_audit.csv"),
@@ -32,6 +33,7 @@ def run_daily_feature_pipeline(
     strict_invalid_rows: bool = False,
     store_db: bool = False,
     incremental: bool = False,
+    replace_exchange: bool = False,
     lookback_days: int = 320,
     export_db_snapshot: bool = True,
 ) -> PipelineRunResult:
@@ -40,6 +42,12 @@ def run_daily_feature_pipeline(
     normalized_source = input_source.lower()
     if normalized_source not in {"parquet", "timescale"}:
         raise ValueError("input_source must be parquet or timescale.")
+    if ohlcv_source not in {"upstox", "yfinance"}:
+        raise ValueError("ohlcv_source must be upstox or yfinance.")
+    if replace_exchange and (not store_db or incremental):
+        raise ValueError(
+            "replace_exchange requires store_db=True and a full rebuild."
+        )
 
     db: TimescaleStore | None = None
     recompute_start = None
@@ -54,7 +62,11 @@ def run_daily_feature_pipeline(
             if latest_feature_date is not None:
                 recompute_start = latest_feature_date + timedelta(days=1)
                 source_start = recompute_start - timedelta(days=lookback_days)
-        source_frame = db.daily_ohlcv_frame(limit=limit, start_date=source_start)
+        source_frame = db.daily_ohlcv_frame(
+            source=ohlcv_source,
+            limit=limit,
+            start_date=source_start,
+        )
 
     if source_frame.empty:
         raise ValueError("No daily OHLCV rows found for feature generation.")
@@ -72,12 +84,20 @@ def run_daily_feature_pipeline(
         features_to_store = features
 
     db_rows = 0
+    deleted_rows = 0
     audit_rows = 0
     run_id: str | None = None
     if store_db:
         db = db or TimescaleStore(settings.database_url)
         db.initialize()
-        db_rows = db.upsert_daily_features(features_to_store)
+        if replace_exchange:
+            deleted_rows, db_rows = db.replace_daily_features(
+                features_to_store,
+                feature_version,
+                exchange="NSE",
+            )
+        else:
+            db_rows = db.upsert_daily_features(features_to_store)
         if export_db_snapshot:
             features_for_artifact = db.daily_feature_frame(
                 feature_version=feature_version,
@@ -100,7 +120,7 @@ def run_daily_feature_pipeline(
         assert db is not None
         run_id = db.insert_feature_run(
             asdict(summary),
-            source="upstox",
+            source=ohlcv_source,
             started_at=started_at,
         )
         audit_rows = db.insert_feature_audits(
@@ -129,9 +149,12 @@ def run_daily_feature_pipeline(
             **summary_dict,
             "invalid_ohlcv_count": invalid_ohlcv_count,
             "timescale_rows": db_rows,
+            "timescale_deleted_rows": deleted_rows,
             "timescale_audit_rows": audit_rows,
             "timescale_run_id": run_id,
             "incremental": bool(incremental),
+            "replace_exchange": bool(replace_exchange),
+            "ohlcv_source": ohlcv_source,
             "source_start": source_start.isoformat() if source_start else None,
             "recompute_start": recompute_start.isoformat() if recompute_start else None,
             "computed_rows": int(len(features)),

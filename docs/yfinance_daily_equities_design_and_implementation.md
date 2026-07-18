@@ -1273,6 +1273,93 @@ Guarded Phase 7.2.2 rollout:
 Upstox remains an explicitly labelled fallback/verification source until a
 separate removal decision.
 
+#### Phase 8 implementation and rollout gate
+
+Phase 8 is implemented as a reversible provider cutover. The defaults remain
+fail-closed:
+
+```text
+YFINANCE_NSE_CANARY_ENABLED=false
+YFINANCE_NSE_ENABLED=false
+NSE_DAILY_PRIMARY_SOURCE=upstox
+LEGACY_UPSTOX_NSE_ENABLED=true
+```
+
+`plan-yfinance-nse-canary` is independent of the full NSE flag. This permits
+deterministic 1, 25, 100, 500, and 1,000-symbol stages while US and TSX retain
+their existing schedules and shared Yahoo budget. Enqueueing is rejected unless
+the bounded canary flag (or the final full-NSE flag) is enabled.
+
+```bash
+trade-research plan-yfinance-nse-canary --symbol-limit 1 --dry-run
+trade-research plan-yfinance-nse-canary --symbol-limit 1 --enqueue
+trade-research run-yfinance-daily-worker --claim-size 1 --worker-id phase8-nse-1
+```
+
+After each stage, inspect the work queue, provider request log, adaptive-rate
+state, provider-history evidence, stored row boundaries, and suspicious rows.
+Do not increase a stage when requests are rate-limited, retries are rising, the
+circuit is open, or durable work remains unexpectedly retryable.
+
+`check-nse-yfinance-cutover` compares raw Yahoo and Upstox candles by NSE symbol
+and validated exchange session. It fails unless all configured requirements are
+met:
+
+- minimum count of overlapping symbols;
+- minimum shared-row coverage;
+- minimum raw-close agreement within the configured tolerance; and
+- maximum freshness lag for both providers.
+
+The comparison deliberately uses raw close, not adjusted close. Split/dividend
+adjustments remain in the provider-specific adjustment table and are not allowed
+to make raw-provider disagreement appear healthy.
+
+The Dagster research graph now depends on `nse_daily_ohlcv`, not directly on
+`upstox_daily_ohlcv`. With `NSE_DAILY_PRIMARY_SOURCE=upstox`, behavior remains
+the same. With `NSE_DAILY_PRIMARY_SOURCE=yfinance`, the asset does not download
+inline: it validates the overlap gate, exports the durable Yahoo Timescale
+snapshot, and then lets features and targets read `source=yfinance`.
+
+Before changing the primary source:
+
+1. Complete the full active-NSE backfill and verify a repeat planner inserts
+   zero historical work.
+2. Run the comparison gate across multiple completed sessions and retain its
+   output with the deployment evidence.
+3. Back up PostgreSQL, data, artifacts, Qdrant, and Dagster state.
+4. Recreate API, Dagster daemon, and Dagster webserver with
+   `YFINANCE_NSE_ENABLED=true` while keeping
+   `NSE_DAILY_PRIMARY_SOURCE=upstox` for the comparison soak.
+5. Stop the legacy daily research schedule, set
+   `NSE_DAILY_PRIMARY_SOURCE=yfinance`, recreate all three services, and rerun
+   the comparison gate.
+6. Perform one explicit full feature and target rebuild before restarting the
+   incremental research schedule. Existing feature/target rows use Upstox
+   instrument keys; the full rebuild is the controlled provider-key transition.
+7. Keep `LEGACY_UPSTOX_NSE_ENABLED=true` throughout the rollback window. Disable
+   scheduled Upstox fetching only after the agreed soak, not in the same change
+   that enables Yahoo primary.
+
+The Yahoo-side rebuild commands are:
+
+```bash
+trade-research build-daily-features --input-source timescale \
+  --ohlcv-source yfinance --store-db --full-rebuild --replace-exchange
+trade-research build-daily-targets --input-source timescale \
+  --ohlcv-source yfinance --store-db --full-rebuild --replace-exchange
+```
+
+`--replace-exchange` is intentionally rejected for incremental or non-database
+runs. It removes the prior provider-keyed rows for that feature/target version
+only after the replacement frame has been built successfully, then stores the
+new provider-keyed dataset. Run it only with the daily schedule stopped and a
+verified backup.
+
+Rollback is configuration-only: stop the daily research schedule, restore
+`NSE_DAILY_PRIMARY_SOURCE=upstox`, recreate services, run one full downstream
+rebuild from Upstox, and restart the schedule. Yahoo candles and evidence remain
+stored for diagnosis; no destructive data cleanup is part of rollback.
+
 ### Phase 9: Data Console and Operations
 
 - Add exact gaps, queue, retry, lifecycle, and adaptive-rate views.

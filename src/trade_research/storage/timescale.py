@@ -4209,6 +4209,23 @@ class TimescaleStore:
                 total += len(chunk)
         return total
 
+    def replace_daily_features(
+        self,
+        frame: pd.DataFrame,
+        feature_version: str,
+        exchange: str = "NSE",
+    ) -> tuple[int, int]:
+        rows = self._daily_feature_rows(frame)
+        with self.engine.begin() as connection:
+            deleted = connection.execute(
+                features_daily_table.delete()
+                .where(features_daily_table.c.feature_version == feature_version)
+                .where(features_daily_table.c.exchange == exchange.upper())
+            )
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(features_daily_table.insert().values(chunk))
+        return int(deleted.rowcount or 0), len(rows)
+
     def insert_feature_run(
         self,
         summary: Mapping[str, Any],
@@ -4328,6 +4345,23 @@ class TimescaleStore:
                 )
                 total += len(chunk)
         return total
+
+    def replace_daily_targets(
+        self,
+        frame: pd.DataFrame,
+        target_version: str,
+        exchange: str = "NSE",
+    ) -> tuple[int, int]:
+        rows = self._daily_target_rows(frame)
+        with self.engine.begin() as connection:
+            deleted = connection.execute(
+                targets_daily_table.delete()
+                .where(targets_daily_table.c.target_version == target_version)
+                .where(targets_daily_table.c.exchange == exchange.upper())
+            )
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(targets_daily_table.insert().values(chunk))
+        return int(deleted.rowcount or 0), len(rows)
 
     def insert_target_run(
         self,

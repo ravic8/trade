@@ -342,6 +342,48 @@ def run_yfinance_tsx_canary_planner(
     return result
 
 
+def run_yfinance_nse_canary_planner(
+    *,
+    symbol_limit: int,
+    enqueue: bool = False,
+    trigger: str = "pipeline",
+    at: datetime | None = None,
+) -> PipelineRunResult:
+    """Plan a deterministic, bounded NSE backfill without enabling full NSE."""
+    settings = get_settings()
+    if symbol_limit < 1:
+        raise ValueError("NSE canary symbol_limit must be positive.")
+    if symbol_limit > settings.yfinance_nse_canary_max_symbols:
+        raise ValueError(
+            "NSE canary symbol limit exceeds configured maximum: "
+            f"{symbol_limit}>{settings.yfinance_nse_canary_max_symbols}"
+        )
+    if enqueue and not (
+        settings.yfinance_nse_canary_enabled or settings.yfinance_nse_enabled
+    ):
+        raise ValueError(
+            "NSE canary enqueue is disabled. Enable YFINANCE_NSE_CANARY_ENABLED "
+            "for bounded canaries; do not enable the full NSE flag yet."
+        )
+    result = run_yfinance_daily_work_planner(
+        exchanges=("NSE",),
+        include_incremental=False,
+        include_initial_backfill=True,
+        include_gap_repair=False,
+        enqueue=enqueue,
+        instrument_limit_per_exchange=symbol_limit,
+        allow_disabled_exchanges=True,
+        trigger=trigger,
+        at=at,
+    )
+    result.metrics["canary"] = True
+    result.metrics["canary_symbol_limit"] = symbol_limit
+    result.metrics["canary_execution_enabled"] = bool(
+        settings.yfinance_nse_canary_enabled or settings.yfinance_nse_enabled
+    )
+    return result
+
+
 def run_yfinance_daily_work_queue(
     *,
     worker_id: str | None = None,
