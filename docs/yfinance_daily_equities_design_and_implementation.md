@@ -1184,6 +1184,85 @@ cancelled, re-enable only the bounded canary flag, rerun the cumulative
 25-symbol planner, and process the one remaining valid item before advancing to
 100.
 
+#### Phase 7.2.2: Provider-History Evidence and Sparse-History Quarantine
+
+The successful 100-symbol canary exposed a second distinction that exchange
+calendars and official listing dates cannot represent by themselves. Yahoo can
+successfully return all history it has while some calendar sessions remain
+absent. The observed examples include provider-history boundaries, provider
+symbol identity changes, single-session provider omissions, and a symbol with
+implausibly sparse history despite an old official listing. Replanning those
+same absent sessions indefinitely creates calls without improving coverage.
+
+Revision `20260718_0006` adds provider-neutral, instrument-key-specific daily
+history evidence. Every successful initial backfill, new-symbol backfill, or
+gap-repair window records the requested calendar range, first and last returned
+candle, expected and observed rows, coverage ratio, provider-unavailable rows,
+classification, and originating run. The classifications are:
+
+- `verified_complete`: Yahoo returned every expected session in the successful
+  request window;
+- `verified_partial`: Yahoo completed the request but does not expose candles
+  for every expected exchange session;
+- `quarantined_sparse`: an established listing has at least 220 expected
+  sessions but at most five returned sessions, which is too sparse to accept as
+  normal provider history.
+
+Verified evidence prevents the historical planner from repeatedly requesting
+absent dates inside the already-completed provider window. It does not suppress
+incremental freshness planning after the latest stored candle. The first
+provider candle becomes an additional lower bound only when it came from a
+successful backfill-class request. Quarantined instruments are removed from
+automatic Yahoo planning, and pending work for them is cancelled with the
+audited reason `provider_history_quarantined`. This handles an established
+listing such as `AKT-A.TO` differently from a newly observed identity such as
+`SHOT`: one returned candle is suspicious for the former but valid evidence of
+the currently available provider history for the latter.
+
+The behavior is fail-closed behind:
+
+```text
+PROD_YFINANCE_PROVIDER_HISTORY_EVIDENCE_ENABLED=false
+PROD_YFINANCE_SPARSE_HISTORY_MINIMUM_EXPECTED_ROWS=220
+PROD_YFINANCE_SPARSE_HISTORY_MAXIMUM_OBSERVED_ROWS=5
+```
+
+Future successful durable workers write evidence automatically. Existing
+successful backfills are classified explicitly:
+
+```bash
+trade-research refresh-yfinance-history-evidence TSX --symbol-limit 100
+trade-research refresh-yfinance-history-evidence US --symbols SHOT
+trade-research provider-history-status TSX
+```
+
+The Data Console can consume the same aggregate and quarantine state from:
+
+```text
+GET /api/data/provider-history?exchange=TSX&provider=yfinance
+```
+
+Guarded Phase 7.2.2 rollout:
+
+1. Keep full TSX, TSX canary, and provider-history evidence flags false. Keep
+   the TSX universe and global Yahoo worker schedules stopped. Take and validate
+   a quiet backup.
+2. Deploy and verify Alembic revision `20260718_0006`.
+3. Bootstrap the completed 100-symbol TSX canary and inspect
+   `provider-history-status TSX`. `AKT-A.TO` should be quarantined; the other
+   successful windows should be verified.
+4. Bootstrap `SHOT` in US and verify it is `verified_partial`, not quarantined.
+5. Enable only the provider-history evidence flag and bounded TSX canary flag
+   in the API container. Keep full TSX false and the worker schedule stopped.
+6. Run the 100-symbol TSX canary in dry-run mode. It should produce zero repeat
+   historical work, report one quarantined symbol, and preserve incremental
+   freshness semantics.
+7. Recreate the Dagster daemon/webserver with the evidence flag before any
+   scheduled planner or worker is restarted. Repeat the queue, request-log,
+   rate-state, and evidence checks.
+8. Phase 7.3 may then plan the remaining TSX symbols. Full TSX remains disabled
+   until this bootstrap and dry-run gate pass.
+
 ### Phase 8: NSE Cutover
 
 - Backfill active NSE symbols through yfinance.

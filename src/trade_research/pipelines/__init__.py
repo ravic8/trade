@@ -24,6 +24,9 @@ from trade_research.pipelines.ml_dataset import run_ml_dataset_v1_pipeline
 from trade_research.pipelines.processed_validation import (
     run_processed_dataset_validation_pipeline,
 )
+from trade_research.pipelines.provider_history import (
+    run_yfinance_provider_history_evidence_bootstrap,
+)
 from trade_research.pipelines.universe_snapshot import (
     run_equity_universe_snapshot_pipeline,
 )
@@ -57,6 +60,7 @@ __all__ = [
     "run_ml_dataset_v1_pipeline",
     "run_prediction_backtest_v1_pipeline",
     "run_processed_dataset_validation_pipeline",
+    "run_yfinance_provider_history_evidence_bootstrap",
     "run_upstox_daily_ohlcv_retry_pipeline",
     "run_upstox_daily_ohlcv_pipeline",
     "run_walk_forward_folds_v1_pipeline",

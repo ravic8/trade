@@ -46,6 +46,7 @@ from trade_research.pipelines import (
     run_yfinance_daily_work_queue,
     run_yfinance_intraday_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
+    run_yfinance_provider_history_evidence_bootstrap,
     run_yfinance_tsx_canary_planner,
 )
 from trade_research.storage import ParquetStore, TimescaleStore
@@ -934,6 +935,13 @@ def plan_yfinance_tsx_canary(
         f"Symbols: {tsx['active_symbols']} selected from "
         f"{tsx['eligible_symbols_before_limit']} officially eligible"
     )
+    quarantined = tsx.get("provider_quarantined_symbols", [])
+    if quarantined:
+        console.print(
+            "[yellow]Provider-history quarantine: "
+            + ", ".join(quarantined)
+            + "[/yellow]"
+        )
     console.print(
         f"Durable work: {result.metrics['work_generated']} generated, "
         f"{result.metrics['work_inserted']} inserted"
@@ -945,6 +953,99 @@ def plan_yfinance_tsx_canary(
             "[yellow]Dry run only. Enable the bounded TSX canary flag before using "
             "--enqueue.[/yellow]"
         )
+
+
+@app.command("refresh-yfinance-history-evidence")
+def refresh_yfinance_history_evidence(
+    exchange: Annotated[
+        str,
+        typer.Argument(help="Canonical equity exchange: NSE, TSX, or US."),
+    ],
+    symbol_limit: Annotated[
+        int | None,
+        typer.Option(min=1, help="Optional deterministic symbol limit."),
+    ] = None,
+    symbols: Annotated[
+        str | None,
+        typer.Option(help="Optional comma-separated Yahoo symbols."),
+    ] = None,
+) -> None:
+    selected_symbols = (
+        [value.strip() for value in symbols.split(",") if value.strip()]
+        if symbols
+        else None
+    )
+    try:
+        result = run_yfinance_provider_history_evidence_bootstrap(
+            exchange,
+            symbol_limit=symbol_limit,
+            provider_symbols=selected_symbols,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except SQLAlchemyError as exc:
+        detail = str(getattr(exc, "orig", exc)).strip().splitlines()[0]
+        console.print(f"[red]Error: Provider-history refresh failed: {detail}[/red]")
+        raise typer.Exit(code=1) from None
+
+    table = Table(title=f"{exchange.upper()} Yahoo Provider History Evidence")
+    table.add_column("Classification")
+    table.add_column("Windows", justify="right")
+    for classification, count in result.metrics["classifications"].items():
+        table.add_row(str(classification), str(count))
+    console.print(table)
+    console.print(
+        f"Evidence: {result.metrics['evidence_rows_written']} rows from "
+        f"{result.metrics['successful_backfill_windows']} successful backfill windows"
+    )
+    console.print(f"Pending work cancelled: {result.metrics['pending_work_cancelled']}")
+    quarantined = result.metrics["quarantined_symbols"]
+    if quarantined:
+        console.print("[yellow]Quarantined: " + ", ".join(quarantined) + "[/yellow]")
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("provider-history-status")
+def provider_history_status(
+    exchange: Annotated[
+        str,
+        typer.Argument(help="Canonical equity exchange: NSE, TSX, or US."),
+    ],
+) -> None:
+    exchange_code = exchange.upper()
+    if exchange_code not in {"NSE", "TSX", "US"}:
+        raise typer.BadParameter("exchange must be NSE, TSX, or US")
+    try:
+        store = TimescaleStore(get_settings().database_url)
+        store.initialize()
+        summary = store.provider_daily_history_summary(exchange_code)
+    except SQLAlchemyError as exc:
+        detail = str(getattr(exc, "orig", exc)).strip().splitlines()[0]
+        console.print(f"[red]Error: Provider-history query failed: {detail}[/red]")
+        raise typer.Exit(code=1) from None
+
+    table = Table(title=f"{exchange_code} Yahoo Provider History Status")
+    table.add_column("Classification")
+    table.add_column("Instruments", justify="right")
+    table.add_column("Windows", justify="right")
+    table.add_column("Expected", justify="right")
+    table.add_column("Observed", justify="right")
+    table.add_column("Unavailable", justify="right")
+    for row in summary["groups"]:
+        table.add_row(
+            str(row["classification"]),
+            str(row["instruments"]),
+            str(row["evidence_windows"]),
+            str(row["expected_rows"] or 0),
+            str(row["observed_rows"] or 0),
+            str(row["provider_unavailable_rows"] or 0),
+        )
+    console.print(table)
+    quarantined = [str(row["provider_symbol"]) for row in summary["quarantined"]]
+    if quarantined:
+        console.print("[yellow]Quarantined: " + ", ".join(quarantined) + "[/yellow]")
 
 
 @app.command("fetch-yfinance-missing")

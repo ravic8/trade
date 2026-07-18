@@ -10,6 +10,13 @@ import pandas as pd
 
 from trade_research.config import Settings, get_settings
 from trade_research.data.daily_work import DailyInstrument, DailyWorkPlanner
+from trade_research.data.provider_history import (
+    build_provider_daily_history_evidence,
+    expected_sessions_for_work_item,
+    provider_history_is_quarantined,
+    verified_provider_coverage_windows,
+    verified_provider_history_start,
+)
 from trade_research.data.rate_limits import build_provider_rate_limiter
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.yfinance_daily import (
@@ -69,6 +76,7 @@ def run_yfinance_daily_work_planner(
     observed_at = _as_utc(at or datetime.now(UTC))
     planner = DailyWorkPlanner(max_attempts=settings.yfinance_work_max_attempts)
     generated = inserted = active_count = cancelled_before_listing = 0
+    quarantined_count = evidence_window_count = cancelled_quarantined_work = 0
     exchange_metrics: dict[str, Any] = {}
 
     for raw_exchange in resolved_exchanges:
@@ -112,6 +120,56 @@ def run_yfinance_daily_work_planner(
         eligible_symbol_count = len(instrument_rows)
         if instrument_limit_per_exchange is not None:
             instrument_rows = instrument_rows[:instrument_limit_per_exchange]
+        evidence_by_key: dict[str, list[dict[str, Any]]] = {}
+        quarantined_symbols: list[str] = []
+        quarantined_ids: list[str] = []
+        covered_windows: dict[str, list[tuple[date, date]]] = {}
+        if settings.yfinance_provider_history_evidence_enabled:
+            selected_keys = [
+                str(
+                    row.get("provider_instrument_key")
+                    or f"YF|{row['provider_symbol']}"
+                )
+                for row in instrument_rows
+            ]
+            evidence_by_key = db.provider_daily_history_evidence(
+                selected_keys,
+                provider="yfinance",
+                interval="1d",
+                chunk_size=settings.yfinance_work_planner_chunk_size,
+            )
+            retained_rows: list[dict[str, Any]] = []
+            for row in instrument_rows:
+                instrument_key = str(
+                    row.get("provider_instrument_key")
+                    or f"YF|{row['provider_symbol']}"
+                )
+                evidence = evidence_by_key.get(instrument_key, [])
+                if provider_history_is_quarantined(evidence):
+                    quarantined_symbols.append(str(row["provider_symbol"]))
+                    quarantined_ids.append(str(row["canonical_instrument_id"]))
+                    continue
+                retained_rows.append(row)
+                windows = verified_provider_coverage_windows(evidence)
+                if windows:
+                    covered_windows[instrument_key] = windows
+            instrument_rows = retained_rows
+            quarantined_count += len(quarantined_symbols)
+            evidence_window_count += sum(len(value) for value in covered_windows.values())
+        exchange_cancelled_quarantined_work = (
+            db.cancel_pending_pipeline_work_for_instruments(
+                quarantined_ids,
+                reason="provider_history_quarantined",
+                message=(
+                    "Pending Yahoo work was cancelled because provider history "
+                    "evidence quarantined the instrument."
+                ),
+                at=observed_at,
+            )
+            if enqueue and quarantined_ids
+            else 0
+        )
+        cancelled_quarantined_work += exchange_cancelled_quarantined_work
         instruments = [
             DailyInstrument(
                 canonical_instrument_id=str(row["canonical_instrument_id"]),
@@ -121,10 +179,19 @@ def run_yfinance_daily_work_planner(
                 pipeline_eligibility=str(row.get("pipeline_eligibility") or "incremental"),
                 listing_status_effective_at=row.get("listing_status_effective_at"),
                 provider_instrument_key=row.get("provider_instrument_key"),
+                provider_history_start_date=verified_provider_history_start(
+                    evidence_by_key.get(
+                        str(
+                            row.get("provider_instrument_key")
+                            or f"YF|{row['provider_symbol']}"
+                        ),
+                        [],
+                    )
+                ),
             )
             for row in instrument_rows
         ]
-        if not instruments:
+        if not instruments and not quarantined_symbols:
             raise ValueError(
                 f"No active yfinance instruments are available from the latest {exchange} snapshot."
             )
@@ -161,13 +228,23 @@ def run_yfinance_daily_work_planner(
                 )
                 if include_initial_backfill:
                     work = planner.plan_initial_backfill(
-                        chunk, sessions, stored_dates, now=observed_at
+                        chunk,
+                        sessions,
+                        stored_dates,
+                        covered_windows=covered_windows,
+                        now=observed_at,
                     )
                     exchange_generated += len(work)
                     if enqueue:
                         exchange_inserted += db.enqueue_pipeline_work_items(work)
                 if include_gap_repair:
-                    work = planner.plan_gap_repair(chunk, sessions, stored_dates, now=observed_at)
+                    work = planner.plan_gap_repair(
+                        chunk,
+                        sessions,
+                        stored_dates,
+                        covered_windows=covered_windows,
+                        now=observed_at,
+                    )
                     exchange_generated += len(work)
                     if enqueue:
                         exchange_inserted += db.enqueue_pipeline_work_items(work)
@@ -184,6 +261,16 @@ def run_yfinance_daily_work_planner(
             "work_generated": exchange_generated,
             "work_inserted": exchange_inserted,
             "work_cancelled_before_listing": exchange_cancelled_before_listing,
+            "provider_history_evidence_enabled": (
+                settings.yfinance_provider_history_evidence_enabled
+            ),
+            "provider_history_evidence_windows": sum(
+                len(value) for value in covered_windows.values()
+            ),
+            "provider_quarantined_symbols": quarantined_symbols,
+            "provider_quarantined_work_cancelled": (
+                exchange_cancelled_quarantined_work
+            ),
         }
 
     return PipelineRunResult(
@@ -196,6 +283,12 @@ def run_yfinance_daily_work_planner(
             "work_generated": generated,
             "work_inserted": inserted,
             "work_cancelled_before_listing": cancelled_before_listing,
+            "provider_history_evidence_enabled": (
+                settings.yfinance_provider_history_evidence_enabled
+            ),
+            "provider_history_evidence_windows": evidence_window_count,
+            "provider_quarantined_symbols": quarantined_count,
+            "provider_quarantined_work_cancelled": cancelled_quarantined_work,
             "duplicates_reused": generated - inserted if enqueue else 0,
             "enqueue": enqueue,
             "work_not_enqueued": generated if not enqueue else 0,
@@ -549,7 +642,85 @@ def _execute_claimed_exchange_work(
         if not frame.empty
         else 0
     )
+    _record_successful_provider_history_evidence(
+        db=db,
+        settings=settings,
+        exchange=exchange,
+        work_items=work_items,
+        ticker_outcomes=execution.ticker_outcomes,
+        run_id=run_id,
+    )
     return execution.ticker_outcomes, written, adjustments
+
+
+def _record_successful_provider_history_evidence(
+    *,
+    db: TimescaleStore,
+    settings: Settings,
+    exchange: str,
+    work_items: list[dict[str, Any]],
+    ticker_outcomes: list[dict[str, Any]],
+    run_id: str,
+) -> int:
+    successful_ids = {
+        str(outcome["work_item_id"])
+        for outcome in ticker_outcomes
+        if outcome.get("work_item_id") and outcome.get("status") == "success"
+    }
+    successful_work = [
+        item
+        for item in work_items
+        if str(item["work_item_id"]) in successful_ids
+        and item.get("work_type")
+        in {"initial_backfill", "new_symbol_backfill", "gap_repair"}
+    ]
+    if not successful_work:
+        return 0
+    minimum_start = min(item["window_start"] for item in successful_work)
+    maximum_end = max(item["window_end"] for item in successful_work)
+    sessions = [
+        row["session_date"]
+        for row in db.exchange_sessions(exchange, minimum_start, maximum_end)
+        if row["is_trading_day"]
+        and str(row["validation_status"]).startswith("valid")
+    ]
+    instrument_keys = [
+        str(
+            item.get("provider_instrument_key")
+            or f"YF|{item['provider_symbol']}"
+        )
+        for item in successful_work
+    ]
+    observed_by_key = db.daily_ohlcv_dates_by_instrument(
+        list(dict.fromkeys(instrument_keys)),
+        minimum_start,
+        maximum_end,
+        source="yfinance",
+        exchange=exchange,
+        valid_only=True,
+    )
+
+    evidence_rows: list[dict[str, Any]] = []
+    for work_item in successful_work:
+        instrument_key = str(
+            work_item.get("provider_instrument_key")
+            or f"YF|{work_item['provider_symbol']}"
+        )
+        evidence = build_provider_daily_history_evidence(
+            work_item,
+            expected_sessions=expected_sessions_for_work_item(work_item, sessions),
+            observed_dates=sorted(observed_by_key.get(instrument_key, set())),
+            run_id=run_id,
+            sparse_minimum_expected_rows=(
+                settings.yfinance_sparse_history_minimum_expected_rows
+            ),
+            sparse_maximum_observed_rows=(
+                settings.yfinance_sparse_history_maximum_observed_rows
+            ),
+        )
+        if evidence is not None:
+            evidence_rows.append(evidence.as_row())
+    return db.upsert_provider_daily_history_evidence(evidence_rows)
 
 
 class _WorkHeartbeat:

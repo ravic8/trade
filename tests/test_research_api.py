@@ -43,6 +43,31 @@ class FakeCoverageStore:
             ],
         }
 
+    def provider_daily_history_summary(
+        self, exchange: str, *, provider: str = "yfinance"
+    ) -> dict:
+        return {
+            "provider": provider,
+            "exchange": exchange,
+            "groups": [
+                {
+                    "classification": "verified_partial",
+                    "evidence_windows": 99,
+                    "instruments": 99,
+                    "expected_rows": 248_000,
+                    "observed_rows": 241_000,
+                    "provider_unavailable_rows": 7_000,
+                    "latest_verified_at": datetime(2026, 7, 18, tzinfo=UTC),
+                }
+            ],
+            "quarantined": [
+                {
+                    "provider_symbol": "AKT-A.TO",
+                    "classification": "quarantined_sparse",
+                }
+            ],
+        }
+
     def upsert_provider_credential(
         self,
         provider: str,
@@ -619,6 +644,19 @@ def test_tsx_reconciliation_observability_endpoint(monkeypatch) -> None:
     assert payload["snapshot_id"] == "tsx-snapshot-1"
     assert payload["diagnostics"]["eligible_symbols"] == 645
     assert payload["groups"][0]["reconciliation_status"] == "official_eligible"
+
+
+def test_provider_history_observability_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get("/api/data/provider-history?exchange=CA")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exchange"] == "TSX"
+    assert payload["groups"][0]["classification"] == "verified_partial"
+    assert payload["quarantined"][0]["provider_symbol"] == "AKT-A.TO"
 
 
 def test_admin_provider_credential_status_requires_admin(monkeypatch) -> None:

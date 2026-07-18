@@ -616,6 +616,36 @@ pipeline_work_items_table = Table(
     UniqueConstraint("idempotency_key", name="uq_pipeline_work_items_idempotency_key"),
 )
 
+provider_daily_history_evidence_table = Table(
+    "provider_daily_history_evidence",
+    metadata,
+    Column("evidence_id", String, primary_key=True),
+    Column("provider", String, nullable=False),
+    Column("instrument_key", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("canonical_instrument_id", String, nullable=False),
+    Column("provider_symbol", String, nullable=False),
+    Column("interval", String, nullable=False),
+    Column("work_type", String, nullable=False),
+    Column("requested_start", Date, nullable=False),
+    Column("requested_end", Date, nullable=False),
+    Column("coverage_start", Date, nullable=False),
+    Column("coverage_end", Date, nullable=False),
+    Column("first_available_date", Date, nullable=False),
+    Column("last_available_date", Date, nullable=False),
+    Column("expected_rows", BigInteger, nullable=False),
+    Column("observed_rows", BigInteger, nullable=False),
+    Column("missing_rows", BigInteger, nullable=False),
+    Column("coverage_ratio", Float, nullable=False),
+    Column("classification", String, nullable=False),
+    Column("quarantine_reason", String),
+    Column("status", String, nullable=False, default="active", server_default="active"),
+    Column("evidence_run_id", String, nullable=False),
+    Column("verified_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 adaptive_rate_state_table = Table(
     "adaptive_rate_state",
     metadata,
@@ -695,6 +725,18 @@ Index(
     pipeline_work_items_table.c.next_attempt_at,
     pipeline_work_items_table.c.priority,
     pipeline_work_items_table.c.created_at,
+)
+Index(
+    "idx_provider_daily_history_exchange_classification",
+    provider_daily_history_evidence_table.c.exchange,
+    provider_daily_history_evidence_table.c.classification,
+    provider_daily_history_evidence_table.c.status,
+)
+Index(
+    "idx_provider_daily_history_instrument",
+    provider_daily_history_evidence_table.c.provider,
+    provider_daily_history_evidence_table.c.instrument_key,
+    provider_daily_history_evidence_table.c.interval,
 )
 Index(
     "idx_daily_coverage_summary_exchange_status",
@@ -1880,6 +1922,178 @@ class TimescaleStore:
                 inserted += len(result.scalars().all())
         return inserted
 
+    def upsert_provider_daily_history_evidence(
+        self,
+        evidence_rows: Iterable[Mapping[str, Any]],
+    ) -> int:
+        rows = [dict(row) for row in evidence_rows]
+        if not rows:
+            return 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(provider_daily_history_evidence_table).values(chunk)
+                updates = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in provider_daily_history_evidence_table.columns
+                    if column.name not in {"evidence_id", "created_at"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["evidence_id"],
+                        set_=updates,
+                    )
+                )
+        return len(rows)
+
+    def provider_daily_history_evidence(
+        self,
+        instrument_keys: Iterable[str],
+        *,
+        provider: str = "yfinance",
+        interval: str = "1d",
+        active_only: bool = True,
+        chunk_size: int = 500,
+    ) -> dict[str, list[dict[str, Any]]]:
+        keys = list(dict.fromkeys(str(key) for key in instrument_keys))
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        if not keys:
+            return grouped
+        with self.engine.begin() as connection:
+            for chunk in _chunks(keys, size=max(chunk_size, 1)):
+                query = (
+                    provider_daily_history_evidence_table.select()
+                    .where(provider_daily_history_evidence_table.c.provider == provider)
+                    .where(provider_daily_history_evidence_table.c.interval == interval)
+                    .where(provider_daily_history_evidence_table.c.instrument_key.in_(chunk))
+                    .order_by(
+                        provider_daily_history_evidence_table.c.instrument_key,
+                        provider_daily_history_evidence_table.c.requested_start,
+                    )
+                )
+                if active_only:
+                    query = query.where(
+                        provider_daily_history_evidence_table.c.status == "active"
+                    )
+                for row in connection.execute(query).mappings():
+                    item = dict(row)
+                    grouped.setdefault(str(item["instrument_key"]), []).append(item)
+        return grouped
+
+    def succeeded_daily_backfill_work_items(
+        self,
+        canonical_instrument_ids: Iterable[str],
+        *,
+        provider: str = "yfinance",
+    ) -> list[dict[str, Any]]:
+        canonical_ids = list(
+            dict.fromkeys(str(value) for value in canonical_instrument_ids)
+        )
+        if not canonical_ids:
+            return []
+        rows: list[dict[str, Any]] = []
+        with self.engine.begin() as connection:
+            for chunk in _chunks(canonical_ids, size=500):
+                query = (
+                    select(
+                        pipeline_work_items_table,
+                        symbols_table.c.provider_instrument_key,
+                        symbols_table.c.listing_status,
+                        symbols_table.c.listing_status_effective_at,
+                        symbols_table.c.first_seen_at,
+                    )
+                    .select_from(
+                        pipeline_work_items_table.join(
+                            symbols_table,
+                            (
+                                pipeline_work_items_table.c.canonical_instrument_id
+                                == symbols_table.c.canonical_instrument_id
+                            )
+                            & (
+                                pipeline_work_items_table.c.exchange
+                                == symbols_table.c.exchange
+                            ),
+                        )
+                    )
+                    .where(pipeline_work_items_table.c.provider == provider)
+                    .where(pipeline_work_items_table.c.status == "succeeded")
+                    .where(symbols_table.c.is_active.is_(True))
+                    .where(
+                        symbols_table.c.yahoo_symbol
+                        == pipeline_work_items_table.c.provider_symbol
+                    )
+                    .where(
+                        pipeline_work_items_table.c.work_type.in_(
+                            ("initial_backfill", "new_symbol_backfill", "gap_repair")
+                        )
+                    )
+                    .where(
+                        pipeline_work_items_table.c.canonical_instrument_id.in_(chunk)
+                    )
+                    .order_by(
+                        pipeline_work_items_table.c.provider_symbol,
+                        pipeline_work_items_table.c.window_start,
+                    )
+                )
+                rows.extend(dict(row) for row in connection.execute(query).mappings())
+        return rows
+
+    def provider_daily_history_summary(
+        self,
+        exchange: str,
+        *,
+        provider: str = "yfinance",
+    ) -> dict[str, Any]:
+        filters = (
+            provider_daily_history_evidence_table.c.exchange == exchange.upper(),
+            provider_daily_history_evidence_table.c.provider == provider,
+            provider_daily_history_evidence_table.c.status == "active",
+        )
+        grouped_query = (
+            select(
+                provider_daily_history_evidence_table.c.classification,
+                func.count().label("evidence_windows"),
+                func.count(
+                    func.distinct(provider_daily_history_evidence_table.c.instrument_key)
+                ).label("instruments"),
+                func.sum(provider_daily_history_evidence_table.c.expected_rows).label(
+                    "expected_rows"
+                ),
+                func.sum(provider_daily_history_evidence_table.c.observed_rows).label(
+                    "observed_rows"
+                ),
+                func.sum(provider_daily_history_evidence_table.c.missing_rows).label(
+                    "provider_unavailable_rows"
+                ),
+                func.max(provider_daily_history_evidence_table.c.verified_at).label(
+                    "latest_verified_at"
+                ),
+            )
+            .where(*filters)
+            .group_by(provider_daily_history_evidence_table.c.classification)
+            .order_by(provider_daily_history_evidence_table.c.classification)
+        )
+        quarantine_query = (
+            provider_daily_history_evidence_table.select()
+            .where(*filters)
+            .where(
+                provider_daily_history_evidence_table.c.classification
+                == "quarantined_sparse"
+            )
+            .order_by(provider_daily_history_evidence_table.c.provider_symbol)
+            .limit(50)
+        )
+        with self.engine.begin() as connection:
+            groups = [dict(row) for row in connection.execute(grouped_query).mappings()]
+            quarantined = [
+                dict(row) for row in connection.execute(quarantine_query).mappings()
+            ]
+        return {
+            "provider": provider,
+            "exchange": exchange.upper(),
+            "groups": groups,
+            "quarantined": quarantined,
+        }
+
     def cancel_pipeline_work_items_before_listing(
         self,
         *,
@@ -1917,6 +2131,41 @@ class TimescaleStore:
                 last_error_message=(
                     "Work window ends before the active instrument listing boundary."
                 ),
+                next_attempt_at=None,
+                completed_at=now,
+                updated_at=now,
+            )
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+        return int(result.rowcount or 0)
+
+    def cancel_pending_pipeline_work_for_instruments(
+        self,
+        canonical_instrument_ids: Iterable[str],
+        *,
+        provider: str = "yfinance",
+        reason: str,
+        message: str,
+        at: datetime | None = None,
+    ) -> int:
+        canonical_ids = list(
+            dict.fromkeys(str(value) for value in canonical_instrument_ids)
+        )
+        if not canonical_ids:
+            return 0
+        now = _as_utc(at or datetime.now(UTC))
+        statement = (
+            pipeline_work_items_table.update()
+            .where(pipeline_work_items_table.c.provider == provider)
+            .where(
+                pipeline_work_items_table.c.canonical_instrument_id.in_(canonical_ids)
+            )
+            .where(pipeline_work_items_table.c.status.in_(("queued", "retry_wait")))
+            .values(
+                status="cancelled",
+                last_error_code=reason,
+                last_error_message=message,
                 next_attempt_at=None,
                 completed_at=now,
                 updated_at=now,

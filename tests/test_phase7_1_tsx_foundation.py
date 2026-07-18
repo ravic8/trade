@@ -111,4 +111,4 @@ def test_ca_migration_keeps_canonical_tsx_row_and_moves_non_conflicts(
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
 
     assert rows == [("RY", "TSX"), ("SHOP", "TSX")]
-    assert revision == "20260718_0005"
+    assert revision == "20260718_0006"
