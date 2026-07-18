@@ -19,6 +19,7 @@ def test_yfinance_seed_universe_returns_us_and_canada_symbols() -> None:
     assert us[0].currency == "USD"
     assert len(canada) == 20
     assert canada[0].symbol == "SHOP"
+    assert canada[0].exchange == "TSX"
     assert canada[0].yahoo_symbol == "SHOP.TO"
     assert canada[0].currency == "CAD"
 

@@ -200,7 +200,7 @@ export type DataAvailabilityResponse = {
 
 export type DataAvailabilityParams = {
   provider?: "upstox" | "yfinance";
-  exchange?: "NSE" | "US" | "CA" | "GLOBAL";
+  exchange?: "NSE" | "US" | "TSX" | "GLOBAL";
   interval?: "1d" | "5m";
   start_date?: string;
   end_date?: string;
@@ -327,7 +327,7 @@ export type ProviderRequestLogRow = {
 
 export type ProviderObservabilityParams = {
   provider?: "upstox" | "yfinance" | "";
-  exchange?: "NSE" | "US" | "CA" | "GLOBAL" | "";
+  exchange?: "NSE" | "US" | "TSX" | "GLOBAL" | "";
   job?: string;
   endpoint_group?: string;
   status?: string;

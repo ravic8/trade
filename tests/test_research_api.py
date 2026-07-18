@@ -895,7 +895,40 @@ def test_data_availability_rejects_yfinance_exchange_mismatch() -> None:
         )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "universe_id=us_seed does not match exchange=CA."
+    assert response.json()["detail"] == "universe_id=us_seed does not match exchange=TSX."
+
+
+def test_data_availability_normalizes_legacy_ca_alias(monkeypatch) -> None:
+    class TSXCoverageStore(FakeCoverageStore):
+        def seeded_daily_ohlcv_availability(self, **kwargs) -> dict:
+            assert kwargs["source"] == "yfinance"
+            assert kwargs["exchange"] == "TSX"
+            assert kwargs["symbols"][0]["instrument_key"] == "YF|SHOP.TO"
+            return {
+                "total": 0,
+                "rows": [],
+                "summary": {
+                    "symbols_total": 0,
+                    "symbols_complete": 0,
+                    "symbols_partial": 0,
+                    "symbols_empty": 0,
+                    "expected_rows": 0,
+                    "stored_rows": 0,
+                    "missing_rows": 0,
+                    "estimated_provider_calls_for_missing": 0,
+                },
+            }
+
+    monkeypatch.setattr("trade_research.api.app._store", lambda: TSXCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?provider=yfinance&exchange=CA&universe_id=canada_seed"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["exchange"] == "TSX"
 
 
 def test_data_bulk_fetch_preview_supports_yfinance_filters(monkeypatch) -> None:

@@ -106,7 +106,7 @@ def test_yfinance_canada_universe_wraps_tsx_provider() -> None:
 
     assert len(symbols) == 1
     assert symbols[0].symbol == "SHOP"
-    assert symbols[0].exchange == "CA"
+    assert symbols[0].exchange == "TSX"
     assert symbols[0].yahoo_symbol == "SHOP.TO"
     assert symbols[0].source == "tsx_test"
 
@@ -115,4 +115,4 @@ def test_yfinance_universe_ids_and_exchanges_support_full_aliases() -> None:
     assert yfinance_universe_id("us_all") == "us_all"
     assert yfinance_universe_id("canada_all") == "canada_all"
     assert yfinance_exchange_for_universe("us_all") == "US"
-    assert yfinance_exchange_for_universe("canada_all") == "CA"
+    assert yfinance_exchange_for_universe("canada_all") == "TSX"

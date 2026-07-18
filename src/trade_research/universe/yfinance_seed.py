@@ -56,7 +56,7 @@ def yfinance_seed_universe(name: str) -> list[Symbol]:
         return [_seed_symbol(symbol, name, "US", "USD", symbol) for symbol, name in US_SEED_ROWS]
     if normalized in {"ca", "canada", "canada_seed", "tsx_seed"}:
         return [
-            _seed_symbol(symbol, name, "CA", "CAD", f"{symbol}.TO")
+            _seed_symbol(symbol, name, "TSX", "CAD", f"{symbol}.TO")
             for symbol, name in CANADA_SEED_ROWS
         ]
     raise ValueError(f"Unsupported yfinance seed universe: {name}")

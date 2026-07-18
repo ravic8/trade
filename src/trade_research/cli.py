@@ -123,8 +123,24 @@ def refresh_equity_universe(
     table.add_row("Status", str(result.metrics["snapshot_status"]))
     table.add_row("Source", str(result.metrics["source"]))
     table.add_row("Symbols", str(result.metrics["symbol_count"]))
+    source_diagnostics = result.metrics.get("source_diagnostics") or {}
+    if source_diagnostics:
+        table.add_row("Source rows", str(source_diagnostics.get("source_rows", "")))
+        table.add_row("TSX rows", str(source_diagnostics.get("tsx_rows", "")))
+        table.add_row(
+            "Excluded TSXV",
+            str(source_diagnostics.get("excluded_tsxv_rows", "")),
+        )
+        table.add_row(
+            "Excluded Cboe Canada",
+            str(source_diagnostics.get("excluded_cboe_canada_rows", "")),
+        )
     table.add_row("Lifecycle events", str(result.metrics["events_written"]))
     table.add_row("Backfills queued", str(result.metrics["work_items_queued"]))
+    table.add_row(
+        "Backfill planning enabled",
+        str(result.metrics["backfill_planning_enabled"]),
+    )
     table.add_row(
         "Backfill execution enabled",
         str(result.metrics["backfill_execution_enabled"]),

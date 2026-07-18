@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -533,6 +533,7 @@ class PersistedUniverseService:
         allow_large_change: bool = False,
         fetched_at: datetime | None = None,
         snapshot_id: str | None = None,
+        enqueue_backfills: bool = True,
     ) -> UniverseRefreshResult:
         exchange = canonical_equity_exchange(provider.exchange)
         observed_at = _as_utc(fetched_at or datetime.now(UTC))
@@ -562,6 +563,7 @@ class PersistedUniverseService:
                 error_message=message,
             )
 
+        source_diagnostics = _provider_diagnostics(provider)
         previous = self.repository.latest_accepted_universe_snapshot(exchange)
         previous_count = int(previous["symbol_count"]) if previous is not None else None
         validation = validate_universe_snapshot(
@@ -573,6 +575,9 @@ class PersistedUniverseService:
         )
         if not validation.accepted:
             message = "; ".join(validation.errors)
+            validation_json = validation.as_json()
+            if source_diagnostics:
+                validation_json["source_diagnostics"] = source_diagnostics
             self.repository.record_universe_snapshot(
                 snapshot_id=resolved_snapshot_id,
                 exchange=exchange,
@@ -580,7 +585,7 @@ class PersistedUniverseService:
                 status="rejected",
                 fetched_at=observed_at,
                 symbol_count=len(symbols),
-                validation_json=validation.as_json(),
+                validation_json=validation_json,
                 error_message=message,
             )
             return UniverseRefreshResult(
@@ -601,20 +606,24 @@ class PersistedUniverseService:
             fetched_at=observed_at,
             missing_snapshots_before_inactive=self.missing_snapshots_before_inactive,
         )
+        persisted_plan = plan if enqueue_backfills else replace(plan, work_items=())
+        validation_json = validation.as_json()
+        if source_diagnostics:
+            validation_json["source_diagnostics"] = source_diagnostics
         self.repository.persist_accepted_universe_snapshot(
-            plan=plan,
+            plan=persisted_plan,
             source=source,
-            validation_json=validation.as_json(),
+            validation_json=validation_json,
         )
         return UniverseRefreshResult(
             snapshot_id=resolved_snapshot_id,
             exchange=exchange,
             source=source,
             status="accepted",
-            symbol_count=len(plan.members),
+            symbol_count=len(persisted_plan.members),
             validation=validation,
-            events_written=len(plan.events),
-            work_items_queued=len(plan.work_items),
+            events_written=len(persisted_plan.events),
+            work_items_queued=len(persisted_plan.work_items),
         )
 
 
@@ -758,6 +767,16 @@ def _canonical_exchange_or_none(value: str) -> str | None:
 def _optional_string(value: object) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
+
+
+def _provider_diagnostics(provider: UniverseProvider) -> dict[str, Any]:
+    diagnostics = getattr(provider, "diagnostics", None)
+    if not callable(diagnostics):
+        return {}
+    payload = diagnostics()
+    if not isinstance(payload, Mapping):
+        return {}
+    return {str(key): value for key, value in payload.items()}
 
 
 def _as_utc(value: datetime) -> datetime:

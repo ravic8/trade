@@ -215,6 +215,38 @@ def test_source_failure_is_recorded_without_reconciliation() -> None:
     assert repository.plans == []
 
 
+def test_disabled_exchange_refresh_persists_snapshot_without_backfill_work() -> None:
+    repository = MemoryRepository()
+    provider = MutableProvider(
+        [_symbol("SHOP", exchange="TSX", provider_symbol="SHOP.TO")]
+    )
+    provider.exchange = "TSX"
+    provider.diagnostics = lambda: {
+        "source_rows": 3,
+        "tsx_rows": 1,
+        "excluded_tsxv_rows": 1,
+        "excluded_cboe_canada_rows": 1,
+    }
+
+    result = PersistedUniverseService(repository).refresh(
+        provider,
+        UniverseValidationPolicy(minimum_symbol_count=1),
+        snapshot_id="tsx-preflight",
+        enqueue_backfills=False,
+    )
+
+    assert result.status == "accepted"
+    assert result.events_written == 1
+    assert result.work_items_queued == 0
+    assert repository.plans[0].work_items == ()
+    assert repository.snapshots[0]["validation_json"]["source_diagnostics"] == {
+        "source_rows": 3,
+        "tsx_rows": 1,
+        "excluded_tsxv_rows": 1,
+        "excluded_cboe_canada_rows": 1,
+    }
+
+
 def test_mapping_change_preserves_canonical_identity_and_emits_event() -> None:
     fetched_at = datetime(2026, 7, 17, tzinfo=UTC)
     canonical_id = canonical_instrument_id("US", "BRK.B")

@@ -134,27 +134,19 @@ class YFinanceUSUniverseProvider(UniverseProvider):
 
 
 class YFinanceCanadaUniverseProvider(UniverseProvider):
-    exchange = "CA"
+    """Compatibility wrapper around the canonical TSX universe provider."""
+
+    exchange = "TSX"
     source = "tsx_google_sheet"
 
     def __init__(self, tsx_provider: TSXUniverseProvider | None = None) -> None:
         self.tsx_provider = tsx_provider or TSXUniverseProvider()
 
     def fetch(self) -> list[Symbol]:
-        symbols = []
-        for item in self.tsx_provider.fetch():
-            symbols.append(
-                Symbol(
-                    symbol=item.symbol,
-                    exchange=self.exchange,
-                    yahoo_symbol=item.yahoo_symbol,
-                    name=item.name,
-                    currency="CAD",
-                    source=item.source,
-                    source_url=item.source_url,
-                )
-            )
-        return symbols
+        return [
+            item.model_copy(update={"exchange": self.exchange, "currency": "CAD"})
+            for item in self.tsx_provider.fetch()
+        ]
 
 
 def yfinance_universe(name: str) -> list[Symbol]:
@@ -185,7 +177,7 @@ def yfinance_exchange_for_universe(name: str) -> str:
     if universe_id in {"us_all", "us_seed"}:
         return "US"
     if universe_id in {"canada_all", "canada_seed"}:
-        return "CA"
+        return "TSX"
     raise ValueError(f"Unsupported yfinance universe: {name}")
 
 
