@@ -9,7 +9,8 @@ from trade_research.storage import TimescaleStore
 from trade_research.universe import (
     NSEUniverseProvider,
     PersistedUniverseService,
-    TSXUniverseProvider,
+    ReconciledTSXUniverseProvider,
+    TMXOfficialDirectoryProvider,
     UniverseValidationPolicy,
     YFinanceUSUniverseProvider,
 )
@@ -29,7 +30,7 @@ def run_equity_universe_snapshot_pipeline(
 ) -> PipelineRunResult:
     settings = get_settings()
     canonical_exchange = canonical_equity_exchange(exchange)
-    resolved_provider = provider or equity_universe_provider(canonical_exchange)
+    resolved_provider = provider or equity_universe_provider(canonical_exchange, settings=settings)
     resolved_repository = repository
     if resolved_repository is None:
         store = TimescaleStore(settings.database_url)
@@ -82,12 +83,26 @@ def run_equity_universe_snapshot_pipeline(
     )
 
 
-def equity_universe_provider(exchange: str) -> UniverseProvider:
+def equity_universe_provider(
+    exchange: str,
+    *,
+    settings: Settings | None = None,
+) -> UniverseProvider:
     canonical_exchange = canonical_equity_exchange(exchange)
     if canonical_exchange == "NSE":
         return NSEUniverseProvider()
     if canonical_exchange == "TSX":
-        return TSXUniverseProvider()
+        resolved_settings = settings or get_settings()
+        return ReconciledTSXUniverseProvider(
+            official_provider=TMXOfficialDirectoryProvider(
+                issuer_url=resolved_settings.tsx_official_issuer_url,
+                directory_base_url=(
+                    resolved_settings.tsx_official_directory_base_url
+                ),
+                timeout_seconds=resolved_settings.tsx_official_timeout_seconds,
+                retry_attempts=resolved_settings.tsx_official_retry_attempts,
+            )
+        )
     return YFinanceUSUniverseProvider()
 
 

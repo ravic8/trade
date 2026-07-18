@@ -78,6 +78,18 @@ symbols_table = Table(
     Column("provider_status", String, nullable=False, default="unknown", server_default="unknown"),
     Column("provider_status_reason", String),
     Column("provider_status_updated_at", DateTime(timezone=True)),
+    Column("instrument_type", String, nullable=False, default="unknown", server_default="unknown"),
+    Column(
+        "reconciliation_status",
+        String,
+        nullable=False,
+        default="not_required",
+        server_default="not_required",
+    ),
+    Column("reconciliation_reason", String),
+    Column("official_sector", String),
+    Column("official_security_type", String),
+    Column("official_source_updated_at", DateTime(timezone=True)),
     Column("fetched_at", DateTime(timezone=True), nullable=False),
 )
 
@@ -1182,6 +1194,12 @@ class TimescaleStore:
                     listing_status_reason=row["listing_status_reason"],
                     listing_status_effective_at=row["listing_status_effective_at"],
                     pipeline_eligibility=row["pipeline_eligibility"],
+                    instrument_type=row["instrument_type"],
+                    reconciliation_status=row["reconciliation_status"],
+                    reconciliation_reason=row["reconciliation_reason"],
+                    official_sector=row["official_sector"],
+                    official_security_type=row["official_security_type"],
+                    official_source_updated_at=row["official_source_updated_at"],
                 )
                 for row in rows
             ]
@@ -1326,6 +1344,12 @@ class TimescaleStore:
                 "listing_status_reason": item.listing_status_reason,
                 "listing_status_effective_at": item.listing_status_effective_at,
                 "pipeline_eligibility": item.pipeline_eligibility,
+                "instrument_type": item.instrument_type,
+                "reconciliation_status": item.reconciliation_status,
+                "reconciliation_reason": item.reconciliation_reason,
+                "official_sector": item.official_sector,
+                "official_security_type": item.official_security_type,
+                "official_source_updated_at": item.official_source_updated_at,
                 "fetched_at": plan.fetched_at,
             }
             for item in plan.instruments
@@ -1351,6 +1375,16 @@ class TimescaleStore:
                         else None
                     ),
                     "pipeline_eligibility": item.pipeline_eligibility,
+                    "instrument_type": item.instrument_type,
+                    "reconciliation_status": item.reconciliation_status,
+                    "reconciliation_reason": item.reconciliation_reason,
+                    "official_sector": item.official_sector,
+                    "official_security_type": item.official_security_type,
+                    "official_source_updated_at": (
+                        item.official_source_updated_at.isoformat()
+                        if item.official_source_updated_at
+                        else None
+                    ),
                 },
             }
             for item in plan.members
@@ -1377,6 +1411,16 @@ class TimescaleStore:
                     "provider_instrument_key": item.provider_instrument_key,
                     "listing_status": item.listing_status,
                     "pipeline_eligibility": item.pipeline_eligibility,
+                    "instrument_type": item.instrument_type,
+                    "reconciliation_status": item.reconciliation_status,
+                    "reconciliation_reason": item.reconciliation_reason,
+                    "official_sector": item.official_sector,
+                    "official_security_type": item.official_security_type,
+                    "official_source_updated_at": (
+                        item.official_source_updated_at.isoformat()
+                        if item.official_source_updated_at
+                        else None
+                    ),
                 },
             }
             for item in plan.instruments
@@ -1756,6 +1800,12 @@ class TimescaleStore:
                 symbols_table.c.listing_status_effective_at,
                 symbols_table.c.pipeline_eligibility,
                 symbols_table.c.provider_status,
+                symbols_table.c.instrument_type,
+                symbols_table.c.reconciliation_status,
+                symbols_table.c.reconciliation_reason,
+                symbols_table.c.official_sector,
+                symbols_table.c.official_security_type,
+                symbols_table.c.official_source_updated_at,
             )
             .select_from(
                 universe_snapshot_members_table.join(
@@ -1773,6 +1823,43 @@ class TimescaleStore:
         )
         with self.engine.begin() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
+
+    def universe_reconciliation_summary(self, exchange: str) -> dict[str, Any]:
+        exchange_code = exchange.upper()
+        latest = self.latest_accepted_universe_snapshot(exchange_code)
+        if latest is None:
+            return {"snapshot": None, "groups": []}
+        query = (
+            select(
+                symbols_table.c.reconciliation_status,
+                symbols_table.c.reconciliation_reason,
+                symbols_table.c.instrument_type,
+                symbols_table.c.pipeline_eligibility,
+                func.count().label("symbols"),
+            )
+            .select_from(
+                universe_snapshot_members_table.join(
+                    symbols_table,
+                    (universe_snapshot_members_table.c.exchange_symbol == symbols_table.c.symbol)
+                    & (symbols_table.c.exchange == exchange_code),
+                )
+            )
+            .where(universe_snapshot_members_table.c.snapshot_id == str(latest["snapshot_id"]))
+            .group_by(
+                symbols_table.c.reconciliation_status,
+                symbols_table.c.reconciliation_reason,
+                symbols_table.c.instrument_type,
+                symbols_table.c.pipeline_eligibility,
+            )
+            .order_by(
+                symbols_table.c.pipeline_eligibility.desc(),
+                symbols_table.c.reconciliation_status,
+                symbols_table.c.instrument_type,
+            )
+        )
+        with self.engine.begin() as connection:
+            groups = [dict(row) for row in connection.execute(query).mappings()]
+        return {"snapshot": latest, "groups": groups}
 
     def enqueue_pipeline_work_items(
         self,

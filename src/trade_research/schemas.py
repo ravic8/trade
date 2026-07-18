@@ -17,6 +17,12 @@ class Symbol(BaseModel):
     listing_status_reason: str | None = None
     listing_status_effective_at: datetime | None = None
     pipeline_eligibility: str = "incremental"
+    instrument_type: str = "unknown"
+    reconciliation_status: str = "not_required"
+    reconciliation_reason: str | None = None
+    official_sector: str | None = None
+    official_security_type: str | None = None
+    official_source_updated_at: datetime | None = None
 
 
 class MarketDataQualityReport(BaseModel):
@@ -374,6 +380,23 @@ class DataUniverseMemberRow(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     included_at: datetime
+
+
+class UniverseReconciliationGroup(BaseModel):
+    reconciliation_status: str
+    reconciliation_reason: str | None = None
+    instrument_type: str
+    pipeline_eligibility: str
+    symbols: int = Field(ge=0)
+
+
+class UniverseReconciliationResponse(BaseModel):
+    exchange: str
+    snapshot_id: str
+    fetched_at: datetime
+    symbol_count: int = Field(ge=0)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    groups: list[UniverseReconciliationGroup] = Field(default_factory=list)
 
 
 class DataPipelineRunSummary(BaseModel):

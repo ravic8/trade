@@ -14,6 +14,14 @@ from trade_research.universe.persisted import (
     validate_universe_snapshot,
 )
 from trade_research.universe.tsx import TSXUniverseProvider
+from trade_research.universe.tsx_reconciliation import (
+    ReconciledTSXUniverseProvider,
+    TMXDirectoryEntry,
+    TMXIssuer,
+    TMXOfficialDirectoryProvider,
+    TMXOfficialSnapshot,
+    classify_tsx_security,
+)
 from trade_research.universe.yfinance_full import (
     YFinanceCanadaUniverseProvider,
     YFinanceUSUniverseProvider,
@@ -32,6 +40,11 @@ __all__ = [
     "NSEUniverseProvider",
     "PersistedUniverseService",
     "TSXUniverseProvider",
+    "ReconciledTSXUniverseProvider",
+    "TMXDirectoryEntry",
+    "TMXIssuer",
+    "TMXOfficialDirectoryProvider",
+    "TMXOfficialSnapshot",
     "DUKASCOPY_INTRADAY_UNIVERSE_ID",
     "DukascopyInstrument",
     "dukascopy_intraday_universe",
@@ -43,6 +56,7 @@ __all__ = [
     "UniverseValidationPolicy",
     "UniverseValidationResult",
     "canonical_instrument_id",
+    "classify_tsx_security",
     "reconcile_universe_snapshot",
     "validate_universe_snapshot",
     "yfinance_exchange_for_universe",

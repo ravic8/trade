@@ -64,6 +64,7 @@ from trade_research.schemas import (
     ProviderRequestSummaryRow,
     ScreenerResult,
     SourcesPayload,
+    UniverseReconciliationResponse,
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
@@ -707,6 +708,34 @@ def data_universe_members(
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return [DataUniverseMemberRow(**row) for row in rows]
+
+
+@app.get(
+    "/api/data/universe-reconciliation",
+    response_model=UniverseReconciliationResponse,
+)
+def data_universe_reconciliation(
+    exchange: str = "TSX",
+) -> UniverseReconciliationResponse:
+    canonical_exchange = _canonical_data_exchange(exchange)
+    if canonical_exchange != "TSX":
+        raise HTTPException(status_code=400, detail="Only the TSX reconciliation is available.")
+    try:
+        summary = _store().universe_reconciliation_summary(canonical_exchange)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    snapshot = summary["snapshot"]
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="No accepted TSX snapshot is available.")
+    diagnostics = dict(snapshot.get("validation_json") or {}).get("source_diagnostics") or {}
+    return UniverseReconciliationResponse(
+        exchange=canonical_exchange,
+        snapshot_id=str(snapshot["snapshot_id"]),
+        fetched_at=snapshot["fetched_at"],
+        symbol_count=int(snapshot["symbol_count"]),
+        diagnostics=diagnostics,
+        groups=summary["groups"],
+    )
 
 
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)

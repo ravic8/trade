@@ -95,7 +95,15 @@ class Settings(BaseSettings):
     yfinance_work_max_attempts: int = Field(default=9, ge=1, le=30)
     yfinance_full_us_enabled: bool = False
     yfinance_full_tsx_enabled: bool = False
+    yfinance_tsx_canary_enabled: bool = False
+    yfinance_tsx_canary_max_symbols: int = Field(default=100, ge=1, le=500)
     yfinance_nse_enabled: bool = False
+    tsx_official_issuer_url: str = "https://www.tsx.com/en/resource/571"
+    tsx_official_directory_base_url: str = (
+        "https://www.tsx.com/json/company-directory"
+    )
+    tsx_official_timeout_seconds: float = Field(default=30.0, ge=1, le=120)
+    tsx_official_retry_attempts: int = Field(default=3, ge=1, le=5)
     equity_universe_minimum_nse_symbols: int = Field(default=1_000, ge=1)
     equity_universe_minimum_tsx_symbols: int = Field(default=500, ge=1)
     equity_universe_minimum_us_symbols: int = Field(default=3_000, ge=1)

@@ -76,6 +76,12 @@ class UniverseInstrumentState:
     listing_status_effective_at: datetime | None = None
     pipeline_eligibility: str = "incremental"
     provider_instrument_key: str | None = None
+    instrument_type: str = "unknown"
+    reconciliation_status: str = "not_required"
+    reconciliation_reason: str | None = None
+    official_sector: str | None = None
+    official_security_type: str | None = None
+    official_source_updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -346,6 +352,12 @@ def reconcile_universe_snapshot(
             listing_status_effective_at=listing_status_effective_at,
             pipeline_eligibility=pipeline_eligibility,
             provider_instrument_key=provider_instrument_key,
+            instrument_type=symbol.instrument_type,
+            reconciliation_status=symbol.reconciliation_status,
+            reconciliation_reason=symbol.reconciliation_reason,
+            official_sector=symbol.official_sector,
+            official_security_type=symbol.official_security_type,
+            official_source_updated_at=symbol.official_source_updated_at,
         )
         instruments.append(state)
 
@@ -353,7 +365,7 @@ def reconcile_universe_snapshot(
             event_type = "ticker_reused" if ticker_reused else "added"
             old_value = _state_json(same_symbol) if ticker_reused and same_symbol else None
             events.append(_event(event_type, state, snapshot_id, observed_at, old_value))
-            if provider_symbol:
+            if provider_symbol and state.pipeline_eligibility == "incremental":
                 work_items.append(_new_symbol_backfill(state, observed_at))
         elif not previous.is_active:
             events.append(
@@ -365,7 +377,7 @@ def reconcile_universe_snapshot(
                     _state_json(previous),
                 )
             )
-            if provider_symbol:
+            if provider_symbol and state.pipeline_eligibility == "incremental":
                 work_items.append(_new_symbol_backfill(state, observed_at))
         elif previous.consecutive_missing_refreshes > 0:
             events.append(
@@ -431,6 +443,45 @@ def reconcile_universe_snapshot(
                 )
             )
 
+        if previous is not None and previous.pipeline_eligibility != state.pipeline_eligibility:
+            events.append(
+                _event(
+                    "pipeline_eligibility_changed",
+                    state,
+                    snapshot_id,
+                    observed_at,
+                    {
+                        "pipeline_eligibility": previous.pipeline_eligibility,
+                        "reason": previous.reconciliation_reason,
+                    },
+                    {
+                        "pipeline_eligibility": state.pipeline_eligibility,
+                        "reason": state.reconciliation_reason,
+                    },
+                )
+            )
+
+        if previous is not None and (
+            previous.reconciliation_status != state.reconciliation_status
+            or previous.reconciliation_reason != state.reconciliation_reason
+        ):
+            events.append(
+                _event(
+                    "reconciliation_status_changed",
+                    state,
+                    snapshot_id,
+                    observed_at,
+                    {
+                        "reconciliation_status": previous.reconciliation_status,
+                        "reason": previous.reconciliation_reason,
+                    },
+                    {
+                        "reconciliation_status": state.reconciliation_status,
+                        "reason": state.reconciliation_reason,
+                    },
+                )
+            )
+
     for exchange_symbol in sorted(set(existing) - set(current)):
         previous = existing[exchange_symbol]
         if exchange_symbol in matched_existing_symbols:
@@ -482,6 +533,12 @@ def reconcile_universe_snapshot(
             listing_status_effective_at=previous.listing_status_effective_at,
             pipeline_eligibility=("none" if deactivate else previous.pipeline_eligibility),
             provider_instrument_key=previous.provider_instrument_key,
+            instrument_type=previous.instrument_type,
+            reconciliation_status=previous.reconciliation_status,
+            reconciliation_reason=previous.reconciliation_reason,
+            official_sector=previous.official_sector,
+            official_security_type=previous.official_security_type,
+            official_source_updated_at=previous.official_source_updated_at,
         )
         instruments.append(state)
         if missing_count == 1:
@@ -681,6 +738,16 @@ def _state_from_existing(
         ),
         pipeline_eligibility=str(row.get("pipeline_eligibility") or "incremental"),
         provider_instrument_key=_optional_string(row.get("provider_instrument_key")),
+        instrument_type=str(row.get("instrument_type") or "unknown"),
+        reconciliation_status=str(row.get("reconciliation_status") or "not_required"),
+        reconciliation_reason=_optional_string(row.get("reconciliation_reason")),
+        official_sector=_optional_string(row.get("official_sector")),
+        official_security_type=_optional_string(row.get("official_security_type")),
+        official_source_updated_at=(
+            _as_utc(row["official_source_updated_at"])
+            if row.get("official_source_updated_at")
+            else None
+        ),
     )
 
 
@@ -738,6 +805,7 @@ def _state_json(state: UniverseInstrumentState) -> dict[str, Any]:
         "last_seen_at",
         "inactive_at",
         "listing_status_effective_at",
+        "official_source_updated_at",
     ):
         value = payload[key]
         payload[key] = value.isoformat() if value is not None else None

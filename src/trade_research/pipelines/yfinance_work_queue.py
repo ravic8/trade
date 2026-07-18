@@ -37,17 +37,32 @@ def run_yfinance_daily_work_planner(
     include_incremental: bool = True,
     include_initial_backfill: bool = True,
     include_gap_repair: bool = False,
+    enqueue: bool = True,
+    instrument_limit_per_exchange: int | None = None,
+    allow_disabled_exchanges: bool = False,
     trigger: str = "pipeline",
     at: datetime | None = None,
 ) -> PipelineRunResult:
     settings = get_settings()
-    resolved_exchanges = (
-        tuple(exchanges) if exchanges is not None else enabled_yfinance_daily_exchanges(settings)
-    )
+    enabled_exchanges = enabled_yfinance_daily_exchanges(settings)
+    resolved_exchanges = tuple(exchanges) if exchanges is not None else enabled_exchanges
     if not resolved_exchanges:
         raise ValueError(
             "No yfinance daily exchanges are enabled. Enable an exchange-specific "
-            "feature flag or pass exchanges explicitly."
+            "feature flag."
+        )
+    if instrument_limit_per_exchange is not None and instrument_limit_per_exchange < 1:
+        raise ValueError("instrument_limit_per_exchange must be positive when provided.")
+    disabled = sorted(
+        {
+            value.upper()
+            for value in resolved_exchanges
+            if value.upper() not in enabled_exchanges
+        }
+    )
+    if disabled and not allow_disabled_exchanges:
+        raise ValueError(
+            "Yfinance daily exchange flags are disabled for: " + ", ".join(disabled)
         )
     db = TimescaleStore(settings.database_url)
     db.initialize()
@@ -78,6 +93,16 @@ def run_yfinance_daily_work_planner(
         ]
         if not sessions:
             raise ValueError(f"No valid materialized trading sessions found for {exchange}.")
+        instrument_rows = db.active_yfinance_daily_instruments(exchange)
+        if exchange == "TSX":
+            instrument_rows = [
+                row
+                for row in instrument_rows
+                if row.get("reconciliation_status") == "official_eligible"
+            ]
+        eligible_symbol_count = len(instrument_rows)
+        if instrument_limit_per_exchange is not None:
+            instrument_rows = instrument_rows[:instrument_limit_per_exchange]
         instruments = [
             DailyInstrument(
                 canonical_instrument_id=str(row["canonical_instrument_id"]),
@@ -88,7 +113,7 @@ def run_yfinance_daily_work_planner(
                 listing_status_effective_at=row.get("listing_status_effective_at"),
                 provider_instrument_key=row.get("provider_instrument_key"),
             )
-            for row in db.active_yfinance_daily_instruments(exchange)
+            for row in instrument_rows
         ]
         if not instruments:
             raise ValueError(
@@ -111,7 +136,8 @@ def run_yfinance_daily_work_planner(
                 now=observed_at,
             )
             exchange_generated += len(work)
-            exchange_inserted += db.enqueue_pipeline_work_items(work)
+            if enqueue:
+                exchange_inserted += db.enqueue_pipeline_work_items(work)
 
         if include_initial_backfill or include_gap_repair:
             for chunk in _chunks(instruments, settings.yfinance_work_planner_chunk_size):
@@ -129,16 +155,20 @@ def run_yfinance_daily_work_planner(
                         chunk, sessions, stored_dates, now=observed_at
                     )
                     exchange_generated += len(work)
-                    exchange_inserted += db.enqueue_pipeline_work_items(work)
+                    if enqueue:
+                        exchange_inserted += db.enqueue_pipeline_work_items(work)
                 if include_gap_repair:
                     work = planner.plan_gap_repair(chunk, sessions, stored_dates, now=observed_at)
                     exchange_generated += len(work)
-                    exchange_inserted += db.enqueue_pipeline_work_items(work)
+                    if enqueue:
+                        exchange_inserted += db.enqueue_pipeline_work_items(work)
 
         generated += exchange_generated
         inserted += exchange_inserted
         exchange_metrics[exchange] = {
             "active_symbols": len(instruments),
+            "eligible_symbols_before_limit": eligible_symbol_count,
+            "instrument_limit": instrument_limit_per_exchange,
             "window_start": start.isoformat(),
             "window_end": end.isoformat(),
             "valid_sessions": len(sessions),
@@ -155,7 +185,9 @@ def run_yfinance_daily_work_planner(
             "active_symbols": active_count,
             "work_generated": generated,
             "work_inserted": inserted,
-            "duplicates_reused": generated - inserted,
+            "duplicates_reused": generated - inserted if enqueue else 0,
+            "enqueue": enqueue,
+            "work_not_enqueued": generated if not enqueue else 0,
             "include_incremental": include_incremental,
             "include_initial_backfill": include_initial_backfill,
             "include_gap_repair": include_gap_repair,
@@ -163,6 +195,47 @@ def run_yfinance_daily_work_planner(
             "queue": db.pipeline_work_queue_summary(),
         },
     )
+
+
+def run_yfinance_tsx_canary_planner(
+    *,
+    symbol_limit: int,
+    enqueue: bool = False,
+    trigger: str = "pipeline",
+    at: datetime | None = None,
+) -> PipelineRunResult:
+    settings = get_settings()
+    if symbol_limit < 1:
+        raise ValueError("TSX canary symbol_limit must be positive.")
+    if symbol_limit > settings.yfinance_tsx_canary_max_symbols:
+        raise ValueError(
+            "TSX canary symbol limit exceeds configured maximum: "
+            f"{symbol_limit}>{settings.yfinance_tsx_canary_max_symbols}"
+        )
+    if enqueue and not (
+        settings.yfinance_tsx_canary_enabled or settings.yfinance_full_tsx_enabled
+    ):
+        raise ValueError(
+            "TSX canary enqueue is disabled. Enable YFINANCE_TSX_CANARY_ENABLED "
+            "for bounded canaries; do not enable the full TSX flag yet."
+        )
+    result = run_yfinance_daily_work_planner(
+        exchanges=("TSX",),
+        include_incremental=False,
+        include_initial_backfill=True,
+        include_gap_repair=False,
+        enqueue=enqueue,
+        instrument_limit_per_exchange=symbol_limit,
+        allow_disabled_exchanges=True,
+        trigger=trigger,
+        at=at,
+    )
+    result.metrics["canary"] = True
+    result.metrics["canary_symbol_limit"] = symbol_limit
+    result.metrics["canary_execution_enabled"] = bool(
+        settings.yfinance_tsx_canary_enabled or settings.yfinance_full_tsx_enabled
+    )
+    return result
 
 
 def run_yfinance_daily_work_queue(
