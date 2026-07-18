@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from trade_research.config import Settings
 from trade_research.data.daily_work import (
     WORK_PRIORITIES,
@@ -136,6 +138,34 @@ def test_complete_backfill_coverage_generates_no_work() -> None:
     )
 
     assert work == []
+
+
+def test_active_listing_date_is_a_lower_bound_for_backfill_and_incremental_work() -> None:
+    listed = DailyInstrument(
+        canonical_instrument_id="eq_aauc",
+        provider_symbol="AAUC.TO",
+        exchange="TSX",
+        listing_status="active",
+        listing_status_effective_at=datetime(2026, 7, 15, tzinfo=UTC),
+    )
+    sessions = [date(2026, 7, day) for day in (13, 14, 15, 16, 17)]
+    planner = DailyWorkPlanner()
+
+    backfill = planner.plan_initial_backfill([listed], sessions, {}, now=NOW)
+    incremental = planner.plan_incremental(
+        [listed],
+        sessions,
+        {listed.instrument_key: date(2026, 7, 15)},
+        overlap_sessions=5,
+        now=NOW,
+    )
+
+    assert [(item.window_start, item.window_end) for item in backfill] == [
+        (date(2026, 7, 15), date(2026, 7, 17))
+    ]
+    assert [(item.window_start, item.window_end) for item in incremental] == [
+        (date(2026, 7, 15), date(2026, 7, 17))
+    ]
 
 
 def test_incremental_planning_uses_five_session_overlap_and_higher_priority() -> None:
@@ -360,3 +390,42 @@ def test_new_listing_empty_response_uses_long_provider_grace_retry(monkeypatch) 
     assert result.metrics["retry_wait"] == 1
     assert store.transitions[0]["error_code"] == "new_listing_provider_lag"
     assert store.transitions[0]["retry_delay"] == timedelta(hours=6)
+
+
+def test_worker_cancels_prelisting_claim_without_calling_yahoo(monkeypatch) -> None:
+    claim = _claimed("before-listing", "AAUC.TO")
+    claim.update(
+        {
+            "exchange": "TSX",
+            "canonical_instrument_id": "eq_aauc",
+            "listing_status": "active",
+            "listing_status_effective_at": datetime(2026, 7, 15, tzinfo=UTC),
+            "window_start": date(2026, 7, 1),
+            "window_end": date(2026, 7, 14),
+        }
+    )
+    store = _MemoryQueueStore([claim])
+    settings = Settings(
+        _env_file=None,
+        yfinance_daily_enabled=True,
+        yfinance_work_heartbeat_seconds=5,
+        yfinance_work_stale_minutes=1,
+    )
+    monkeypatch.setattr(yfinance_work_queue, "get_settings", lambda: settings)
+    monkeypatch.setattr(yfinance_work_queue, "TimescaleStore", lambda _: store)
+    monkeypatch.setattr(
+        yfinance_work_queue,
+        "_execute_claimed_exchange_work",
+        lambda **_kwargs: pytest.fail("pre-listing work must not call Yahoo"),
+    )
+
+    result = yfinance_work_queue.run_yfinance_daily_work_queue(
+        worker_id="worker-before-listing",
+        at=NOW,
+    )
+
+    assert result.metrics["claimed"] == 1
+    assert result.metrics["cancelled"] == 1
+    assert result.metrics["succeeded"] == 0
+    assert store.transitions[0]["status"] == "cancelled"
+    assert store.transitions[0]["error_code"] == "outside_listing_window"

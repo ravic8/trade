@@ -68,7 +68,7 @@ def run_yfinance_daily_work_planner(
     db.initialize()
     observed_at = _as_utc(at or datetime.now(UTC))
     planner = DailyWorkPlanner(max_attempts=settings.yfinance_work_max_attempts)
-    generated = inserted = active_count = 0
+    generated = inserted = active_count = cancelled_before_listing = 0
     exchange_metrics: dict[str, Any] = {}
 
     for raw_exchange in resolved_exchanges:
@@ -93,6 +93,15 @@ def run_yfinance_daily_work_planner(
         ]
         if not sessions:
             raise ValueError(f"No valid materialized trading sessions found for {exchange}.")
+        exchange_cancelled_before_listing = (
+            db.cancel_pipeline_work_items_before_listing(
+                exchange=exchange,
+                at=observed_at,
+            )
+            if enqueue
+            else 0
+        )
+        cancelled_before_listing += exchange_cancelled_before_listing
         instrument_rows = db.active_yfinance_daily_instruments(exchange)
         if exchange == "TSX":
             instrument_rows = [
@@ -174,6 +183,7 @@ def run_yfinance_daily_work_planner(
             "valid_sessions": len(sessions),
             "work_generated": exchange_generated,
             "work_inserted": exchange_inserted,
+            "work_cancelled_before_listing": exchange_cancelled_before_listing,
         }
 
     return PipelineRunResult(
@@ -185,6 +195,7 @@ def run_yfinance_daily_work_planner(
             "active_symbols": active_count,
             "work_generated": generated,
             "work_inserted": inserted,
+            "work_cancelled_before_listing": cancelled_before_listing,
             "duplicates_reused": generated - inserted if enqueue else 0,
             "enqueue": enqueue,
             "work_not_enqueued": generated if not enqueue else 0,
@@ -302,7 +313,8 @@ def run_yfinance_daily_work_queue(
             "claimed_work_item_ids": [row["work_item_id"] for row in claimed],
         },
     )
-    succeeded = retry_wait = terminal = lost_claims = rows_written = adjustment_rows = 0
+    succeeded = retry_wait = terminal = cancelled = lost_claims = rows_written = 0
+    adjustment_rows = 0
     heartbeat = _WorkHeartbeat(
         db,
         resolved_worker_id,
@@ -311,7 +323,27 @@ def run_yfinance_daily_work_queue(
     )
     heartbeat.start()
     try:
-        for exchange, exchange_work in _group_by_exchange(claimed).items():
+        executable: list[dict[str, Any]] = []
+        for item in claimed:
+            if not _work_item_precedes_active_listing(item):
+                executable.append(item)
+                continue
+            transitioned = db.transition_pipeline_work_item(
+                work_item_id=str(item["work_item_id"]),
+                worker_id=resolved_worker_id,
+                status="cancelled",
+                error_code="outside_listing_window",
+                error_message=(
+                    "Work window ends before the active instrument listing boundary."
+                ),
+                run_id=str(run_id),
+            )
+            if transitioned is None:
+                lost_claims += 1
+            else:
+                cancelled += int(transitioned["status"] == "cancelled")
+
+        for exchange, exchange_work in _group_by_exchange(executable).items():
             outcomes, written, adjustments = _execute_claimed_exchange_work(
                 db=db,
                 settings=settings,
@@ -434,6 +466,7 @@ def run_yfinance_daily_work_queue(
             "succeeded": succeeded,
             "retry_wait": retry_wait,
             "terminal": terminal,
+            "cancelled": cancelled,
             "lost_claims": lost_claims,
             "heartbeat_failures": heartbeat.failure_count,
             "ohlcv_rows_written": rows_written,
@@ -442,6 +475,11 @@ def run_yfinance_daily_work_queue(
         },
         warnings=[
             *([f"{retry_wait} work items are waiting for durable retry."] if retry_wait else []),
+            *(
+                [f"{cancelled} work items were cancelled outside their listing window."]
+                if cancelled
+                else []
+            ),
             *(
                 [f"{lost_claims} work item claims changed ownership before acknowledgement."]
                 if lost_claims
@@ -453,6 +491,15 @@ def run_yfinance_daily_work_queue(
                 else []
             ),
         ],
+    )
+
+
+def _work_item_precedes_active_listing(item: dict[str, Any]) -> bool:
+    effective_at = item.get("listing_status_effective_at")
+    return bool(
+        str(item.get("listing_status") or "active") == "active"
+        and effective_at is not None
+        and item["window_end"] < _as_utc(effective_at).date()
     )
 
 
