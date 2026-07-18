@@ -1057,6 +1057,102 @@ Phase 7.1 rollout remains non-executing:
 6. Phase 7.2 enables the TSX flag, plans the ten-year backfill, executes bounded
    canaries, and only then enables TSX schedules.
 
+#### Phase 7.2: Official Reconciliation and Bounded Canaries
+
+Phase 7.2 replaces the Phase 7.1 mapping-only refresh with a fail-closed
+intersection of two sources:
+
+- the Yahoo-formatted mixed Canadian directory remains the candidate security
+  and provider-symbol source;
+- the official TMX issuer workbook at `https://www.tsx.com/en/resource/571`
+  supplies current TSX issuer identity, root ticker, sector, product type, and
+  listing date;
+- the official TMX company-directory JSON views supply recently listed,
+  recently delisted, and suspended overrides.
+
+The official workbook is fetched transiently. The application persists the
+derived reconciliation status, reason, classification, source timestamp, and
+stable TMX-backed identity required for operations; it does not check the
+workbook into the repository. Official HTTP requests use bounded exponential
+retry and a 30-second request timeout. Any workbook/schema/directory failure
+rejects the refresh and preserves the previous accepted universe.
+
+The initial inclusion policy is intentionally narrow:
+
+- include active common equity, supported common-share classes, and real-estate
+  investment trust `.UN` units;
+- exclude TSXV and Cboe Canada before reconciliation;
+- exclude CDRs, ETPs, closed-end funds, SPACs, preferred shares, debt,
+  warrants, rights, non-REIT units, and alternate-currency `.U` units;
+- exclude recent delistings and suspensions immediately;
+- leave recent-but-unclassified, candidate-only, and official provider-unmapped
+  issuers in review state with `pipeline_eligibility=none`.
+
+The TMX company ID plus the security suffix forms `source_identity`. It remains
+stable across root-ticker changes while keeping multiple share classes distinct.
+Changes to reconciliation or pipeline eligibility create lifecycle events. The
+latest snapshot records aggregate status/type counts and provider-unmapped
+samples, while `symbols` records the per-security outcome. Operators can inspect
+the result with:
+
+```bash
+trade-research tsx-reconciliation-status
+```
+
+The API exposes the same aggregate state at:
+
+```text
+GET /api/data/universe-reconciliation?exchange=TSX
+```
+
+Canary planning is separated from the full-exchange cutover:
+
+```text
+PROD_YFINANCE_FULL_TSX_ENABLED=false
+PROD_YFINANCE_TSX_CANARY_ENABLED=false
+PROD_YFINANCE_TSX_CANARY_MAX_SYMBOLS=100
+```
+
+`PROD_YFINANCE_TSX_CANARY_ENABLED` authorizes only the bounded manual planner.
+It does not add TSX to the scheduled planner and it does not allow a universe
+refresh to enqueue new-symbol work. The planner defaults to dry-run:
+
+```bash
+trade-research plan-yfinance-tsx-canary --symbol-limit 1 --dry-run
+trade-research plan-yfinance-tsx-canary --symbol-limit 1 --enqueue
+```
+
+The configured maximum is enforced even from the CLI. Only records from the
+latest accepted snapshot with `reconciliation_status=official_eligible` may be
+selected. Full TSX planning continues to require
+`PROD_YFINANCE_FULL_TSX_ENABLED=true`.
+
+Guarded Phase 7.2 production rollout:
+
+1. Back up production, deploy, and upgrade to Alembic revision
+   `20260718_0004`.
+2. Keep `PROD_YFINANCE_FULL_TSX_ENABLED=false`, keep
+   `PROD_YFINANCE_TSX_CANARY_ENABLED=false`, and keep
+   `tsx_universe_refresh_schedule` stopped.
+3. Run `trade-research refresh-equity-universe TSX`. The July 18, 2026 probe
+   produced 885 candidates, 645 eligible securities, 240 excluded securities,
+   and 21 eligible official issuers without safe candidate mappings. Counts may
+   move with the official monthly workbook and live lifecycle directory.
+4. Confirm `Backfills queued = 0`, inspect
+   `trade-research tsx-reconciliation-status`, and confirm the TSX work queue is
+   still empty.
+5. Set only `PROD_YFINANCE_TSX_CANARY_ENABLED=true` and recreate the API
+   container. Leave the full TSX flag false.
+6. Temporarily stop `yfinance_daily_work_worker_schedule`, execute a one-symbol
+   dry run, enqueue the one-symbol canary, and run a manual worker with
+   `--claim-size 1`. Validate request logs, stored OHLCV, coverage, rate state,
+   and queue transitions before restarting the worker schedule.
+7. Repeat with limits 5, 25, and 100. Stop escalation on any rate limit,
+   terminal failure, suspicious data, unexpected classification, or queue leak.
+8. Phase 7.3 enables the full TSX flag, plans the remaining ten-year history in
+   bounded batches, soaks incremental operation, and only then starts the TSX
+   universe schedule.
+
 ### Phase 8: NSE Cutover
 
 - Backfill active NSE symbols through yfinance.

@@ -18,6 +18,31 @@ class FakeCoverageStore:
     ) -> dict | None:
         return self.credentials.get((provider, credential_type))
 
+    def universe_reconciliation_summary(self, exchange: str) -> dict:
+        assert exchange == "TSX"
+        return {
+            "snapshot": {
+                "snapshot_id": "tsx-snapshot-1",
+                "fetched_at": datetime(2026, 7, 18, tzinfo=UTC),
+                "symbol_count": 885,
+                "validation_json": {
+                    "source_diagnostics": {
+                        "reconciliation_version": "tsx-v1",
+                        "eligible_symbols": 645,
+                    }
+                },
+            },
+            "groups": [
+                {
+                    "reconciliation_status": "official_eligible",
+                    "reconciliation_reason": "eligible_common_equity",
+                    "instrument_type": "common_equity",
+                    "pipeline_eligibility": "incremental",
+                    "symbols": 575,
+                }
+            ],
+        }
+
     def upsert_provider_credential(
         self,
         provider: str,
@@ -580,6 +605,20 @@ def test_upstox_provider_capabilities_endpoint() -> None:
     ][0]
     assert daily["available_from"] == "2000-01-01"
     assert daily["max_window"] == "10 years"
+
+
+def test_tsx_reconciliation_observability_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get("/api/data/universe-reconciliation?exchange=CA")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exchange"] == "TSX"
+    assert payload["snapshot_id"] == "tsx-snapshot-1"
+    assert payload["diagnostics"]["eligible_symbols"] == 645
+    assert payload["groups"][0]["reconciliation_status"] == "official_eligible"
 
 
 def test_admin_provider_credential_status_requires_admin(monkeypatch) -> None:

@@ -46,6 +46,7 @@ from trade_research.pipelines import (
     run_yfinance_daily_work_queue,
     run_yfinance_intraday_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
+    run_yfinance_tsx_canary_planner,
 )
 from trade_research.storage import ParquetStore, TimescaleStore
 from trade_research.targets import (
@@ -135,6 +136,23 @@ def refresh_equity_universe(
             "Excluded Cboe Canada",
             str(source_diagnostics.get("excluded_cboe_canada_rows", "")),
         )
+        if source_diagnostics.get("reconciliation_version"):
+            table.add_row(
+                "Official issuer rows",
+                str(source_diagnostics.get("official_rows", "")),
+            )
+            table.add_row(
+                "Pipeline eligible",
+                str(source_diagnostics.get("eligible_symbols", "")),
+            )
+            table.add_row(
+                "Policy excluded",
+                str(source_diagnostics.get("excluded_symbols", "")),
+            )
+            table.add_row(
+                "Official provider-unmapped",
+                str(source_diagnostics.get("provider_unmapped_official_issuers", "")),
+            )
     table.add_row("Lifecycle events", str(result.metrics["events_written"]))
     table.add_row("Backfills queued", str(result.metrics["work_items_queued"]))
     table.add_row(
@@ -152,6 +170,43 @@ def refresh_equity_universe(
         for issue in result.blocking_issues:
             console.print(f"[red]Blocked: {issue}[/red]")
         raise typer.Exit(code=1)
+
+
+@app.command("tsx-reconciliation-status")
+def tsx_reconciliation_status() -> None:
+    settings = get_settings()
+    summary = TimescaleStore(settings.database_url).universe_reconciliation_summary("TSX")
+    snapshot = summary["snapshot"]
+    if snapshot is None:
+        raise typer.Exit("No accepted TSX universe snapshot is available.")
+
+    console.print(
+        f"Snapshot: {snapshot['snapshot_id']} | fetched={snapshot['fetched_at'].isoformat()} | "
+        f"symbols={snapshot['symbol_count']}"
+    )
+    diagnostics = dict(snapshot.get("validation_json") or {}).get("source_diagnostics") or {}
+    console.print(
+        "Official reconciliation: "
+        f"{diagnostics.get('official_rows', 0)} issuer rows, "
+        f"{diagnostics.get('eligible_symbols', 0)} eligible symbols, "
+        f"{diagnostics.get('provider_unmapped_official_issuers', 0)} provider-unmapped issuers"
+    )
+
+    table = Table(title="TSX Reconciliation Outcomes")
+    table.add_column("Status")
+    table.add_column("Instrument type")
+    table.add_column("Eligibility")
+    table.add_column("Reason")
+    table.add_column("Symbols", justify="right")
+    for row in summary["groups"]:
+        table.add_row(
+            str(row["reconciliation_status"]),
+            str(row["instrument_type"]),
+            str(row["pipeline_eligibility"]),
+            str(row.get("reconciliation_reason") or ""),
+            str(row["symbols"]),
+        )
+    console.print(table)
 
 
 @app.command("market-session")
@@ -842,6 +897,53 @@ def run_yfinance_daily_worker(
     console.print(f"Queue state: {result.metrics['queue']}")
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("plan-yfinance-tsx-canary")
+def plan_yfinance_tsx_canary(
+    symbol_limit: Annotated[
+        int,
+        typer.Option(min=1, max=500, help="Maximum reconciled TSX symbols to plan."),
+    ] = 1,
+    enqueue: Annotated[
+        bool,
+        typer.Option(
+            "--enqueue/--dry-run",
+            help="Persist durable work only when the guarded canary flag is enabled.",
+        ),
+    ] = False,
+) -> None:
+    try:
+        result = run_yfinance_tsx_canary_planner(
+            symbol_limit=symbol_limit,
+            enqueue=enqueue,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    except SQLAlchemyError as exc:
+        detail = str(getattr(exc, "orig", exc)).strip().splitlines()[0]
+        console.print(f"[red]Error: TSX canary planning failed: {detail}[/red]")
+        raise typer.Exit(code=1) from None
+
+    tsx = result.metrics["exchanges"]["TSX"]
+    mode = "ENQUEUED" if enqueue else "DRY RUN"
+    console.print(f"TSX canary: {mode}")
+    console.print(
+        f"Symbols: {tsx['active_symbols']} selected from "
+        f"{tsx['eligible_symbols_before_limit']} officially eligible"
+    )
+    console.print(
+        f"Durable work: {result.metrics['work_generated']} generated, "
+        f"{result.metrics['work_inserted']} inserted"
+    )
+    console.print(f"Window: {tsx['window_start']} to {tsx['window_end']}")
+    console.print(f"Queue state: {result.metrics['queue']}")
+    if not enqueue:
+        console.print(
+            "[yellow]Dry run only. Enable the bounded TSX canary flag before using "
+            "--enqueue.[/yellow]"
+        )
 
 
 @app.command("fetch-yfinance-missing")
