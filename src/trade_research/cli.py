@@ -1010,6 +1010,14 @@ def check_nse_yfinance_cutover() -> None:
     result = run_nse_yfinance_cutover_readiness(trigger="cli")
     metrics = result.metrics
     console.print(f"NSE Yahoo cutover: {result.status.upper()}")
+    console.print(f"Comparison state: {metrics.get('comparison_state', 'unavailable')}")
+    console.print(
+        "Provider windows: "
+        f"Upstox={metrics.get('upstox_window_symbols', 0)} symbols through "
+        f"{metrics.get('upstox_latest_date') or 'none'}, "
+        f"Yahoo={metrics.get('yfinance_window_symbols', 0)} symbols through "
+        f"{metrics.get('yfinance_latest_date') or 'none'}"
+    )
     console.print(
         "Overlap: "
         f"{metrics.get('overlapping_symbols', 0)} symbols, "
