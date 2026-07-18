@@ -10,6 +10,7 @@ from trade_research.data.daily_work import (
     durable_retry_delay,
 )
 from trade_research.pipelines import yfinance_work_queue
+from trade_research.storage.timescale import TimescaleStore
 
 NOW = datetime(2026, 7, 17, 12, tzinfo=UTC)
 INSTRUMENT = DailyInstrument(
@@ -28,6 +29,82 @@ def test_phase5_queue_defaults_are_bounded_and_execution_is_disabled() -> None:
     assert settings.yfinance_work_heartbeat_seconds == 30
     assert settings.yfinance_work_stale_minutes == 10
     assert settings.yfinance_work_max_attempts == 9
+
+
+def test_enabled_exchanges_are_resolved_from_cutover_flags() -> None:
+    settings = Settings(
+        _env_file=None,
+        yfinance_full_us_enabled=True,
+        yfinance_full_tsx_enabled=False,
+        yfinance_nse_enabled=False,
+    )
+
+    assert yfinance_work_queue.enabled_yfinance_daily_exchanges(settings) == ("US",)
+
+
+class _EmptyMappingsResult:
+    def mappings(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _RecordingConnection:
+    def __init__(self) -> None:
+        self.instrument_key_counts: list[int] = []
+
+    def execute(self, statement):
+        parameter_values = statement.compile().params.values()
+        key_values = next(
+            value
+            for value in parameter_values
+            if isinstance(value, list) and value and str(value[0]).startswith("YF|")
+        )
+        self.instrument_key_counts.append(len(key_values))
+        return _EmptyMappingsResult()
+
+
+class _RecordingBegin:
+    def __init__(self, connection: _RecordingConnection) -> None:
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _RecordingEngine:
+    def __init__(self) -> None:
+        self.connection = _RecordingConnection()
+
+    def begin(self):
+        return _RecordingBegin(self.connection)
+
+
+def test_latest_date_lookup_chunks_a_full_us_universe() -> None:
+    store = object.__new__(TimescaleStore)
+    store.engine = _RecordingEngine()
+
+    result = store.latest_daily_ohlcv_dates(
+        [f"YF|SYMBOL{index}" for index in range(5_586)],
+        source="yfinance",
+        valid_only=True,
+        chunk_size=250,
+    )
+
+    assert result == {}
+    assert len(store.engine.connection.instrument_key_counts) == 23
+    assert max(store.engine.connection.instrument_key_counts) == 250
+    assert store.engine.connection.instrument_key_counts[-1] == 86
+
+
+def test_timescale_engine_hides_sql_parameters() -> None:
+    store = TimescaleStore("sqlite://")
+
+    assert store.engine.hide_parameters is True
 
 
 def test_initial_backfill_emits_only_contiguous_missing_session_windows() -> None:

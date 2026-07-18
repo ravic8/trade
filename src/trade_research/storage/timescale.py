@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pandas as pd
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from trade_research.universe.persisted import UniverseReconciliationPlan
 
 metadata = MetaData()
+_ChunkItem = TypeVar("_ChunkItem")
 
 symbols_table = Table(
     "symbols",
@@ -693,7 +694,11 @@ Index(
 
 class TimescaleStore:
     def __init__(self, database_url: str) -> None:
-        self.engine = create_engine(database_url, pool_pre_ping=True)
+        self.engine = create_engine(
+            database_url,
+            pool_pre_ping=True,
+            hide_parameters=True,
+        )
 
     def initialize(self) -> None:
         metadata.create_all(self.engine)
@@ -2692,27 +2697,36 @@ class TimescaleStore:
         source: str = "upstox",
         *,
         valid_only: bool = False,
+        chunk_size: int = 250,
     ) -> dict[str, date]:
-        if not instrument_keys:
+        normalized_keys = list(dict.fromkeys(instrument_keys))
+        if not normalized_keys:
             return {}
-        query = (
-            select(
-                ohlcv_daily_table.c.instrument_key,
-                func.max(ohlcv_daily_table.c.date).label("latest_date"),
-            )
-            .where(ohlcv_daily_table.c.source == source)
-            .where(ohlcv_daily_table.c.instrument_key.in_(instrument_keys))
-            .group_by(ohlcv_daily_table.c.instrument_key)
-        )
-        if valid_only:
-            query = query.where(ohlcv_daily_table.c.quality_status == "ok")
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be positive")
+        latest_dates: dict[str, date] = {}
         with self.engine.begin() as connection:
-            rows = connection.execute(query).mappings().all()
-        return {
-            str(row["instrument_key"]): row["latest_date"]
-            for row in rows
-            if row["latest_date"] is not None
-        }
+            for key_chunk in _chunks(normalized_keys, size=chunk_size):
+                query = (
+                    select(
+                        ohlcv_daily_table.c.instrument_key,
+                        func.max(ohlcv_daily_table.c.date).label("latest_date"),
+                    )
+                    .where(ohlcv_daily_table.c.source == source)
+                    .where(ohlcv_daily_table.c.instrument_key.in_(key_chunk))
+                    .group_by(ohlcv_daily_table.c.instrument_key)
+                )
+                if valid_only:
+                    query = query.where(ohlcv_daily_table.c.quality_status == "ok")
+                rows = connection.execute(query).mappings().all()
+                latest_dates.update(
+                    {
+                        str(row["instrument_key"]): row["latest_date"]
+                        for row in rows
+                        if row["latest_date"] is not None
+                    }
+                )
+        return latest_dates
 
     def resolve_provider_instruments(
         self,
@@ -5085,7 +5099,7 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _chunks(rows: list[dict[str, Any]], size: int) -> Iterable[list[dict[str, Any]]]:
+def _chunks(rows: list[_ChunkItem], size: int) -> Iterable[list[_ChunkItem]]:
     for start in range(0, len(rows), size):
         yield rows[start : start + size]
 

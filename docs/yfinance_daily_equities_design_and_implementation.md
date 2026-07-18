@@ -947,6 +947,55 @@ fresh US universe refresh, verify `SVA` is halted/ineligible and `SHOT` remains
 active with a different source identity from `BNKK`, then preview incremental
 planning before restarting the planner and worker schedules.
 
+### Phase 6.2: Bounded US Planner Hotfix
+
+The first US-only incremental planning canary exposed a PostgreSQL dynamic
+shared-memory failure. The planner requested latest coverage for all 5,586
+eligible US instruments in one `IN (...) GROUP BY` query over approximately
+10.34 million daily rows. PostgreSQL attempted a roughly 94 MiB parallel shared
+memory allocation while the production container exposed only 64 MiB.
+
+The storage lookup now deduplicates instrument keys and executes bounded chunks
+using `YFINANCE_WORK_PLANNER_CHUNK_SIZE` (250 by default). A current full US
+universe therefore executes 23 sequential coverage queries instead of one
+unbounded statement. Each query is independently bounded regardless of future
+universe growth.
+
+Scheduled planning is also cutover-aware. When Dagster invokes the planner
+without an explicit exchange list, exchanges are resolved only from:
+
+```text
+YFINANCE_FULL_US_ENABLED
+YFINANCE_FULL_TSX_ENABLED
+YFINANCE_NSE_ENABLED
+```
+
+An empty enabled set fails closed before opening the database. The CLI continues
+to permit an explicit `--exchanges US` canary independently of schedule flags.
+For the Phase 6 cutover, production must enable only
+`PROD_YFINANCE_FULL_US_ENABLED=true`; TSX and NSE stay false.
+
+Production Compose now gives PostgreSQL a configurable 512 MiB shared-memory
+limit as defense in depth. This setting causes the PostgreSQL container to be
+recreated during deployment, so the normal fresh backup and database readiness
+checks are mandatory. Query safety does not rely on the larger limit.
+
+SQLAlchemy engines hide bound parameters, and the planner CLI reduces database
+failures to the database driver's first diagnostic line. Operational failures
+therefore no longer emit thousands of ticker parameters or a full traceback.
+
+Phase 6.2 rollout remains guarded:
+
+1. Keep the US universe, planner, and worker schedules stopped.
+2. Take a fresh production backup and deploy the hotfix.
+3. Confirm PostgreSQL `/dev/shm` is 512 MiB and the database is healthy.
+4. Set `PROD_YFINANCE_FULL_US_ENABLED=true`, leaving TSX/NSE false, then recreate
+   the Dagster daemon and webserver so their code-server environments receive
+   the flags.
+5. Repeat the explicit US incremental-only CLI canary.
+6. Inspect inserted work and run a one-item worker canary before enabling any
+   schedule.
+
 ### Phase 7: TSX Cutover
 
 - Complete `CA` to `TSX` migration.
