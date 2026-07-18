@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+import re
+from datetime import UTC, datetime
 from io import StringIO
+from xml.etree import ElementTree
 
 import httpx
 import pandas as pd
@@ -13,6 +17,9 @@ from trade_research.universe.yfinance_seed import yfinance_seed_universe
 
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/symdir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/symdir/otherlisted.txt"
+SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
+NASDAQ_HALTS_URL = "https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"
+NASDAQ_RSS_NAMESPACE = "{http://www.nasdaqtrader.com/}"
 
 
 class YFinanceUSUniverseProvider(UniverseProvider):
@@ -23,18 +30,44 @@ class YFinanceUSUniverseProvider(UniverseProvider):
         self,
         nasdaq_url: str = NASDAQ_LISTED_URL,
         other_url: str = OTHER_LISTED_URL,
+        sec_tickers_url: str = SEC_TICKERS_URL,
+        halts_url: str = NASDAQ_HALTS_URL,
     ) -> None:
         self.nasdaq_url = nasdaq_url
         self.other_url = other_url
+        self.sec_tickers_url = sec_tickers_url
+        self.halts_url = halts_url
 
     def fetch(self) -> list[Symbol]:
         rows = [
             *self._fetch_nasdaq_listed(self.nasdaq_url),
             *self._fetch_other_listed(self.other_url),
         ]
+        sec_identities = _optional_sec_identities(self.sec_tickers_url)
+        current_halts, halt_feed_available = _optional_current_halts(self.halts_url)
         deduped: dict[str, Symbol] = {}
         for symbol in rows:
-            deduped.setdefault(symbol.symbol, symbol)
+            halt = current_halts.get(symbol.symbol)
+            issuer_identity = sec_identities.get(symbol.symbol)
+            identity = (
+                f"{issuer_identity}:{_security_class_key(symbol.name)}" if issuer_identity else None
+            )
+            deduped.setdefault(
+                symbol.symbol,
+                symbol.model_copy(
+                    update={
+                        "source_identity": identity,
+                        "listing_status": (
+                            "halted" if halt else "active" if halt_feed_available else "unknown"
+                        ),
+                        "listing_status_reason": halt[0] if halt else None,
+                        "listing_status_effective_at": halt[1] if halt else None,
+                        "pipeline_eligibility": (
+                            "none" if halt else "incremental" if halt_feed_available else "preserve"
+                        ),
+                    }
+                ),
+            )
         return sorted(deduped.values(), key=lambda item: item.symbol)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
@@ -157,11 +190,75 @@ def yfinance_exchange_for_universe(name: str) -> str:
 
 
 def _fetch_text(url: str) -> str:
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/plain,*/*"}
+    user_agent = (
+        os.getenv(
+            "SEC_USER_AGENT",
+            "trade-research/0.1 contact=operations@chain8.org",
+        )
+        if "sec.gov" in url.lower()
+        else "Mozilla/5.0"
+    )
+    headers = {"User-Agent": user_agent, "Accept": "text/plain,*/*"}
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         response = client.get(url)
         response.raise_for_status()
     return response.text
+
+
+def _optional_sec_identities(url: str) -> dict[str, str]:
+    """Return stable SEC issuer identities without making universe refresh fragile."""
+    try:
+        payload = httpx.Response(200, text=_fetch_text(url)).json()
+        fields = [str(value) for value in payload.get("fields", [])]
+        field_index = {name: index for index, name in enumerate(fields)}
+        cik_index = field_index["cik"]
+        ticker_index = field_index["ticker"]
+        return {
+            str(row[ticker_index]).strip().upper(): f"SEC_CIK:{int(row[cik_index]):010d}"
+            for row in payload.get("data", [])
+            if len(row) > max(cik_index, ticker_index) and row[ticker_index]
+        }
+    except Exception:
+        return {}
+
+
+def _optional_current_halts(
+    url: str,
+) -> tuple[dict[str, tuple[str, datetime]], bool]:
+    """Return unresolved Nasdaq halts; resumed entries are deliberately ignored."""
+    try:
+        root = ElementTree.fromstring(_fetch_text(url).lstrip("\ufeff"))
+    except Exception:
+        return {}, False
+    halts: dict[str, tuple[str, datetime]] = {}
+    for item in root.findall("./channel/item"):
+        symbol = _rss_text(item, "IssueSymbol").upper()
+        resumed = _rss_text(item, "ResumptionDate")
+        halt_date = _rss_text(item, "HaltDate")
+        if not symbol or resumed or not halt_date:
+            continue
+        try:
+            effective_at = datetime.strptime(halt_date, "%m/%d/%Y").replace(tzinfo=UTC)
+        except ValueError:
+            continue
+        reason = _rss_text(item, "ReasonCode") or "exchange_halt"
+        halts[symbol] = (reason, effective_at)
+    return halts, True
+
+
+def _rss_text(item: ElementTree.Element, name: str) -> str:
+    node = item.find(f"{NASDAQ_RSS_NAMESPACE}{name}")
+    return str(node.text or "").strip() if node is not None else ""
+
+
+def _security_class_key(name: str | None) -> str:
+    normalized = str(name or "").upper()
+    match = re.search(r"\bCLASS\s+([A-Z0-9]+)\b", normalized)
+    if match:
+        return f"CLASS_{match.group(1)}"
+    if "ORDINARY" in normalized or " ORD " in f" {normalized} ":
+        return "ORDINARY"
+    return "COMMON"
 
 
 def _read_pipe_table(text: str) -> pd.DataFrame:

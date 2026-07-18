@@ -45,9 +45,7 @@ class Settings(BaseSettings):
     chat_rate_limit_trust_forwarded_for: bool = False
     admin_emails: str = ""
     admin_email_headers: str = (
-        "cf-access-authenticated-user-email,"
-        "x-forwarded-email,"
-        "x-authenticated-user-email"
+        "cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email"
     )
     app_secret_key: str | None = None
 
@@ -87,6 +85,8 @@ class Settings(BaseSettings):
     yfinance_adaptive_cooldown_seconds: int = Field(default=60, ge=1, le=3600)
     yfinance_incremental_overlap_sessions: int = Field(default=5, ge=0, le=30)
     yfinance_provider_grace_minutes: int = Field(default=120, ge=0, le=720)
+    yfinance_new_listing_grace_hours: int = Field(default=72, ge=1, le=336)
+    yfinance_new_listing_retry_hours: int = Field(default=6, ge=1, le=72)
     yfinance_backfill_years: int = Field(default=10, ge=1, le=20)
     yfinance_work_planner_chunk_size: int = Field(default=250, ge=1, le=2_000)
     yfinance_work_claim_size: int = Field(default=100, ge=1, le=1_000)
@@ -136,35 +136,20 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_yfinance_foundation_settings(self) -> Self:
         if not (
-            self.yfinance_minimum_rpm
-            <= self.yfinance_initial_rpm
-            <= self.yfinance_maximum_rpm
+            self.yfinance_minimum_rpm <= self.yfinance_initial_rpm <= self.yfinance_maximum_rpm
         ):
-            raise ValueError(
-                "yfinance RPM settings must satisfy minimum <= initial <= maximum"
-            )
+            raise ValueError("yfinance RPM settings must satisfy minimum <= initial <= maximum")
         if self.yfinance_initial_concurrency > self.yfinance_maximum_concurrency:
-            raise ValueError(
-                "yfinance concurrency settings must satisfy initial <= maximum"
-            )
-        if (
-            self.yfinance_retry_wait_multiplier_seconds
-            > self.yfinance_retry_wait_max_seconds
-        ):
-            raise ValueError(
-                "yfinance retry waits must satisfy multiplier <= maximum"
-            )
+            raise ValueError("yfinance concurrency settings must satisfy initial <= maximum")
+        if self.yfinance_retry_wait_multiplier_seconds > self.yfinance_retry_wait_max_seconds:
+            raise ValueError("yfinance retry waits must satisfy multiplier <= maximum")
         if self.yfinance_work_heartbeat_seconds >= self.yfinance_work_stale_minutes * 60:
-            raise ValueError(
-                "yfinance work heartbeat must be shorter than the stale-lock timeout"
-            )
+            raise ValueError("yfinance work heartbeat must be shorter than the stale-lock timeout")
         if (
             self.exchange_session_minimum_open_days_per_year
             > self.exchange_session_maximum_open_days_per_year
         ):
-            raise ValueError(
-                "exchange session open-day settings must satisfy minimum <= maximum"
-            )
+            raise ValueError("exchange session open-day settings must satisfy minimum <= maximum")
         return self
 
 

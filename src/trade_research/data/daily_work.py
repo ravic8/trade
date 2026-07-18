@@ -33,10 +33,14 @@ class DailyInstrument:
     canonical_instrument_id: str
     provider_symbol: str
     exchange: str
+    listing_status: str = "active"
+    pipeline_eligibility: str = "incremental"
+    listing_status_effective_at: datetime | None = None
+    provider_instrument_key: str | None = None
 
     @property
     def instrument_key(self) -> str:
-        return f"YF|{self.provider_symbol}"
+        return self.provider_instrument_key or f"YF|{self.provider_symbol}"
 
 
 @dataclass(frozen=True)
@@ -88,6 +92,8 @@ class DailyWorkPlanner:
         observed_at = _as_utc(now or datetime.now(UTC))
         work: list[DailyWorkItem] = []
         for instrument in instruments:
+            if instrument.pipeline_eligibility != "incremental":
+                continue
             latest = latest_dates.get(instrument.instrument_key)
             if latest is None or latest >= end:
                 continue
@@ -170,9 +176,14 @@ class DailyWorkPlanner:
         observed_at = _as_utc(now or datetime.now(UTC))
         work: list[DailyWorkItem] = []
         for instrument in instruments:
+            instrument_sessions = _eligible_sessions(instrument, ordered_sessions)
+            if not instrument_sessions:
+                continue
             present = stored_dates.get(instrument.instrument_key, set())
-            missing = [session for session in ordered_sessions if session not in present]
-            for window_start, window_end in _contiguous_session_windows(ordered_sessions, missing):
+            missing = [session for session in instrument_sessions if session not in present]
+            for window_start, window_end in _contiguous_session_windows(
+                instrument_sessions, missing
+            ):
                 work.append(
                     self._item(
                         instrument,
@@ -275,6 +286,18 @@ def _session_index_at_or_before(
         if sessions[index] <= value:
             return index
     return 0
+
+
+def _eligible_sessions(
+    instrument: DailyInstrument,
+    sessions: Sequence[date],
+) -> list[date]:
+    if instrument.pipeline_eligibility == "none":
+        return []
+    effective_at = instrument.listing_status_effective_at
+    if instrument.listing_status in {"halted", "suspended", "delisted"} and effective_at:
+        return [session for session in sessions if session <= effective_at.date()]
+    return list(sessions)
 
 
 def _as_utc(value: datetime) -> datetime:

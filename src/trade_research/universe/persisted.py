@@ -70,6 +70,12 @@ class UniverseInstrumentState:
     consecutive_missing_refreshes: int
     last_universe_snapshot_id: str
     present_in_snapshot: bool
+    source_identity: str | None = None
+    listing_status: str = "active"
+    listing_status_reason: str | None = None
+    listing_status_effective_at: datetime | None = None
+    pipeline_eligibility: str = "incremental"
+    provider_instrument_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,11 +130,9 @@ class UniverseRefreshResult:
 
 
 class UniverseSnapshotRepository(Protocol):
-    def latest_accepted_universe_snapshot(self, exchange: str) -> Mapping[str, Any] | None:
-        ...
+    def latest_accepted_universe_snapshot(self, exchange: str) -> Mapping[str, Any] | None: ...
 
-    def universe_symbol_state(self, exchange: str) -> list[Mapping[str, Any]]:
-        ...
+    def universe_symbol_state(self, exchange: str) -> list[Mapping[str, Any]]: ...
 
     def record_universe_snapshot(
         self,
@@ -141,8 +145,7 @@ class UniverseSnapshotRepository(Protocol):
         symbol_count: int,
         validation_json: Mapping[str, Any],
         error_message: str | None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def persist_accepted_universe_snapshot(
         self,
@@ -150,8 +153,7 @@ class UniverseSnapshotRepository(Protocol):
         plan: UniverseReconciliationPlan,
         source: str,
         validation_json: Mapping[str, Any],
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 def validate_universe_snapshot(
@@ -168,9 +170,7 @@ def validate_universe_snapshot(
     symbol_count = len(symbols)
 
     if symbol_count < policy.minimum_symbol_count:
-        errors.append(
-            f"symbol_count_below_minimum:{symbol_count}<{policy.minimum_symbol_count}"
-        )
+        errors.append(f"symbol_count_below_minimum:{symbol_count}<{policy.minimum_symbol_count}")
 
     normalized_symbols = [_normalize_exchange_symbol(item.symbol) for item in symbols]
     provider_symbols = [_normalize_provider_symbol(item.yahoo_symbol) for item in symbols]
@@ -181,9 +181,7 @@ def validate_universe_snapshot(
     if duplicate_symbols:
         errors.append(f"duplicate_exchange_symbols:{','.join(duplicate_symbols[:20])}")
     if duplicate_provider_symbols:
-        errors.append(
-            f"duplicate_provider_symbols:{','.join(duplicate_provider_symbols[:20])}"
-        )
+        errors.append(f"duplicate_provider_symbols:{','.join(duplicate_provider_symbols[:20])}")
 
     exchange_mismatches = sorted(
         {
@@ -255,24 +253,76 @@ def reconcile_universe_snapshot(
         for row in existing_rows
         if (state := _state_from_existing(row, canonical_exchange)) is not None
     }
-    current = {
-        _normalize_exchange_symbol(symbol.symbol): symbol
-        for symbol in symbols
+    existing_by_identity = {
+        state.source_identity: state for state in existing.values() if state.source_identity
     }
+    current = {_normalize_exchange_symbol(symbol.symbol): symbol for symbol in symbols}
     instruments: list[UniverseInstrumentState] = []
     events: list[UniverseLifecycleEvent] = []
     work_items: list[UniverseBackfillWorkItem] = []
+    matched_existing_symbols: set[str] = set()
 
     for exchange_symbol in sorted(current):
         symbol = current[exchange_symbol]
         provider_symbol = _normalize_provider_symbol(symbol.yahoo_symbol)
-        previous = existing.get(exchange_symbol)
+        same_symbol = existing.get(exchange_symbol)
+        same_identity = existing_by_identity.get(symbol.source_identity)
+        ticker_reused = bool(
+            same_symbol
+            and same_symbol.source_identity
+            and symbol.source_identity
+            and same_symbol.source_identity != symbol.source_identity
+        )
+        previous = same_identity or (None if ticker_reused else same_symbol)
+        if previous is not None:
+            matched_existing_symbols.add(previous.symbol)
         canonical_id = (
             previous.canonical_instrument_id
             if previous is not None
-            else canonical_instrument_id(canonical_exchange, exchange_symbol)
+            else canonical_instrument_id(
+                canonical_exchange,
+                exchange_symbol,
+                source_identity=symbol.source_identity,
+            )
         )
         first_seen_at = previous.first_seen_at if previous is not None else observed_at
+        source_identity = symbol.source_identity or (
+            previous.source_identity if previous is not None else None
+        )
+        preserve_lifecycle = symbol.pipeline_eligibility == "preserve"
+        listing_status = (
+            previous.listing_status
+            if preserve_lifecycle and previous is not None
+            else "active"
+            if preserve_lifecycle
+            else symbol.listing_status
+        )
+        listing_status_reason = (
+            previous.listing_status_reason
+            if preserve_lifecycle and previous is not None
+            else symbol.listing_status_reason
+        )
+        listing_status_effective_at = (
+            previous.listing_status_effective_at
+            if preserve_lifecycle and previous is not None
+            else symbol.listing_status_effective_at
+        )
+        pipeline_eligibility = (
+            previous.pipeline_eligibility
+            if preserve_lifecycle and previous is not None
+            else "incremental"
+            if preserve_lifecycle
+            else symbol.pipeline_eligibility
+        )
+        provider_instrument_key = (
+            f"YF|{provider_symbol}|{canonical_id}"
+            if ticker_reused and provider_symbol
+            else previous.provider_instrument_key
+            if previous is not None and previous.provider_instrument_key
+            else f"YF|{provider_symbol}"
+            if provider_symbol
+            else None
+        )
         state = UniverseInstrumentState(
             canonical_instrument_id=canonical_id,
             symbol=exchange_symbol,
@@ -290,11 +340,19 @@ def reconcile_universe_snapshot(
             consecutive_missing_refreshes=0,
             last_universe_snapshot_id=snapshot_id,
             present_in_snapshot=True,
+            source_identity=source_identity,
+            listing_status=listing_status,
+            listing_status_reason=listing_status_reason,
+            listing_status_effective_at=listing_status_effective_at,
+            pipeline_eligibility=pipeline_eligibility,
+            provider_instrument_key=provider_instrument_key,
         )
         instruments.append(state)
 
         if previous is None or not previous.last_universe_snapshot_id:
-            events.append(_event("added", state, snapshot_id, observed_at, None))
+            event_type = "ticker_reused" if ticker_reused else "added"
+            old_value = _state_json(same_symbol) if ticker_reused and same_symbol else None
+            events.append(_event(event_type, state, snapshot_id, observed_at, old_value))
             if provider_symbol:
                 work_items.append(_new_symbol_backfill(state, observed_at))
         elif not previous.is_active:
@@ -320,6 +378,43 @@ def reconcile_universe_snapshot(
                 )
             )
 
+        if previous is not None and previous.symbol != exchange_symbol:
+            events.append(
+                _event(
+                    "ticker_changed",
+                    state,
+                    snapshot_id,
+                    observed_at,
+                    {"exchange_symbol": previous.symbol},
+                    {"exchange_symbol": exchange_symbol},
+                )
+            )
+
+        if previous is not None and previous.listing_status != state.listing_status:
+            event_type = (
+                "trading_halted"
+                if state.listing_status == "halted"
+                else "trading_resumed"
+                if previous.listing_status == "halted" and state.listing_status == "active"
+                else "listing_status_changed"
+            )
+            events.append(
+                _event(
+                    event_type,
+                    state,
+                    snapshot_id,
+                    observed_at,
+                    {
+                        "listing_status": previous.listing_status,
+                        "reason": previous.listing_status_reason,
+                    },
+                    {
+                        "listing_status": state.listing_status,
+                        "reason": state.listing_status_reason,
+                    },
+                )
+            )
+
         if (
             previous is not None
             and previous.provider_symbol
@@ -338,6 +433,20 @@ def reconcile_universe_snapshot(
 
     for exchange_symbol in sorted(set(existing) - set(current)):
         previous = existing[exchange_symbol]
+        if exchange_symbol in matched_existing_symbols:
+            state = UniverseInstrumentState(
+                **{
+                    **asdict(previous),
+                    "is_active": False,
+                    "inactive_at": observed_at,
+                    "inactive_reason": "ticker_changed",
+                    "last_universe_snapshot_id": snapshot_id,
+                    "present_in_snapshot": False,
+                    "pipeline_eligibility": "none",
+                }
+            )
+            instruments.append(state)
+            continue
         if not previous.last_universe_snapshot_id:
             continue
         missing_count = previous.consecutive_missing_refreshes + 1
@@ -357,7 +466,9 @@ def reconcile_universe_snapshot(
             inactive_at=(
                 previous.inactive_at
                 if deactivate and not previous.is_active and previous.inactive_at is not None
-                else observed_at if deactivate else None
+                else observed_at
+                if deactivate
+                else None
             ),
             inactive_reason=(
                 "absent_from_consecutive_snapshots" if deactivate else "suspected_inactive"
@@ -365,6 +476,12 @@ def reconcile_universe_snapshot(
             consecutive_missing_refreshes=missing_count,
             last_universe_snapshot_id=snapshot_id,
             present_in_snapshot=False,
+            source_identity=previous.source_identity,
+            listing_status=previous.listing_status,
+            listing_status_reason=previous.listing_status_reason,
+            listing_status_effective_at=previous.listing_status_effective_at,
+            pipeline_eligibility=("none" if deactivate else previous.pipeline_eligibility),
+            provider_instrument_key=previous.provider_instrument_key,
         )
         instruments.append(state)
         if missing_count == 1:
@@ -501,8 +618,14 @@ class PersistedUniverseService:
         )
 
 
-def canonical_instrument_id(exchange: str, symbol: str) -> str:
-    identity = f"trade-research:equity:{canonical_equity_exchange(exchange)}:{symbol.upper()}"
+def canonical_instrument_id(
+    exchange: str,
+    symbol: str,
+    *,
+    source_identity: str | None = None,
+) -> str:
+    resolved_identity = source_identity or symbol.upper()
+    identity = f"trade-research:equity:{canonical_equity_exchange(exchange)}:{resolved_identity}"
     return f"eq_{uuid5(NAMESPACE_URL, identity).hex}"
 
 
@@ -539,6 +662,16 @@ def _state_from_existing(
         consecutive_missing_refreshes=int(row.get("consecutive_missing_refreshes") or 0),
         last_universe_snapshot_id=str(row.get("last_universe_snapshot_id") or ""),
         present_in_snapshot=False,
+        source_identity=_optional_string(row.get("source_identity")),
+        listing_status=str(row.get("listing_status") or "active"),
+        listing_status_reason=_optional_string(row.get("listing_status_reason")),
+        listing_status_effective_at=(
+            _as_utc(row["listing_status_effective_at"])
+            if row.get("listing_status_effective_at")
+            else None
+        ),
+        pipeline_eligibility=str(row.get("pipeline_eligibility") or "incremental"),
+        provider_instrument_key=_optional_string(row.get("provider_instrument_key")),
     )
 
 
@@ -591,7 +724,12 @@ def _new_symbol_backfill(
 
 def _state_json(state: UniverseInstrumentState) -> dict[str, Any]:
     payload = asdict(state)
-    for key in ("first_seen_at", "last_seen_at", "inactive_at"):
+    for key in (
+        "first_seen_at",
+        "last_seen_at",
+        "inactive_at",
+        "listing_status_effective_at",
+    ):
         value = payload[key]
         payload[key] = value.isoformat() if value is not None else None
     return payload

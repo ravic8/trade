@@ -62,6 +62,21 @@ symbols_table = Table(
         server_default="0",
     ),
     Column("last_universe_snapshot_id", String),
+    Column("source_identity", String),
+    Column("provider_instrument_key", String),
+    Column("listing_status", String, nullable=False, default="active", server_default="active"),
+    Column("listing_status_reason", String),
+    Column("listing_status_effective_at", DateTime(timezone=True)),
+    Column(
+        "pipeline_eligibility",
+        String,
+        nullable=False,
+        default="incremental",
+        server_default="incremental",
+    ),
+    Column("provider_status", String, nullable=False, default="unknown", server_default="unknown"),
+    Column("provider_status_reason", String),
+    Column("provider_status_updated_at", DateTime(timezone=True)),
     Column("fetched_at", DateTime(timezone=True), nullable=False),
 )
 
@@ -960,9 +975,7 @@ class TimescaleStore:
             "minimum_rpm": int(state["minimum_rpm"]),
             "maximum_rpm": int(state["maximum_rpm"]),
             "current_concurrency": int(state["current_concurrency"]),
-            "consecutive_healthy_windows": int(
-                state.get("consecutive_healthy_windows") or 0
-            ),
+            "consecutive_healthy_windows": int(state.get("consecutive_healthy_windows") or 0),
             "circuit_state": _clean_string(state.get("circuit_state")) or "closed",
             "cooldown_until": (
                 _as_utc(state["cooldown_until"])
@@ -970,9 +983,7 @@ class TimescaleStore:
                 else None
             ),
             "last_429_at": (
-                _as_utc(state["last_429_at"])
-                if state.get("last_429_at") is not None
-                else None
+                _as_utc(state["last_429_at"]) if state.get("last_429_at") is not None else None
             ),
             "recent_error_rate": float(state.get("recent_error_rate") or 0.0),
             "latency_baseline_ms": (
@@ -1109,7 +1120,14 @@ class TimescaleStore:
         update_columns = {
             column.name: getattr(statement.excluded, column.name)
             for column in symbols_table.columns
-            if column.name not in {"symbol", "exchange"}
+            if column.name
+            not in {
+                "symbol",
+                "exchange",
+                "provider_status",
+                "provider_status_reason",
+                "provider_status_updated_at",
+            }
         }
         with self.engine.begin() as connection:
             connection.execute(
@@ -1154,6 +1172,11 @@ class TimescaleStore:
                     currency=row["currency"],
                     source=row["source"],
                     source_url=row["source_url"],
+                    source_identity=row["source_identity"],
+                    listing_status=row["listing_status"],
+                    listing_status_reason=row["listing_status_reason"],
+                    listing_status_effective_at=row["listing_status_effective_at"],
+                    pipeline_eligibility=row["pipeline_eligibility"],
                 )
                 for row in rows
             ]
@@ -1195,21 +1218,20 @@ class TimescaleStore:
                 symbols_table.c.currency,
                 symbols_table.c.source,
                 symbols_table.c.source_url,
+                symbols_table.c.source_identity,
+                symbols_table.c.listing_status,
+                symbols_table.c.listing_status_reason,
+                symbols_table.c.listing_status_effective_at,
+                symbols_table.c.pipeline_eligibility,
             )
             .select_from(
                 universe_snapshot_members_table.join(
                     symbols_table,
-                    (
-                        universe_snapshot_members_table.c.exchange_symbol
-                        == symbols_table.c.symbol
-                    )
+                    (universe_snapshot_members_table.c.exchange_symbol == symbols_table.c.symbol)
                     & (symbols_table.c.exchange == exchange.upper()),
                 )
             )
-            .where(
-                universe_snapshot_members_table.c.snapshot_id
-                == str(latest["snapshot_id"])
-            )
+            .where(universe_snapshot_members_table.c.snapshot_id == str(latest["snapshot_id"]))
             .where(symbols_table.c.is_active.is_(True))
             .order_by(symbols_table.c.symbol)
         )
@@ -1293,6 +1315,12 @@ class TimescaleStore:
                 "inactive_reason": item.inactive_reason,
                 "consecutive_missing_refreshes": item.consecutive_missing_refreshes,
                 "last_universe_snapshot_id": item.last_universe_snapshot_id,
+                "source_identity": item.source_identity,
+                "provider_instrument_key": item.provider_instrument_key,
+                "listing_status": item.listing_status,
+                "listing_status_reason": item.listing_status_reason,
+                "listing_status_effective_at": item.listing_status_effective_at,
+                "pipeline_eligibility": item.pipeline_eligibility,
                 "fetched_at": plan.fetched_at,
             }
             for item in plan.instruments
@@ -1308,6 +1336,16 @@ class TimescaleStore:
                     "currency": item.currency,
                     "source": item.source,
                     "source_url": item.source_url,
+                    "source_identity": item.source_identity,
+                    "provider_instrument_key": item.provider_instrument_key,
+                    "listing_status": item.listing_status,
+                    "listing_status_reason": item.listing_status_reason,
+                    "listing_status_effective_at": (
+                        item.listing_status_effective_at.isoformat()
+                        if item.listing_status_effective_at
+                        else None
+                    ),
+                    "pipeline_eligibility": item.pipeline_eligibility,
                 },
             }
             for item in plan.members
@@ -1315,13 +1353,13 @@ class TimescaleStore:
         provider_rows = [
             {
                 "source": "yfinance",
-                "instrument_key": f"YF|{item.provider_symbol}",
+                "instrument_key": item.provider_instrument_key or f"YF|{item.provider_symbol}",
                 "exchange": item.exchange,
                 "segment": f"{item.exchange}_EQ",
                 "asset_type": "EQUITY",
                 "trading_symbol": item.symbol,
                 "name": item.name,
-                "active": item.is_active,
+                "active": item.is_active and item.pipeline_eligibility != "none",
                 "fetched_at": plan.fetched_at,
                 "raw": {
                     "canonical_instrument_id": item.canonical_instrument_id,
@@ -1330,6 +1368,10 @@ class TimescaleStore:
                     "currency": item.currency,
                     "source": item.source,
                     "source_url": item.source_url,
+                    "source_identity": item.source_identity,
+                    "provider_instrument_key": item.provider_instrument_key,
+                    "listing_status": item.listing_status,
+                    "pipeline_eligibility": item.pipeline_eligibility,
                 },
             }
             for item in plan.instruments
@@ -1384,7 +1426,14 @@ class TimescaleStore:
                     symbol_updates = {
                         column.name: getattr(symbol_statement.excluded, column.name)
                         for column in symbols_table.columns
-                        if column.name not in {"symbol", "exchange"}
+                        if column.name
+                        not in {
+                            "symbol",
+                            "exchange",
+                            "provider_status",
+                            "provider_status_reason",
+                            "provider_status_updated_at",
+                        }
                     }
                     connection.execute(
                         symbol_statement.on_conflict_do_update(
@@ -1394,9 +1443,7 @@ class TimescaleStore:
                     )
             if member_rows:
                 for chunk in _chunks(member_rows, size=1_000):
-                    member_statement = insert(universe_snapshot_members_table).values(
-                        chunk
-                    )
+                    member_statement = insert(universe_snapshot_members_table).values(chunk)
                     member_updates = {
                         column.name: getattr(member_statement.excluded, column.name)
                         for column in universe_snapshot_members_table.columns
@@ -1423,6 +1470,26 @@ class TimescaleStore:
                         )
                     )
             self._persist_yfinance_aliases(connection, plan)
+            ineligible_ids = [
+                item.canonical_instrument_id
+                for item in plan.instruments
+                if item.pipeline_eligibility == "none"
+            ]
+            if ineligible_ids:
+                connection.execute(
+                    pipeline_work_items_table.update()
+                    .where(pipeline_work_items_table.c.canonical_instrument_id.in_(ineligible_ids))
+                    .where(pipeline_work_items_table.c.provider == "yfinance")
+                    .where(pipeline_work_items_table.c.status.in_(("queued", "retry_wait")))
+                    .values(
+                        status="cancelled",
+                        last_error_code="lifecycle_ineligible",
+                        last_error_message=("Instrument lifecycle excludes provider execution."),
+                        next_attempt_at=None,
+                        completed_at=plan.fetched_at,
+                        updated_at=plan.fetched_at,
+                    )
+                )
             if event_rows:
                 for chunk in _chunks(event_rows, size=1_000):
                     connection.execute(
@@ -1444,21 +1511,23 @@ class TimescaleStore:
         if not members:
             return
         canonical_ids = [item.canonical_instrument_id for item in members]
+        provider_symbols = [str(item.provider_symbol) for item in members]
         current_aliases = list(
             connection.execute(
                 instrument_aliases_table.select()
-                .where(
-                    instrument_aliases_table.c.canonical_instrument_id.in_(canonical_ids)
-                )
                 .where(instrument_aliases_table.c.provider == "yfinance")
                 .where(instrument_aliases_table.c.is_current.is_(True))
+                .where(
+                    (instrument_aliases_table.c.canonical_instrument_id.in_(canonical_ids))
+                    | instrument_aliases_table.c.provider_symbol.in_(provider_symbols)
+                )
             ).mappings()
         )
         current_by_instrument: dict[str, list[Mapping[str, Any]]] = {}
         for alias in current_aliases:
-            current_by_instrument.setdefault(
-                str(alias["canonical_instrument_id"]), []
-            ).append(alias)
+            current_by_instrument.setdefault(str(alias["canonical_instrument_id"]), []).append(
+                alias
+            )
 
         changed_members = [
             item
@@ -1471,16 +1540,26 @@ class TimescaleStore:
         if not changed_members:
             return
         changed_ids = [item.canonical_instrument_id for item in changed_members]
-        old_provider_symbols = [
-            str(alias["provider_symbol"])
-            for canonical_id in changed_ids
-            for alias in current_by_instrument.get(canonical_id, [])
-        ]
+        changed_symbols = [str(item.provider_symbol) for item in changed_members]
+        old_provider_symbols = sorted(
+            {
+                str(alias["provider_symbol"])
+                for alias in current_aliases
+                if str(alias["canonical_instrument_id"]) in changed_ids
+                or (
+                    str(alias["provider_symbol"]) in changed_symbols
+                    and str(alias["canonical_instrument_id"]) not in changed_ids
+                )
+            }
+        )
         connection.execute(
             instrument_aliases_table.update()
-            .where(instrument_aliases_table.c.canonical_instrument_id.in_(changed_ids))
             .where(instrument_aliases_table.c.provider == "yfinance")
             .where(instrument_aliases_table.c.is_current.is_(True))
+            .where(
+                instrument_aliases_table.c.canonical_instrument_id.in_(changed_ids)
+                | instrument_aliases_table.c.provider_symbol.in_(changed_symbols)
+            )
             .values(valid_to=plan.fetched_at, is_current=False)
         )
         if old_provider_symbols:
@@ -1497,8 +1576,7 @@ class TimescaleStore:
         alias_rows = []
         for item in changed_members:
             alias_identity = (
-                f"{plan.snapshot_id}:{item.canonical_instrument_id}:"
-                f"yfinance:{item.provider_symbol}"
+                f"{plan.snapshot_id}:{item.canonical_instrument_id}:yfinance:{item.provider_symbol}"
             )
             alias_rows.append(
                 {
@@ -1565,9 +1643,9 @@ class TimescaleStore:
             row = connection.execute(query).mappings().first()
         if row is None:
             return None
-        if max_age_days is not None and _as_utc(row["fetched_at"]) < datetime.now(
-            UTC
-        ) - timedelta(days=max_age_days):
+        if max_age_days is not None and _as_utc(row["fetched_at"]) < datetime.now(UTC) - timedelta(
+            days=max_age_days
+        ):
             return None
         return dict(row)
 
@@ -1666,24 +1744,26 @@ class TimescaleStore:
                 symbols_table.c.symbol,
                 symbols_table.c.exchange,
                 symbols_table.c.yahoo_symbol.label("provider_symbol"),
+                symbols_table.c.provider_instrument_key,
+                symbols_table.c.first_seen_at,
+                symbols_table.c.listing_status,
+                symbols_table.c.listing_status_reason,
+                symbols_table.c.listing_status_effective_at,
+                symbols_table.c.pipeline_eligibility,
+                symbols_table.c.provider_status,
             )
             .select_from(
                 universe_snapshot_members_table.join(
                     symbols_table,
-                    (
-                        universe_snapshot_members_table.c.exchange_symbol
-                        == symbols_table.c.symbol
-                    )
+                    (universe_snapshot_members_table.c.exchange_symbol == symbols_table.c.symbol)
                     & (symbols_table.c.exchange == exchange_code),
                 )
             )
-            .where(
-                universe_snapshot_members_table.c.snapshot_id
-                == str(latest["snapshot_id"])
-            )
+            .where(universe_snapshot_members_table.c.snapshot_id == str(latest["snapshot_id"]))
             .where(symbols_table.c.is_active.is_(True))
             .where(symbols_table.c.yahoo_symbol.is_not(None))
             .where(symbols_table.c.canonical_instrument_id.is_not(None))
+            .where(symbols_table.c.pipeline_eligibility != "none")
             .order_by(symbols_table.c.symbol)
         )
         with self.engine.begin() as connection:
@@ -1693,10 +1773,7 @@ class TimescaleStore:
         self,
         work_items: Iterable[Mapping[str, Any] | DailyWorkItem],
     ) -> int:
-        rows = [
-            dict(item) if isinstance(item, Mapping) else item.as_row()
-            for item in work_items
-        ]
+        rows = [dict(item) if isinstance(item, Mapping) else item.as_row() for item in work_items]
         if not rows:
             return 0
         inserted = 0
@@ -1723,14 +1800,11 @@ class TimescaleStore:
         if limit <= 0:
             return []
         now = _as_utc(at or datetime.now(UTC))
-        ready = (
-            (pipeline_work_items_table.c.status == "queued")
-            | (
-                (pipeline_work_items_table.c.status == "retry_wait")
-                & (
-                    (pipeline_work_items_table.c.next_attempt_at.is_(None))
-                    | (pipeline_work_items_table.c.next_attempt_at <= now)
-                )
+        ready = (pipeline_work_items_table.c.status == "queued") | (
+            (pipeline_work_items_table.c.status == "retry_wait")
+            & (
+                (pipeline_work_items_table.c.next_attempt_at.is_(None))
+                | (pipeline_work_items_table.c.next_attempt_at <= now)
             )
         )
         query = (
@@ -1738,8 +1812,7 @@ class TimescaleStore:
             .where(pipeline_work_items_table.c.provider == provider)
             .where(ready)
             .where(
-                pipeline_work_items_table.c.attempt_count
-                < pipeline_work_items_table.c.max_attempts
+                pipeline_work_items_table.c.attempt_count < pipeline_work_items_table.c.max_attempts
             )
             .order_by(
                 pipeline_work_items_table.c.priority,
@@ -1752,6 +1825,24 @@ class TimescaleStore:
         claimed: list[dict[str, Any]] = []
         with self.engine.begin() as connection:
             rows = list(connection.execute(query).mappings())
+            lifecycle_by_id: dict[str, Mapping[str, Any]] = {}
+            canonical_ids = [str(row["canonical_instrument_id"]) for row in rows]
+            if canonical_ids:
+                lifecycle_rows = connection.execute(
+                    select(
+                        symbols_table.c.canonical_instrument_id,
+                        symbols_table.c.first_seen_at,
+                        symbols_table.c.listing_status,
+                        symbols_table.c.listing_status_reason,
+                        symbols_table.c.listing_status_effective_at,
+                        symbols_table.c.pipeline_eligibility,
+                        symbols_table.c.provider_status,
+                        symbols_table.c.provider_instrument_key,
+                    ).where(symbols_table.c.canonical_instrument_id.in_(canonical_ids))
+                ).mappings()
+                lifecycle_by_id = {
+                    str(item["canonical_instrument_id"]): item for item in lifecycle_rows
+                }
             for row in rows:
                 values = {
                     "status": "running",
@@ -1763,13 +1854,11 @@ class TimescaleStore:
                 }
                 connection.execute(
                     pipeline_work_items_table.update()
-                    .where(
-                        pipeline_work_items_table.c.work_item_id
-                        == row["work_item_id"]
-                    )
+                    .where(pipeline_work_items_table.c.work_item_id == row["work_item_id"])
                     .values(**values)
                 )
-                claimed.append({**dict(row), **values})
+                lifecycle = lifecycle_by_id.get(str(row["canonical_instrument_id"]), {})
+                claimed.append({**dict(row), **dict(lifecycle), **values})
         return claimed
 
     def heartbeat_pipeline_work_items(
@@ -1804,6 +1893,7 @@ class TimescaleStore:
         error_code: str | None = None,
         error_message: str | None = None,
         run_id: str | None = None,
+        retry_delay: timedelta | None = None,
         at: datetime | None = None,
     ) -> dict[str, Any] | None:
         if status not in {"succeeded", "retry_wait", "terminal", "cancelled"}:
@@ -1816,13 +1906,17 @@ class TimescaleStore:
         now = _as_utc(at or datetime.now(UTC))
         identity = pipeline_work_items_table.c.work_item_id == work_item_id
         with self.engine.begin() as connection:
-            row = connection.execute(
-                pipeline_work_items_table.select()
-                .where(identity)
-                .where(pipeline_work_items_table.c.status == "running")
-                .where(pipeline_work_items_table.c.locked_by == worker_id)
-                .with_for_update()
-            ).mappings().first()
+            row = (
+                connection.execute(
+                    pipeline_work_items_table.select()
+                    .where(identity)
+                    .where(pipeline_work_items_table.c.status == "running")
+                    .where(pipeline_work_items_table.c.locked_by == worker_id)
+                    .with_for_update()
+                )
+                .mappings()
+                .first()
+            )
             if row is None:
                 return None
             resolved_status = status
@@ -1840,25 +1934,39 @@ class TimescaleStore:
                 "last_error_message": error_message,
                 "updated_at": now,
                 "completed_at": (
-                    now
-                    if resolved_status in {"succeeded", "terminal", "cancelled"}
-                    else None
+                    now if resolved_status in {"succeeded", "terminal", "cancelled"} else None
                 ),
                 "next_attempt_at": (
-                    now + durable_retry_delay(attempt_count)
+                    now + (retry_delay or durable_retry_delay(attempt_count))
                     if resolved_status == "retry_wait"
                     else None
                 ),
             }
-            if (
-                resolved_status == "retry_wait"
-                and row["work_type"] == "daily_incremental"
-            ):
+            if resolved_status == "retry_wait" and row["work_type"] == "daily_incremental":
                 values["priority"] = WORK_PRIORITIES["daily_incremental_retry"]
-            connection.execute(
-                pipeline_work_items_table.update().where(identity).values(**values)
-            )
+            connection.execute(pipeline_work_items_table.update().where(identity).values(**values))
             return {**dict(row), **values}
+
+    def update_symbol_provider_status(
+        self,
+        canonical_instrument_id: str,
+        *,
+        status: str,
+        reason: str | None = None,
+        at: datetime | None = None,
+    ) -> int:
+        now = _as_utc(at or datetime.now(UTC))
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                symbols_table.update()
+                .where(symbols_table.c.canonical_instrument_id == canonical_instrument_id)
+                .values(
+                    provider_status=status,
+                    provider_status_reason=reason,
+                    provider_status_updated_at=now,
+                )
+            )
+        return int(result.rowcount or 0)
 
     def recover_stale_pipeline_work_items(
         self,
@@ -1893,9 +2001,7 @@ class TimescaleStore:
                 locked_by=None,
                 locked_at=None,
                 last_error_code="stale_lock_recovered",
-                last_error_message=(
-                    "Worker heartbeat expired; work was recovered or finalized."
-                ),
+                last_error_message=("Worker heartbeat expired; work was recovered or finalized."),
                 updated_at=now,
                 completed_at=case(
                     (
@@ -1943,8 +2049,7 @@ class TimescaleStore:
             .where(ohlcv_daily_table.c.date <= end_date)
             .group_by(ohlcv_daily_table.c.date)
             .having(
-                func.count(func.distinct(ohlcv_daily_table.c.instrument_key))
-                >= minimum_instruments
+                func.count(func.distinct(ohlcv_daily_table.c.instrument_key)) >= minimum_instruments
             )
         )
         with self.engine.begin() as connection:
@@ -2199,9 +2304,11 @@ class TimescaleStore:
             & (hourly_backlog_windows_table.c.source == source)
         )
         with self.engine.begin() as connection:
-            existing = connection.execute(
-                hourly_backlog_windows_table.select().where(key_filter)
-            ).mappings().first()
+            existing = (
+                connection.execute(hourly_backlog_windows_table.select().where(key_filter))
+                .mappings()
+                .first()
+            )
             existing_status = existing["status"] if existing else None
             if is_complete:
                 status = "recovered"
@@ -2240,9 +2347,11 @@ class TimescaleStore:
                     set_=update_columns,
                 )
             )
-            row = connection.execute(
-                hourly_backlog_windows_table.select().where(key_filter)
-            ).mappings().one()
+            row = (
+                connection.execute(hourly_backlog_windows_table.select().where(key_filter))
+                .mappings()
+                .one()
+            )
         return dict(row)
 
     def mark_hourly_backlog_queued(
@@ -2561,8 +2670,7 @@ class TimescaleStore:
                 update_columns = {
                     column.name: getattr(statement.excluded, column.name)
                     for column in corporate_actions_table.columns
-                    if column.name
-                    not in {"source", "instrument_key", "action_date", "action_type"}
+                    if column.name not in {"source", "instrument_key", "action_date", "action_type"}
                 }
                 connection.execute(
                     statement.on_conflict_do_update(
@@ -2599,11 +2707,7 @@ class TimescaleStore:
         if valid_only:
             query = query.where(ohlcv_daily_table.c.quality_status == "ok")
         with self.engine.begin() as connection:
-            rows = (
-                connection.execute(query)
-                .mappings()
-                .all()
-            )
+            rows = connection.execute(query).mappings().all()
         return {
             str(row["instrument_key"]): row["latest_date"]
             for row in rows
@@ -2990,11 +3094,7 @@ class TimescaleStore:
         if start_date and end_date and start_date > end_date:
             raise ValueError("start_date must be on or before end_date.")
 
-        seed_rows = [
-            row
-            for row in symbols
-            if row.get("symbol") and row.get("instrument_key")
-        ]
+        seed_rows = [row for row in symbols if row.get("symbol") and row.get("instrument_key")]
         if not seed_rows:
             return {
                 "total": 0,
@@ -3265,9 +3365,7 @@ class TimescaleStore:
             "missing_rows": 0,
             "estimated_provider_calls_for_missing": 0,
         }
-        seed_rows = [
-            row for row in symbols if row.get("symbol") and row.get("instrument_key")
-        ]
+        seed_rows = [row for row in symbols if row.get("symbol") and row.get("instrument_key")]
         if not seed_rows:
             return {"total": 0, "rows": [], "summary": empty_summary}
 
@@ -3610,8 +3708,7 @@ class TimescaleStore:
             .select_from(
                 tradable_universes_table.outerjoin(
                     member_counts,
-                    member_counts.c.universe_id
-                    == tradable_universes_table.c.universe_id,
+                    member_counts.c.universe_id == tradable_universes_table.c.universe_id,
                 )
             )
             .where(tradable_universes_table.c.exchange == exchange.upper())
@@ -4034,9 +4131,7 @@ class TimescaleStore:
         if start_date:
             query = query.where(ingestion_runs_table.c.started_at >= start_date)
         if end_date:
-            query = query.where(
-                ingestion_runs_table.c.started_at < end_date + timedelta(days=1)
-            )
+            query = query.where(ingestion_runs_table.c.started_at < end_date + timedelta(days=1))
         query = query.limit(max(limit, 1)).offset(max(offset, 0))
         with self.engine.begin() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
@@ -4064,9 +4159,7 @@ class TimescaleStore:
         if source:
             query = query.where(daily_ohlcv_fetch_coverage_table.c.source == source)
         if exchange:
-            query = query.where(
-                daily_ohlcv_fetch_coverage_table.c.exchange == exchange.upper()
-            )
+            query = query.where(daily_ohlcv_fetch_coverage_table.c.exchange == exchange.upper())
         with self.engine.begin() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 
@@ -4148,9 +4241,9 @@ class TimescaleStore:
             func.count().label("requests"),
             func.sum(provider_request_log_table.c.wait_seconds).label("wait_seconds"),
             func.avg(provider_request_log_table.c.duration_ms).label("avg_duration_ms"),
-            func.sum(
-                case((provider_request_log_table.c.rate_limited.is_(True), 1), else_=0)
-            ).label("rate_limited_requests"),
+            func.sum(case((provider_request_log_table.c.rate_limited.is_(True), 1), else_=0)).label(
+                "rate_limited_requests"
+            ),
         ).where(provider_request_log_table.c.run_id == run_id)
         if provider:
             query = query.where(provider_request_log_table.c.provider == provider.lower())
@@ -4186,9 +4279,9 @@ class TimescaleStore:
             func.count().label("requests"),
             func.sum(provider_request_log_table.c.wait_seconds).label("wait_seconds"),
             func.avg(provider_request_log_table.c.duration_ms).label("avg_duration_ms"),
-            func.sum(
-                case((provider_request_log_table.c.rate_limited.is_(True), 1), else_=0)
-            ).label("rate_limited_requests"),
+            func.sum(case((provider_request_log_table.c.rate_limited.is_(True), 1), else_=0)).label(
+                "rate_limited_requests"
+            ),
         )
         if exchange or job_name:
             query = query.select_from(
