@@ -888,6 +888,65 @@ Exit criteria:
 - Enable US incremental and repair schedules.
 - Activate adaptive mode only after observe-mode validation.
 
+### Phase 6.1: US Identity and Lifecycle Hotfix
+
+The first full-US backfill completed for 5,611 of 5,613 current directory
+members. The two deterministic empty responses exposed two different lifecycle
+cases: `SHOT` is a newly listed security whose ticker was previously used by a
+different issuer, while `SVA` is still directory-listed but has an unresolved
+Nasdaq trading halt. Neither case should consume the generic retry ladder
+forever.
+
+The US universe provider now enriches Nasdaq's symbol directory with two
+fail-open official sources:
+
+- SEC ticker-to-CIK associations provide a stable issuer identity. The
+  canonical source identity combines CIK with a normalized security class so
+  multiple share classes from one issuer remain distinct.
+- Nasdaq's unresolved trade-halt feed supplies current halt status, reason, and
+  effective date. A failure of either enrichment source does not reject an
+  otherwise valid symbol-directory snapshot.
+
+Reconciliation matches an existing security by source identity before ticker.
+The same identity under a different ticker emits `ticker_changed` and retains
+the canonical instrument. The same ticker under a different identity emits
+`ticker_reused` and creates a new canonical instrument. Dated yfinance aliases
+close when either condition occurs, so a ticker string is never treated as a
+permanent security identifier.
+
+The first security using a Yahoo ticker retains the compatible
+`YF|<provider-symbol>` storage key. If that ticker is later reused by a
+different canonical security, the new security receives a namespaced provider
+instrument key containing its canonical ID. This prevents pre-reuse OHLCV rows
+from being interpreted as history for the new issuer while preserving all
+existing data in place.
+
+Current lifecycle state is persisted on `symbols`:
+
+```text
+source_identity
+provider_instrument_key
+listing_status / listing_status_reason / listing_status_effective_at
+pipeline_eligibility
+provider_status / provider_status_reason / provider_status_updated_at
+```
+
+Unresolved halted securities receive `pipeline_eligibility=none`; pending
+yfinance work is cancelled during reconciliation and future planners exclude
+them. If a current symbol later disappears from the halt feed, reconciliation
+emits `trading_resumed` and makes it incrementally eligible again.
+
+An `empty_response` for a security first seen within the configured 72-hour
+new-listing grace period becomes `new_listing_provider_lag`. It remains a
+durable retry, but its next attempt is delayed by six hours instead of rapidly
+consuming the generic retry ladder. Successful and failed executions update the
+persisted provider status for operations and coverage reporting.
+
+Production rollout remains fail-closed: deploy migration `20260718_0002`, run a
+fresh US universe refresh, verify `SVA` is halted/ineligible and `SHOT` remains
+active with a different source identity from `BNKK`, then preview incremental
+planning before restarting the planner and worker schedules.
+
 ### Phase 7: TSX Cutover
 
 - Complete `CA` to `TSX` migration.

@@ -100,6 +100,27 @@ def test_durable_retry_ladder_caps_at_twenty_four_hours() -> None:
     assert durable_retry_delay(99) == timedelta(hours=24)
 
 
+def test_lifecycle_ineligible_instrument_generates_no_work() -> None:
+    halted = DailyInstrument(
+        canonical_instrument_id="eq_sva",
+        provider_symbol="SVA",
+        exchange="US",
+        listing_status="halted",
+        pipeline_eligibility="none",
+        listing_status_effective_at=datetime(2019, 2, 22, tzinfo=UTC),
+    )
+    sessions = [date(2026, 7, 16), date(2026, 7, 17)]
+    planner = DailyWorkPlanner()
+
+    assert (
+        planner.plan_incremental(
+            [halted], sessions, {halted.instrument_key: date(2019, 2, 22)}, overlap_sessions=5
+        )
+        == []
+    )
+    assert planner.plan_initial_backfill([halted], sessions, {}) == []
+
+
 class _MemoryQueueStore:
     def __init__(self, claimed: list[dict[str, object]]) -> None:
         self.claimed = claimed
@@ -216,3 +237,49 @@ def test_executor_outcomes_preserve_work_item_identity() -> None:
     )
 
     assert outcomes[0]["work_item_id"] == "work-123"
+
+
+def test_new_listing_empty_response_uses_long_provider_grace_retry(monkeypatch) -> None:
+    claim = _claimed("new-listing", "SHOT")
+    claim.update(
+        {
+            "canonical_instrument_id": "eq_new_shot",
+            "first_seen_at": NOW - timedelta(hours=2),
+            "listing_status": "active",
+        }
+    )
+    store = _MemoryQueueStore([claim])
+    settings = Settings(
+        _env_file=None,
+        yfinance_daily_enabled=True,
+        yfinance_new_listing_grace_hours=72,
+        yfinance_new_listing_retry_hours=6,
+        yfinance_work_heartbeat_seconds=5,
+        yfinance_work_stale_minutes=1,
+    )
+    monkeypatch.setattr(yfinance_work_queue, "get_settings", lambda: settings)
+    monkeypatch.setattr(yfinance_work_queue, "TimescaleStore", lambda _: store)
+    monkeypatch.setattr(
+        yfinance_work_queue,
+        "_execute_claimed_exchange_work",
+        lambda **kwargs: (
+            [
+                {
+                    "work_item_id": "new-listing",
+                    "status": "empty_response",
+                    "retryable": True,
+                    "error_message": "no candles",
+                }
+            ],
+            0,
+            0,
+        ),
+    )
+
+    result = yfinance_work_queue.run_yfinance_daily_work_queue(
+        worker_id="worker-new-listing", at=NOW
+    )
+
+    assert result.metrics["retry_wait"] == 1
+    assert store.transitions[0]["error_code"] == "new_listing_provider_lag"
+    assert store.transitions[0]["retry_delay"] == timedelta(hours=6)

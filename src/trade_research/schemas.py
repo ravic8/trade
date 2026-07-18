@@ -12,6 +12,11 @@ class Symbol(BaseModel):
     currency: str | None = None
     source: str
     source_url: str | None = None
+    source_identity: str | None = None
+    listing_status: str = "active"
+    listing_status_reason: str | None = None
+    listing_status_effective_at: datetime | None = None
+    pipeline_eligibility: str = "incremental"
 
 
 class MarketDataQualityReport(BaseModel):

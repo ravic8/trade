@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from trade_research.universe import YFinanceIntradayInstrument
+from trade_research.universe.yfinance_intraday import YFinanceIntradayInstrument
 
 
 class YFinanceDailyProvider:
@@ -118,8 +118,8 @@ def normalize_yfinance_daily(frame: pd.DataFrame, symbols: list[dict[str, str]])
 
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).sort_values(["Symbol", "Date"]).reset_index(
-        drop=True
+    return (
+        pd.concat(frames, ignore_index=True).sort_values(["Symbol", "Date"]).reset_index(drop=True)
     )
 
 
@@ -193,8 +193,10 @@ def normalize_yfinance_intraday(
 
     if not frames:
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).sort_values(["Symbol", "Timestamp"]).reset_index(
-        drop=True
+    return (
+        pd.concat(frames, ignore_index=True)
+        .sort_values(["Symbol", "Timestamp"])
+        .reset_index(drop=True)
     )
 
 

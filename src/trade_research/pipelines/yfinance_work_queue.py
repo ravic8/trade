@@ -66,6 +66,10 @@ def run_yfinance_daily_work_planner(
                 canonical_instrument_id=str(row["canonical_instrument_id"]),
                 provider_symbol=str(row["provider_symbol"]),
                 exchange=exchange,
+                listing_status=str(row.get("listing_status") or "active"),
+                pipeline_eligibility=str(row.get("pipeline_eligibility") or "incremental"),
+                listing_status_effective_at=row.get("listing_status_effective_at"),
+                provider_instrument_key=row.get("provider_instrument_key"),
             )
             for row in db.active_yfinance_daily_instruments(exchange)
         ]
@@ -259,6 +263,22 @@ def run_yfinance_daily_work_queue(
                     error_code = str(outcome["status"])
                     error_message = str(outcome.get("error_message") or "")
                     status_code = outcome.get("status_code")
+                retry_delay = None
+                provider_status = "available" if status == "succeeded" else "unavailable"
+                if error_code == "empty_response":
+                    first_seen_at = item.get("first_seen_at")
+                    listing_status = str(item.get("listing_status") or "active")
+                    if listing_status in {"halted", "suspended", "delisted"}:
+                        status = "terminal"
+                        error_code = "lifecycle_provider_empty"
+                        provider_status = "not_expected"
+                    elif first_seen_at and observed_at - _as_utc(first_seen_at) <= timedelta(
+                        hours=settings.yfinance_new_listing_grace_hours
+                    ):
+                        status = "retry_wait"
+                        error_code = "new_listing_provider_lag"
+                        provider_status = "lagging"
+                        retry_delay = timedelta(hours=settings.yfinance_new_listing_retry_hours)
                 transitioned = db.transition_pipeline_work_item(
                     work_item_id=work_item_id,
                     worker_id=resolved_worker_id,
@@ -267,11 +287,19 @@ def run_yfinance_daily_work_queue(
                     error_code=error_code,
                     error_message=error_message,
                     run_id=str(run_id),
+                    retry_delay=retry_delay,
                 )
                 if transitioned is None:
                     lost_claims += 1
                     continue
                 resolved = str(transitioned["status"])
+                if hasattr(db, "update_symbol_provider_status"):
+                    db.update_symbol_provider_status(
+                        str(item["canonical_instrument_id"]),
+                        status=provider_status,
+                        reason=error_code,
+                        at=observed_at,
+                    )
                 succeeded += int(resolved == "succeeded")
                 retry_wait += int(resolved == "retry_wait")
                 terminal += int(resolved == "terminal")
@@ -322,11 +350,7 @@ def run_yfinance_daily_work_queue(
             "queue": db.pipeline_work_queue_summary(),
         },
         warnings=[
-            *(
-                [f"{retry_wait} work items are waiting for durable retry."]
-                if retry_wait
-                else []
-            ),
+            *([f"{retry_wait} work items are waiting for durable retry."] if retry_wait else []),
             *(
                 [f"{lost_claims} work item claims changed ownership before acknowledgement."]
                 if lost_claims
@@ -354,7 +378,9 @@ def _execute_claimed_exchange_work(
         {
             "work_item_id": str(item["work_item_id"]),
             "symbol": str(item["provider_symbol"]),
-            "instrument_key": f"YF|{item['provider_symbol']}",
+            "instrument_key": str(
+                item.get("provider_instrument_key") or f"YF|{item['provider_symbol']}"
+            ),
             "yahoo_symbol": str(item["provider_symbol"]),
             "fetch_start": item["window_start"].isoformat(),
             "fetch_end": item["window_end"].isoformat(),

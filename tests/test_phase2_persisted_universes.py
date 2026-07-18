@@ -251,3 +251,123 @@ def test_mapping_change_preserves_canonical_identity_and_emits_event() -> None:
     )
     assert mapping_event.old_value == {"provider_symbol": "BRK.B"}
     assert mapping_event.new_value == {"provider_symbol": "BRK-B"}
+
+
+def test_ticker_reuse_creates_a_new_canonical_security() -> None:
+    observed_at = datetime(2026, 7, 17, tzinfo=UTC)
+    old = UniverseInstrumentState(
+        canonical_instrument_id="eq_old_shot",
+        symbol="SHOT",
+        exchange="US",
+        provider_symbol="SHOT",
+        name="Safety Shot",
+        currency="USD",
+        source="test_directory",
+        source_url="test",
+        first_seen_at=datetime(2020, 1, 1, tzinfo=UTC),
+        last_seen_at=datetime(2025, 10, 9, tzinfo=UTC),
+        is_active=True,
+        inactive_at=None,
+        inactive_reason=None,
+        consecutive_missing_refreshes=0,
+        last_universe_snapshot_id="old",
+        present_in_snapshot=True,
+        source_identity="SEC_CIK:0001760903:COMMON",
+    )
+    current = _symbol("SHOT")
+    current.source_identity = "SEC_CIK:0002104879:CLASS_A"
+
+    plan = reconcile_universe_snapshot(
+        [current],
+        [old],
+        exchange="US",
+        snapshot_id="reused",
+        fetched_at=observed_at,
+    )
+
+    assert plan.members[0].canonical_instrument_id != old.canonical_instrument_id
+    assert plan.members[0].provider_instrument_key != "YF|SHOT"
+    assert plan.members[0].provider_instrument_key.endswith(plan.members[0].canonical_instrument_id)
+    assert plan.events[0].event_type == "ticker_reused"
+    assert plan.events[0].old_value["source_identity"] == old.source_identity
+
+
+def test_ticker_change_preserves_identity_and_closes_old_symbol_state() -> None:
+    observed_at = datetime(2025, 10, 10, tzinfo=UTC)
+    old = UniverseInstrumentState(
+        canonical_instrument_id="eq_safety_shot",
+        symbol="SHOT",
+        exchange="US",
+        provider_symbol="SHOT",
+        name="Safety Shot",
+        currency="USD",
+        source="test_directory",
+        source_url="test",
+        first_seen_at=datetime(2020, 1, 1, tzinfo=UTC),
+        last_seen_at=datetime(2025, 10, 9, tzinfo=UTC),
+        is_active=True,
+        inactive_at=None,
+        inactive_reason=None,
+        consecutive_missing_refreshes=0,
+        last_universe_snapshot_id="old",
+        present_in_snapshot=True,
+        source_identity="SEC_CIK:0001760903:COMMON",
+    )
+    renamed = _symbol("BNKK")
+    renamed.source_identity = old.source_identity
+
+    plan = reconcile_universe_snapshot(
+        [renamed],
+        [old],
+        exchange="US",
+        snapshot_id="renamed",
+        fetched_at=observed_at,
+    )
+
+    assert plan.members[0].canonical_instrument_id == old.canonical_instrument_id
+    assert any(event.event_type == "ticker_changed" for event in plan.events)
+    old_state = next(item for item in plan.instruments if item.symbol == "SHOT")
+    assert old_state.is_active is False
+    assert old_state.inactive_reason == "ticker_changed"
+
+
+def test_failed_halt_enrichment_preserves_previous_lifecycle_state() -> None:
+    previous = UniverseInstrumentState(
+        canonical_instrument_id="eq_sva",
+        symbol="SVA",
+        exchange="US",
+        provider_symbol="SVA",
+        name="Sinovac",
+        currency="USD",
+        source="test_directory",
+        source_url="test",
+        first_seen_at=datetime(2026, 7, 17, tzinfo=UTC),
+        last_seen_at=datetime(2026, 7, 17, tzinfo=UTC),
+        is_active=True,
+        inactive_at=None,
+        inactive_reason=None,
+        consecutive_missing_refreshes=0,
+        last_universe_snapshot_id="previous",
+        present_in_snapshot=True,
+        source_identity="SEC_CIK:0001084201:ORDINARY",
+        listing_status="halted",
+        listing_status_reason="T12",
+        listing_status_effective_at=datetime(2019, 2, 22, tzinfo=UTC),
+        pipeline_eligibility="none",
+    )
+    current = _symbol("SVA")
+    current.source_identity = previous.source_identity
+    current.listing_status = "unknown"
+    current.pipeline_eligibility = "preserve"
+
+    plan = reconcile_universe_snapshot(
+        [current],
+        [previous],
+        exchange="US",
+        snapshot_id="feed-failed",
+        fetched_at=datetime(2026, 7, 18, tzinfo=UTC),
+    )
+
+    assert plan.members[0].listing_status == "halted"
+    assert plan.members[0].pipeline_eligibility == "none"
+    assert not any(event.event_type == "trading_resumed" for event in plan.events)

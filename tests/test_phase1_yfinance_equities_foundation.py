@@ -35,6 +35,15 @@ SYMBOL_LIFECYCLE_COLUMNS = {
     "inactive_reason",
     "consecutive_missing_refreshes",
     "last_universe_snapshot_id",
+    "source_identity",
+    "provider_instrument_key",
+    "listing_status",
+    "listing_status_reason",
+    "listing_status_effective_at",
+    "pipeline_eligibility",
+    "provider_status",
+    "provider_status_reason",
+    "provider_status_updated_at",
 }
 
 
@@ -180,4 +189,4 @@ def test_upgrade_reconciles_create_all_tables_with_legacy_symbols(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260717_0001"
+    assert revision == "20260718_0002"
