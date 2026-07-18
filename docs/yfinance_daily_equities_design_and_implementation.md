@@ -1360,6 +1360,33 @@ Rollback is configuration-only: stop the daily research schedule, restore
 rebuild from Upstox, and restart the schedule. Yahoo candles and evidence remain
 stored for diagnosis; no destructive data cleanup is part of rollback.
 
+#### Phase 8.1: NSE comparison-key and freshness hotfix
+
+The first production NSE canary proved that provider storage identities differ:
+Yahoo daily work stores provider symbols such as `20MICRONS.NS`, while Upstox
+stores the NSE exchange symbol `20MICRONS`. Phase 8.1 canonicalizes the Yahoo
+`.NS` suffix only at the NSE comparison boundary; provider-specific stored rows
+and instrument keys remain unchanged and auditable.
+
+Provider freshness is calculated from each complete provider window before the
+frames are restricted to shared symbols. Consequently, an empty comparison set
+can no longer make a fresh provider appear stale. The readiness report exposes
+provider window counts and one primary comparison state:
+
+```text
+provider_data_missing
+no_symbol_overlap
+provider_stale
+insufficient_symbol_overlap
+insufficient_row_overlap
+close_mismatch
+ready
+```
+
+Row-overlap and close-price thresholds are evaluated only when at least one
+canonical symbol overlaps. This prevents cascaded, meaningless price and row
+failures when the actual problem is missing data or incompatible identity.
+
 ### Phase 9: Data Console and Operations
 
 - Add exact gaps, queue, retry, lifecycle, and adaptive-rate views.

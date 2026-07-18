@@ -53,7 +53,7 @@ def test_yfinance_primary_requires_both_nse_execution_flags() -> None:
 def test_provider_comparison_matches_shared_symbol_sessions_only() -> None:
     sessions = [date(2026, 7, day) for day in (13, 14, 15)]
     upstox = _candles(["AAA", "BBB"], sessions)
-    yfinance = _candles(["AAA", "BBB", "YFONLY"], sessions)
+    yfinance = _candles(["AAA.NS", "BBB.NS", "YFONLY.NS"], sessions)
 
     result = nse_cutover.compare_nse_provider_frames(
         upstox,
@@ -67,6 +67,8 @@ def test_provider_comparison_matches_shared_symbol_sessions_only() -> None:
     assert result["row_overlap_ratio"] == 1
     assert result["close_match_ratio"] == 1
     assert result["upstox_latest_date"] == "2026-07-15"
+    assert result["yfinance_window_symbols"] == 3
+    assert result["overlap_state"] == "overlap_available"
 
 
 def test_provider_comparison_detects_close_divergence_and_missing_rows() -> None:
@@ -84,6 +86,26 @@ def test_provider_comparison_detects_close_divergence_and_missing_rows() -> None
     assert result["row_overlap_ratio"] == pytest.approx(2 / 3)
     assert result["close_match_ratio"] == 0
     assert result["yfinance_latest_date"] == "2026-07-14"
+
+
+def test_provider_freshness_is_independent_when_symbols_do_not_overlap() -> None:
+    sessions = [date(2026, 7, day) for day in (13, 14, 15)]
+    upstox = _candles(["AAA"], sessions[:-1])
+    yfinance = _candles(["BBB.NS"], sessions)
+
+    result = nse_cutover.compare_nse_provider_frames(
+        upstox,
+        yfinance,
+        sessions=sessions,
+        close_tolerance=0.01,
+    )
+
+    assert result["overlapping_symbols"] == 0
+    assert result["overlap_state"] == "no_symbol_overlap"
+    assert result["upstox_latest_date"] == "2026-07-14"
+    assert result["yfinance_latest_date"] == "2026-07-15"
+    assert result["upstox_window_rows"] == 2
+    assert result["yfinance_window_rows"] == 3
 
 
 def test_nse_canary_is_independent_from_full_nse_flag(monkeypatch) -> None:
@@ -160,6 +182,84 @@ def test_cutover_readiness_passes_only_with_overlap_and_freshness(monkeypatch) -
     assert result.metrics["ready"] is True
     assert result.metrics["upstox_session_lag"] == 0
     assert result.metrics["yfinance_session_lag"] == 0
+    assert result.metrics["comparison_state"] == "ready"
+
+
+def test_cutover_readiness_distinguishes_no_overlap_from_freshness(monkeypatch) -> None:
+    end = date(2026, 7, 17)
+    sessions = [end - timedelta(days=value) for value in range(19, -1, -1)]
+    settings = Settings(
+        _env_file=None,
+        nse_provider_comparison_sessions=20,
+        nse_provider_comparison_minimum_symbols=1,
+    )
+    store = _ReadinessStore(
+        sessions,
+        _candles(["AAA"], sessions),
+        _candles(["BBB.NS"], sessions),
+    )
+    monkeypatch.setattr(nse_cutover, "get_settings", lambda: settings)
+
+    result = nse_cutover.run_nse_yfinance_cutover_readiness(store=store)
+
+    assert result.status == "fail"
+    assert result.metrics["comparison_state"] == "no_symbol_overlap"
+    assert result.metrics["upstox_session_lag"] == 0
+    assert result.metrics["yfinance_session_lag"] == 0
+    assert result.metrics["stale_providers"] == []
+    assert len(result.blocking_issues) == 1
+    assert "no comparable symbols" in result.blocking_issues[0]
+
+
+def test_cutover_readiness_distinguishes_missing_provider_data(monkeypatch) -> None:
+    end = date(2026, 7, 17)
+    sessions = [end - timedelta(days=value) for value in range(19, -1, -1)]
+    settings = Settings(
+        _env_file=None,
+        nse_provider_comparison_sessions=20,
+        nse_provider_comparison_minimum_symbols=1,
+    )
+    store = _ReadinessStore(
+        sessions,
+        pd.DataFrame(),
+        _candles(["AAA.NS"], sessions),
+    )
+    monkeypatch.setattr(nse_cutover, "get_settings", lambda: settings)
+
+    result = nse_cutover.run_nse_yfinance_cutover_readiness(store=store)
+
+    assert result.status == "fail"
+    assert result.metrics["comparison_state"] == "provider_data_missing"
+    assert result.metrics["missing_providers"] == ["upstox"]
+    assert result.metrics["stale_providers"] == []
+    assert result.metrics["yfinance_session_lag"] == 0
+    assert len(result.blocking_issues) == 1
+    assert "no data for: upstox" in result.blocking_issues[0]
+
+
+def test_cutover_readiness_reports_stale_provider_independently(monkeypatch) -> None:
+    end = date(2026, 7, 17)
+    sessions = [end - timedelta(days=value) for value in range(19, -1, -1)]
+    settings = Settings(
+        _env_file=None,
+        nse_provider_comparison_sessions=20,
+        nse_provider_comparison_minimum_symbols=1,
+        nse_provider_comparison_maximum_session_lag=1,
+    )
+    store = _ReadinessStore(
+        sessions,
+        _candles(["AAA"], sessions[:-2]),
+        _candles(["AAA.NS"], sessions),
+    )
+    monkeypatch.setattr(nse_cutover, "get_settings", lambda: settings)
+
+    result = nse_cutover.run_nse_yfinance_cutover_readiness(store=store)
+
+    assert result.status == "fail"
+    assert result.metrics["comparison_state"] == "provider_stale"
+    assert result.metrics["upstox_session_lag"] == 2
+    assert result.metrics["yfinance_session_lag"] == 0
+    assert result.metrics["stale_providers"] == ["upstox"]
 
 
 def test_yfinance_daily_health_uses_provider_neutral_validation(monkeypatch) -> None:

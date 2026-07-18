@@ -24,6 +24,12 @@ def compare_nse_provider_frames(
     session_set = set(sessions)
     left = _comparison_rows(upstox, session_set, "upstox")
     right = _comparison_rows(yfinance, session_set, "yfinance")
+    upstox_latest_date = _latest_date(left)
+    yfinance_latest_date = _latest_date(right)
+    upstox_window_rows = len(left)
+    yfinance_window_rows = len(right)
+    upstox_window_symbols = int(left["symbol"].nunique())
+    yfinance_window_symbols = int(right["symbol"].nunique())
     shared_symbols = sorted(set(left["symbol"]) & set(right["symbol"]))
     left = left[left["symbol"].isin(shared_symbols)]
     right = right[right["symbol"].isin(shared_symbols)]
@@ -54,6 +60,10 @@ def compare_nse_provider_frames(
         "window_start": sessions[0].isoformat(),
         "window_end": sessions[-1].isoformat(),
         "comparison_sessions": len(sessions),
+        "upstox_window_rows": upstox_window_rows,
+        "yfinance_window_rows": yfinance_window_rows,
+        "upstox_window_symbols": upstox_window_symbols,
+        "yfinance_window_symbols": yfinance_window_symbols,
         "upstox_rows": int(len(left)),
         "yfinance_rows": int(len(right)),
         "overlap_rows": int(len(overlap)),
@@ -63,8 +73,15 @@ def compare_nse_provider_frames(
         "close_match_ratio": float(close_match_ratio),
         "close_mismatches": close_mismatches,
         "maximum_close_difference": maximum_close_difference,
-        "upstox_latest_date": _latest_date(left),
-        "yfinance_latest_date": _latest_date(right),
+        "upstox_latest_date": upstox_latest_date,
+        "yfinance_latest_date": yfinance_latest_date,
+        "overlap_state": (
+            "provider_data_missing"
+            if not upstox_window_rows or not yfinance_window_rows
+            else "no_symbol_overlap"
+            if not shared_symbols
+            else "overlap_available"
+        ),
     }
 
 
@@ -121,33 +138,69 @@ def run_nse_yfinance_cutover_readiness(
         close_tolerance=settings.nse_provider_comparison_close_tolerance,
     )
     blocking: list[str] = []
-    if metrics["overlapping_symbols"] < settings.nse_provider_comparison_minimum_symbols:
+    missing_providers = [
+        provider
+        for provider in ("upstox", "yfinance")
+        if not metrics[f"{provider}_window_rows"]
+    ]
+    if missing_providers:
         blocking.append(
-            "NSE provider overlap has too few symbols: "
-            f"{metrics['overlapping_symbols']}<"
-            f"{settings.nse_provider_comparison_minimum_symbols}."
+            "NSE comparison window has no data for: " + ", ".join(missing_providers) + "."
         )
-    if metrics["row_overlap_ratio"] < settings.nse_provider_comparison_minimum_row_overlap:
+    if not missing_providers:
+        if metrics["overlapping_symbols"] == 0:
+            blocking.append(
+                "NSE providers have no comparable symbols after canonical normalization."
+            )
+        elif metrics["overlapping_symbols"] < settings.nse_provider_comparison_minimum_symbols:
+            blocking.append(
+                "NSE provider overlap has too few symbols: "
+                f"{metrics['overlapping_symbols']}<"
+                f"{settings.nse_provider_comparison_minimum_symbols}."
+            )
+    has_overlap = metrics["overlapping_symbols"] > 0
+    if (
+        has_overlap
+        and metrics["row_overlap_ratio"]
+        < settings.nse_provider_comparison_minimum_row_overlap
+    ):
         blocking.append(
             "NSE provider row overlap is below threshold: "
             f"{metrics['row_overlap_ratio']:.4f}<"
             f"{settings.nse_provider_comparison_minimum_row_overlap:.4f}."
         )
-    if metrics["close_match_ratio"] < settings.nse_provider_comparison_minimum_close_match:
+    if (
+        has_overlap
+        and metrics["close_match_ratio"]
+        < settings.nse_provider_comparison_minimum_close_match
+    ):
         blocking.append(
             "NSE provider close-price match is below threshold: "
             f"{metrics['close_match_ratio']:.4f}<"
             f"{settings.nse_provider_comparison_minimum_close_match:.4f}."
         )
+    stale_providers: list[str] = []
     for provider in ("upstox", "yfinance"):
         latest = metrics[f"{provider}_latest_date"]
         lag = _session_lag(latest, sessions)
         metrics[f"{provider}_session_lag"] = lag
-        if lag > settings.nse_provider_comparison_maximum_session_lag:
+        if (
+            provider not in missing_providers
+            and lag > settings.nse_provider_comparison_maximum_session_lag
+        ):
+            stale_providers.append(provider)
             blocking.append(
                 f"{provider} NSE data is {lag} sessions behind; maximum is "
                 f"{settings.nse_provider_comparison_maximum_session_lag}."
             )
+    comparison_state = _readiness_state(
+        metrics,
+        missing_providers=missing_providers,
+        stale_providers=stale_providers,
+        minimum_symbols=settings.nse_provider_comparison_minimum_symbols,
+        minimum_row_overlap=settings.nse_provider_comparison_minimum_row_overlap,
+        minimum_close_match=settings.nse_provider_comparison_minimum_close_match,
+    )
     metrics.update(
         {
             "trigger": trigger,
@@ -158,6 +211,9 @@ def run_nse_yfinance_cutover_readiness(
             "maximum_session_lag": (
                 settings.nse_provider_comparison_maximum_session_lag
             ),
+            "missing_providers": missing_providers,
+            "stale_providers": stale_providers,
+            "comparison_state": comparison_state,
         }
     )
     return PipelineRunResult(
@@ -247,6 +303,7 @@ def _comparison_rows(
         raise ValueError(f"{provider} comparison frame is missing: {sorted(missing)}")
     result = frame.loc[:, ["symbol", "date", "close"]].copy()
     result["symbol"] = result["symbol"].astype(str).str.strip().str.upper()
+    result["symbol"] = result["symbol"].str.replace(r"\.NS$", "", regex=True)
     result["date"] = pd.to_datetime(result["date"], errors="coerce").dt.date
     result["close"] = pd.to_numeric(result["close"], errors="coerce")
     result = result[
@@ -269,3 +326,27 @@ def _session_lag(latest: str | None, sessions: list[date]) -> int:
         return len(sessions)
     latest_date = date.fromisoformat(latest)
     return sum(session > latest_date for session in sessions)
+
+
+def _readiness_state(
+    metrics: dict[str, Any],
+    *,
+    missing_providers: list[str],
+    stale_providers: list[str],
+    minimum_symbols: int,
+    minimum_row_overlap: float,
+    minimum_close_match: float,
+) -> str:
+    if missing_providers:
+        return "provider_data_missing"
+    if metrics["overlapping_symbols"] == 0:
+        return "no_symbol_overlap"
+    if stale_providers:
+        return "provider_stale"
+    if metrics["overlapping_symbols"] < minimum_symbols:
+        return "insufficient_symbol_overlap"
+    if metrics["row_overlap_ratio"] < minimum_row_overlap:
+        return "insufficient_row_overlap"
+    if metrics["close_match_ratio"] < minimum_close_match:
+        return "close_mismatch"
+    return "ready"
