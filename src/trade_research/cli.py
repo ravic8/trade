@@ -7,6 +7,7 @@ import pandas as pd
 import typer
 from rich.console import Console
 from rich.table import Table
+from sqlalchemy.exc import SQLAlchemyError
 
 from trade_research.config import get_settings
 from trade_research.data import (
@@ -171,9 +172,7 @@ def refresh_exchange_sessions(
 ) -> None:
     result = run_exchange_session_materialization_pipeline(
         exchange,
-        as_of_date=(
-            _parse_cli_date(as_of_date, "--as-of-date") if as_of_date else None
-        ),
+        as_of_date=(_parse_cli_date(as_of_date, "--as-of-date") if as_of_date else None),
         trigger="cli",
     )
     table = Table(title=f"{str(result.metrics['exchange'])} Materialized Sessions")
@@ -349,9 +348,7 @@ def fetch_nifty_futures_history(
 
     end = _parse_cli_date(to_date, "--to-date") if to_date else date.today() - timedelta(days=1)
     start = (
-        _parse_cli_date(from_date, "--from-date")
-        if from_date
-        else _subtract_months(end, months)
+        _parse_cli_date(from_date, "--from-date") if from_date else _subtract_months(end, months)
     )
 
     with UpstoxNiftyFuturesHistoryProvider(token) as provider:
@@ -368,9 +365,7 @@ def fetch_nifty_futures_history(
     path = ParquetStore(settings.data_dir).write_frame(output_name, frame)
     console.print(f"Wrote {len(frame)} NIFTY futures rows: {path}")
     console.print(f"Window: {start.isoformat()} to {end.isoformat()}")
-    console.print(
-        f"Contracts: {frame['TradingSymbol'].nunique()} | interval: {interval}"
-    )
+    console.print(f"Contracts: {frame['TradingSymbol'].nunique()} | interval: {interval}")
 
 
 @app.command("fetch-upstox-instruments")
@@ -464,8 +459,7 @@ def map_liquid_nse_upstox(
             },
             members=matched,
             description=(
-                "Step 1 universe mapped to Upstox instrument keys for batch "
-                "historical ingestion."
+                "Step 1 universe mapped to Upstox instrument keys for batch historical ingestion."
             ),
         )
 
@@ -501,8 +495,7 @@ def fetch_upstox_nse_daily(
             min=1,
             max=7,
             help=(
-                "Default calendar-day lag for completed daily candles when --to-date "
-                "is omitted."
+                "Default calendar-day lag for completed daily candles when --to-date is omitted."
             ),
         ),
     ] = 2,
@@ -582,7 +575,6 @@ def fetch_upstox_nse_daily(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
-
     output_path = result.artifacts.get("ohlcv")
     if output_path is None:
         console.print("No new Upstox NSE daily OHLCV rows fetched; existing Parquet left unchanged")
@@ -603,9 +595,7 @@ def fetch_upstox_nse_daily(
         f"Wrote fetch coverage: "
         f"{fetch_coverage_output} ({result.metrics['fetch_coverage_rows']} rows)"
     )
-    console.print(
-        f"Upstox historical concurrency: {result.metrics['max_concurrent_fetches']}"
-    )
+    console.print(f"Upstox historical concurrency: {result.metrics['max_concurrent_fetches']}")
     if store_db:
         console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
         console.print(
@@ -613,8 +603,7 @@ def fetch_upstox_nse_daily(
         )
         console.print(f"Exported DB snapshot rows: {result.metrics['db_snapshot_rows']}")
         console.print(
-            "Stored fetch coverage rows: "
-            f"{result.metrics['timescale_fetch_coverage_rows']}"
+            f"Stored fetch coverage rows: {result.metrics['timescale_fetch_coverage_rows']}"
         )
 
 
@@ -685,14 +674,10 @@ def retry_upstox_nse_daily(
         f"{result.metrics['candidate_rows']} from {result.metrics['source_coverage_run_id']}"
     )
     console.print(f"Fetched retry rows: {result.metrics['fetched_rows']}")
-    console.print(
-        f"Upstox historical concurrency: {result.metrics['max_concurrent_fetches']}"
-    )
+    console.print(f"Upstox historical concurrency: {result.metrics['max_concurrent_fetches']}")
     console.print(f"Wrote retry coverage: {retry_coverage_output}")
     console.print(f"Wrote retry failures: {retry_failures_output}")
-    console.print(
-        f"Stored retry coverage rows: {result.metrics['timescale_fetch_coverage_rows']}"
-    )
+    console.print(f"Stored retry coverage rows: {result.metrics['timescale_fetch_coverage_rows']}")
     if result.warnings:
         for warning in result.warnings:
             console.print(f"[yellow]{warning}[/yellow]")
@@ -751,9 +736,7 @@ def fetch_yfinance_daily(
             f"Wrote yfinance daily OHLCV: {output_path} "
             f"({result.metrics['db_snapshot_rows'] or result.rows} rows)"
         )
-    console.print(
-        f"Universe: {result.metrics['universe']} / exchange {result.metrics['exchange']}"
-    )
+    console.print(f"Universe: {result.metrics['universe']} / exchange {result.metrics['exchange']}")
     console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
     console.print(f"Batch size: {result.metrics['batch_size']}")
     _print_yahoo_execution_controls(result)
@@ -762,12 +745,10 @@ def fetch_yfinance_daily(
     if store_db:
         console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
         console.print(
-            "Stored price adjustment rows: "
-            f"{result.metrics['timescale_price_adjustment_rows']}"
+            f"Stored price adjustment rows: {result.metrics['timescale_price_adjustment_rows']}"
         )
         console.print(
-            "Stored fetch coverage rows: "
-            f"{result.metrics['timescale_fetch_coverage_rows']}"
+            f"Stored fetch coverage rows: {result.metrics['timescale_fetch_coverage_rows']}"
         )
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
@@ -792,9 +773,7 @@ def plan_yfinance_daily_work(
         typer.Option(help="Also plan explicit missing-gap repair work."),
     ] = False,
 ) -> None:
-    exchange_list = [
-        value.strip().upper() for value in exchanges.split(",") if value.strip()
-    ]
+    exchange_list = [value.strip().upper() for value in exchanges.split(",") if value.strip()]
     try:
         result = run_yfinance_daily_work_planner(
             exchanges=exchange_list,
@@ -805,6 +784,12 @@ def plan_yfinance_daily_work(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    except SQLAlchemyError as exc:
+        detail = str(getattr(exc, "orig", exc)).strip().splitlines()[0]
+        console.print(
+            f"[red]Error: Database query failed while planning daily work: {detail}[/red]"
+        )
+        raise typer.Exit(code=1) from None
     console.print(f"Active symbols: {result.metrics['active_symbols']}")
     console.print(
         "Durable work: "
@@ -907,9 +892,7 @@ def fetch_yfinance_missing(
             f"Wrote yfinance missing-window OHLCV: {output_path} "
             f"({result.metrics['db_snapshot_rows'] or result.rows} rows)"
         )
-    console.print(
-        f"Universe: {result.metrics['universe']} / exchange {result.metrics['exchange']}"
-    )
+    console.print(f"Universe: {result.metrics['universe']} / exchange {result.metrics['exchange']}")
     console.print(f"Fetch symbols: {result.metrics['fetch_symbols']}")
     console.print(f"Fetch windows: {result.metrics['fetch_windows']}")
     console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
@@ -918,13 +901,9 @@ def fetch_yfinance_missing(
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
     console.print(f"Upserted ohlcv_daily rows: {result.metrics['timescale_rows']}")
     console.print(
-        "Stored price adjustment rows: "
-        f"{result.metrics['timescale_price_adjustment_rows']}"
+        f"Stored price adjustment rows: {result.metrics['timescale_price_adjustment_rows']}"
     )
-    console.print(
-        "Stored fetch coverage rows: "
-        f"{result.metrics['timescale_fetch_coverage_rows']}"
-    )
+    console.print(f"Stored fetch coverage rows: {result.metrics['timescale_fetch_coverage_rows']}")
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
 
@@ -1006,9 +985,7 @@ def fetch_dukascopy_intraday(
         console.print("No Dukascopy intraday OHLCV rows fetched; Parquet left unchanged")
     else:
         console.print(f"Wrote Dukascopy intraday OHLCV: {output_path} ({result.rows} rows)")
-    console.print(
-        f"Universe: {result.metrics['universe']} / interval {result.metrics['interval']}"
-    )
+    console.print(f"Universe: {result.metrics['universe']} / interval {result.metrics['interval']}")
     console.print(f"Mapped symbols: {result.metrics['mapped_symbols']}")
     console.print(f"Requested hours: {result.metrics['requested_hours']}")
     console.print(f"Timeout seconds: {result.metrics['timeout_seconds']}")
@@ -1070,9 +1047,7 @@ def fetch_yfinance_intraday(
         console.print("No yfinance intraday OHLCV rows fetched; Parquet left unchanged")
     else:
         console.print(f"Wrote yfinance intraday OHLCV: {output_path} ({result.rows} rows)")
-    console.print(
-        f"Universe: {result.metrics['universe']} / interval {result.metrics['interval']}"
-    )
+    console.print(f"Universe: {result.metrics['universe']} / interval {result.metrics['interval']}")
     console.print(f"Mapped symbols: {result.metrics['mapped_symbols']}")
     console.print(f"Fetched rows: {result.metrics['fetched_rows']}")
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
@@ -1183,8 +1158,7 @@ def build_daily_features(
         )
     if result.metrics["invalid_ohlcv_count"]:
         console.print(
-            f"[yellow]Excluded invalid OHLCV rows: "
-            f"{result.metrics['invalid_ohlcv_count']}[/yellow]"
+            f"[yellow]Excluded invalid OHLCV rows: {result.metrics['invalid_ohlcv_count']}[/yellow]"
         )
     console.print(json.dumps(result.metrics, indent=2))
 
@@ -1271,8 +1245,7 @@ def build_daily_targets(
         )
     if result.metrics["invalid_ohlcv_count"]:
         console.print(
-            f"[yellow]Excluded invalid OHLCV rows: "
-            f"{result.metrics['invalid_ohlcv_count']}[/yellow]"
+            f"[yellow]Excluded invalid OHLCV rows: {result.metrics['invalid_ohlcv_count']}[/yellow]"
         )
     console.print(json.dumps(result.metrics, indent=2))
 
@@ -1322,9 +1295,7 @@ def build_factor_research(
         min_date_rows=min_date_rows,
         min_month_rows=min_month_rows,
     )
-    console.print(
-        f"Wrote factor IC: {result.artifacts['ic']} ({result.metrics['ic_rows']} rows)"
-    )
+    console.print(f"Wrote factor IC: {result.artifacts['ic']} ({result.metrics['ic_rows']} rows)")
     console.print(
         "Wrote factor quantiles: "
         f"{result.artifacts['quantiles']} ({result.metrics['quantile_rows']} rows)"

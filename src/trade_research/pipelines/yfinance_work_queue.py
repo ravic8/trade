@@ -22,9 +22,18 @@ from trade_research.storage import TimescaleStore
 SUPPORTED_EQUITY_EXCHANGES = ("NSE", "TSX", "US")
 
 
+def enabled_yfinance_daily_exchanges(settings: Settings) -> tuple[str, ...]:
+    enabled = (
+        ("NSE", settings.yfinance_nse_enabled),
+        ("TSX", settings.yfinance_full_tsx_enabled),
+        ("US", settings.yfinance_full_us_enabled),
+    )
+    return tuple(exchange for exchange, is_enabled in enabled if is_enabled)
+
+
 def run_yfinance_daily_work_planner(
     *,
-    exchanges: Iterable[str] = SUPPORTED_EQUITY_EXCHANGES,
+    exchanges: Iterable[str] | None = None,
     include_incremental: bool = True,
     include_initial_backfill: bool = True,
     include_gap_repair: bool = False,
@@ -32,6 +41,14 @@ def run_yfinance_daily_work_planner(
     at: datetime | None = None,
 ) -> PipelineRunResult:
     settings = get_settings()
+    resolved_exchanges = (
+        tuple(exchanges) if exchanges is not None else enabled_yfinance_daily_exchanges(settings)
+    )
+    if not resolved_exchanges:
+        raise ValueError(
+            "No yfinance daily exchanges are enabled. Enable an exchange-specific "
+            "feature flag or pass exchanges explicitly."
+        )
     db = TimescaleStore(settings.database_url)
     db.initialize()
     observed_at = _as_utc(at or datetime.now(UTC))
@@ -39,7 +56,7 @@ def run_yfinance_daily_work_planner(
     generated = inserted = active_count = 0
     exchange_metrics: dict[str, Any] = {}
 
-    for raw_exchange in exchanges:
+    for raw_exchange in resolved_exchanges:
         exchange = raw_exchange.upper()
         if exchange not in SUPPORTED_EQUITY_EXCHANGES:
             raise ValueError(f"Unsupported daily equity exchange: {raw_exchange}")
@@ -83,6 +100,7 @@ def run_yfinance_daily_work_planner(
             [instrument.instrument_key for instrument in instruments],
             source="yfinance",
             valid_only=True,
+            chunk_size=settings.yfinance_work_planner_chunk_size,
         )
         if include_incremental:
             work = planner.plan_incremental(
