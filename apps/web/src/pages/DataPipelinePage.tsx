@@ -48,7 +48,7 @@ import { PageHeader } from "../components/PageHeader";
 import { formatDateTime } from "../utils/format";
 
 type DataTab = "request" | "available" | "runs" | "health";
-type MarketId = "nse" | "us" | "ca" | "global";
+type MarketId = "nse" | "us" | "tsx" | "global";
 
 type MarketOption = {
   id: MarketId;
@@ -56,7 +56,7 @@ type MarketOption = {
   detail: string;
   icon: string;
   provider: "upstox" | "yfinance";
-  exchange: "NSE" | "US" | "CA" | "GLOBAL";
+  exchange: "NSE" | "US" | "TSX" | "GLOBAL";
   interval: "1d" | "5m";
   requestEnabled: boolean;
   defaultSymbols: string[];
@@ -89,12 +89,12 @@ const markets: MarketOption[] = [
     notice: "US daily availability is visible here; public fetch controls are not exposed yet.",
   },
   {
-    id: "ca",
+    id: "tsx",
     label: "TSX",
     detail: "Canada yfinance daily",
     icon: "CA",
     provider: "yfinance",
-    exchange: "CA",
+    exchange: "TSX",
     interval: "1d",
     requestEnabled: false,
     defaultSymbols: ["SHOP.TO", "RY.TO"],
@@ -159,7 +159,7 @@ export function DataPipelinePage() {
   const [symbolsByMarket, setSymbolsByMarket] = useState<Record<MarketId, string[]>>({
     nse: ["RELIANCE", "INFY"],
     us: ["AAPL", "MSFT"],
-    ca: ["SHOP.TO", "RY.TO"],
+    tsx: ["SHOP.TO", "RY.TO"],
     global: ["EUR/USD", "USD/JPY", "BTC/USD"],
   });
   const [symbolInput, setSymbolInput] = useState("");

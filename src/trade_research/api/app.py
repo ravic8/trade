@@ -83,6 +83,13 @@ app.add_middleware(
 app.add_middleware(ChatRateLimitMiddleware, settings_getter=get_settings)
 
 
+def _canonical_data_exchange(value: str) -> str:
+    """Normalize compatibility aliases before validating or querying data."""
+
+    normalized = value.strip().upper()
+    return "TSX" if normalized == "CA" else normalized
+
+
 def _require_admin(request: Request) -> str:
     return require_admin_request(request, get_settings())
 
@@ -299,7 +306,7 @@ def data_availability(
     sort: str = "symbol",
 ) -> DataAvailabilityResponse:
     provider_normalized = provider.lower()
-    exchange_normalized = exchange.upper()
+    exchange_normalized = _canonical_data_exchange(exchange)
     if provider_normalized not in {"upstox", "yfinance"}:
         raise HTTPException(
             status_code=400,
@@ -307,10 +314,17 @@ def data_availability(
         )
     if provider_normalized == "upstox" and exchange_normalized != "NSE":
         raise HTTPException(status_code=400, detail="provider=upstox supports only exchange=NSE.")
-    if provider_normalized == "yfinance" and exchange_normalized not in {"US", "CA", "GLOBAL"}:
+    if provider_normalized == "yfinance" and exchange_normalized not in {
+        "US",
+        "TSX",
+        "GLOBAL",
+    }:
         raise HTTPException(
             status_code=400,
-            detail="provider=yfinance supports only exchange=US, exchange=CA, or exchange=GLOBAL.",
+            detail=(
+                "provider=yfinance supports only exchange=US, exchange=TSX, "
+                "or exchange=GLOBAL."
+            ),
         )
     interval_normalized = "1d" if interval == "daily" else interval
     if interval_normalized not in {"1d", "5m"}:
@@ -378,11 +392,13 @@ def data_availability(
             )
 
         if start_date and end_date:
-            _ensure_exchange_holidays(store, exchange, start_date, end_date)
-        expected_rows = _expected_daily_rows(store, exchange, start_date, end_date)
+            _ensure_exchange_holidays(store, exchange_normalized, start_date, end_date)
+        expected_rows = _expected_daily_rows(
+            store, exchange_normalized, start_date, end_date
+        )
         if provider_normalized == "yfinance":
             seed_universe = universe_id or (
-                "canada_seed" if exchange_normalized == "CA" else "us_seed"
+                "canada_seed" if exchange_normalized == "TSX" else "us_seed"
             )
             symbols = yfinance_universe(seed_universe)
             invalid_symbols = [
@@ -466,7 +482,7 @@ def provider_runs(
             limit=limit,
             offset=offset,
             source=provider,
-            exchange=exchange,
+            exchange=_canonical_data_exchange(exchange) if exchange else None,
             job_name=job,
             status=status,
             start_date=start_date,
@@ -496,7 +512,7 @@ def provider_request_summary(
             provider=provider,
             endpoint_group=endpoint_group,
             status=status,
-            exchange=exchange,
+            exchange=_canonical_data_exchange(exchange) if exchange else None,
             job_name=job,
             start_date=start_date,
             end_date=end_date,
@@ -529,7 +545,7 @@ def provider_request_logs(
             provider=provider,
             endpoint_group=endpoint_group,
             status=status,
-            exchange=exchange,
+            exchange=_canonical_data_exchange(exchange) if exchange else None,
             job_name=job,
             start_date=start_date,
             end_date=end_date,
@@ -596,16 +612,16 @@ def data_bulk_fetch_preview(
     if start_date is None or end_date is None:
         raise HTTPException(status_code=400, detail="start_date and end_date are required")
     provider_normalized = provider.lower()
-    exchange_normalized = exchange.upper()
+    exchange_normalized = _canonical_data_exchange(exchange)
     if provider_normalized != "yfinance":
         raise HTTPException(
             status_code=400,
             detail="Only provider=yfinance is supported for bulk fetch preview.",
         )
-    if exchange_normalized not in {"US", "CA"}:
+    if exchange_normalized not in {"US", "TSX"}:
         raise HTTPException(
             status_code=400,
-            detail="provider=yfinance supports only exchange=US or exchange=CA.",
+            detail="provider=yfinance supports only exchange=US or exchange=TSX.",
         )
     if interval not in {"1d", "daily"}:
         raise HTTPException(status_code=400, detail="Only interval=1d is supported.")
@@ -725,7 +741,7 @@ def data_pipeline_runs(
         rows = _store().latest_runs(
             limit=min(max(limit, 1), 100),
             source=provider,
-            exchange=exchange,
+            exchange=_canonical_data_exchange(exchange) if exchange else None,
             status=status,
         )
     except SQLAlchemyError as exc:
@@ -1290,7 +1306,8 @@ def _expected_daily_dates(
     start_date: date,
     end_date: date,
 ) -> list[date]:
-    if exchange.upper() not in {"NSE", "TSX", "US", "CA"}:
+    exchange = _canonical_data_exchange(exchange)
+    if exchange not in {"NSE", "TSX", "US"}:
         current = start_date
         trading_dates = []
         while current <= end_date:
@@ -1323,7 +1340,8 @@ def _build_yfinance_bulk_fetch_preview(
     offset: int,
     sort: str,
 ) -> dict:
-    seed_universe = universe_id or ("canada_seed" if exchange == "CA" else "us_seed")
+    exchange = _canonical_data_exchange(exchange)
+    seed_universe = universe_id or ("canada_seed" if exchange == "TSX" else "us_seed")
     symbols = yfinance_universe(seed_universe)
     if any(symbol.exchange.upper() != exchange for symbol in symbols):
         raise ValueError(f"universe_id={seed_universe} does not match exchange={exchange}.")
@@ -1449,7 +1467,7 @@ def _build_yfinance_bulk_fetch_preview(
     warnings = []
     if not expected_dates:
         warnings.append("No expected trading sessions in the requested date range.")
-    if exchange not in {"NSE", "TSX", "US", "CA"}:
+    if exchange not in {"NSE", "TSX", "US"}:
         warnings.append("No stored exchange holiday calendar found; preview uses weekdays only.")
 
     return {
@@ -1554,7 +1572,8 @@ def _ensure_exchange_holidays(
 ) -> None:
     if settings.materialized_exchange_sessions_enabled:
         return
-    if exchange.upper() not in {"NSE", "TSX", "US", "CA"}:
+    exchange = _canonical_data_exchange(exchange)
+    if exchange not in {"NSE", "TSX", "US"}:
         return
 
     for year in validated_exchange_calendar_years(start_date, end_date):

@@ -167,7 +167,7 @@ Yahoo revisions by idempotent upsert.
 | --- | --- | --- |
 | NSE | Official NSE equity CSV, EQ series | `<symbol>.NS` |
 | US | Nasdaq Trader Nasdaq and other-listed directories | Normalized ticker |
-| TSX | Current TSX list source, validated and replaceable | Normalized `.TO` |
+| TSX | Mixed Canadian Yahoo directory, restricted to `.TO` rows | Preserved `.TO` |
 
 Universe acquisition and price acquisition remain separate responsibilities.
 
@@ -1002,6 +1002,60 @@ Phase 6.2 rollout remains guarded:
 - Validate TSX mappings and calendar.
 - Run active-universe backfill.
 - Enable TSX incremental and repair schedules.
+
+#### Phase 7.1: Canonical TSX Foundation
+
+The configured Canadian directory is not a TSX-only feed. A production probe on
+2026-07-18 returned 2,632 Yahoo-formatted listings: 885 TSX `.TO` rows, 1,581
+TSXV `.V` rows, and 166 Cboe Canada `.NE` rows. The legacy provider treated all
+three venues as TSX and appended another `.TO`, which could produce invalid
+mappings such as `AAPL-NE.TO`.
+
+TMX publishes an official
+[Listed Company Directory](https://www.tsx.com/en/listings/listing-with-us/listed-company-directory).
+Phase 7.1 keeps the existing Yahoo-formatted directory only as a non-executing
+mapping candidate source. Before Phase 7.2 enables data work, the accepted `.TO`
+set must be reconciled with the official current/suspended/delisted views and
+the remaining product types (for example CDRs and funds) must have an explicit
+inclusion policy.
+
+Phase 7.1 makes the boundary explicit:
+
+- `TSXUniverseProvider` accepts only `.TO` rows from the mixed directory.
+- Existing Yahoo `.TO` symbols are preserved exactly; native exchange symbols
+  remove `.TO` and convert Yahoo class/unit hyphens back to dots.
+- Duplicate, malformed, TSXV, and Cboe Canada rows are counted in source
+  diagnostics. Diagnostics are persisted in the snapshot validation JSON and
+  emitted in CLI/Dagster metrics.
+- Canada seed and full-universe compatibility names now emit canonical
+  `exchange=TSX`. API requests using legacy `exchange=CA` remain accepted but
+  normalize to and return `TSX`.
+- Alembic revision `20260718_0003` changes stored `exchange=CA` values to
+  `TSX`. For exchange-bearing primary keys, an existing TSX row wins over its
+  legacy CA duplicate. Provider instrument keys and candle history are not
+  rewritten.
+- Universe refresh may enqueue new-symbol backfills only when that exchange's
+  cutover flag is enabled. With `PROD_YFINANCE_FULL_TSX_ENABLED=false`, a TSX
+  snapshot can be persisted and validated while the global Yahoo worker safely
+  continues serving US work.
+- The Data Console uses canonical `TSX`; no new frontend request writes `CA`.
+
+Phase 7.1 rollout remains non-executing:
+
+1. Keep `PROD_YFINANCE_FULL_TSX_ENABLED=false` and
+   `tsx_universe_refresh_schedule` stopped.
+2. Take a fresh backup, deploy, and upgrade to Alembic revision
+   `20260718_0003`.
+3. Verify no `exchange='CA'` rows remain in exchange-bearing tables and confirm
+   the existing US schedules remain healthy.
+4. Run `trade-research refresh-equity-universe TSX`. Expect roughly 885 accepted
+   symbols, source diagnostics showing the excluded venues, and zero TSX
+   backfills queued.
+5. Inspect mappings, lifecycle events, the existing materialized TSX calendar,
+   and queue isolation. Do not use `--allow-large-change` until the previous TSX
+   snapshot contents have been inspected.
+6. Phase 7.2 enables the TSX flag, plans the ten-year backfill, executes bounded
+   canaries, and only then enables TSX schedules.
 
 ### Phase 8: NSE Cutover
 
