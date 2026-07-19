@@ -23,6 +23,10 @@ import {
   getMLRobustness,
   getMLSummary,
   getMarketStatus,
+  getOperationsLifecycleEvents,
+  getOperationsOverview,
+  getOperationsRateLimits,
+  getOperationsWorkItems,
   getPipelineScheduleStatus,
   getProviderRequestLogs,
   getProviderRequestSummary,
@@ -46,6 +50,9 @@ import type {
   DataPipelineRequest,
   MLConcreteRunId,
   MLRunId,
+  OperationsExchange,
+  OperationsLifecycleEventsParams,
+  OperationsWorkItemsParams,
   ProviderObservabilityParams,
   ProviderCredentialTestRequest,
   ProviderCredentialTokenRequest,
@@ -184,10 +191,11 @@ export function useDataPipelineRuns() {
   return useQuery({ queryKey: ["data-pipeline-runs"], queryFn: getDataPipelineRuns });
 }
 
-export function useProviderRuns(params: ProviderObservabilityParams) {
+export function useProviderRuns(params: ProviderObservabilityParams, enabled = true) {
   return useQuery({
     queryKey: ["provider-runs", params],
     queryFn: () => getProviderRuns(params),
+    enabled,
   });
 }
 
@@ -205,10 +213,11 @@ export function useProviderRequestLogs(params: ProviderObservabilityParams) {
   });
 }
 
-export function usePipelineScheduleStatus() {
+export function usePipelineScheduleStatus(enabled = true) {
   return useQuery({
     queryKey: ["pipeline-schedule-status"],
     queryFn: getPipelineScheduleStatus,
+    enabled,
   });
 }
 
@@ -216,10 +225,49 @@ export function useDataPipelineHealth() {
   return useQuery({ queryKey: ["data-pipeline-health"], queryFn: getDataPipelineHealth });
 }
 
-export function useDataAvailability(params: DataAvailabilityParams) {
+export function useDataAvailability(params: DataAvailabilityParams, enabled = true) {
   return useQuery({
     queryKey: ["data-availability", params],
     queryFn: () => getDataAvailability(params),
+    enabled,
+  });
+}
+
+export function useOperationsOverview(exchange: OperationsExchange) {
+  return useQuery({
+    queryKey: ["data-operations-overview", exchange],
+    queryFn: () => getOperationsOverview(exchange),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useOperationsWorkItems(
+  params: OperationsWorkItemsParams,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["data-operations-work-items", params],
+    queryFn: () => getOperationsWorkItems(params),
+    enabled,
+  });
+}
+
+export function useOperationsLifecycleEvents(
+  params: OperationsLifecycleEventsParams,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["data-operations-lifecycle", params],
+    queryFn: () => getOperationsLifecycleEvents(params),
+    enabled,
+  });
+}
+
+export function useOperationsRateLimits() {
+  return useQuery({
+    queryKey: ["data-operations-rate-limits", "yfinance"],
+    queryFn: getOperationsRateLimits,
+    refetchInterval: 60_000,
   });
 }
 

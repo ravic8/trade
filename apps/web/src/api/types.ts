@@ -260,6 +260,7 @@ export type DataPipelineRunSummary = {
   name: string;
   status: string;
   exchange: string;
+  work_item_exchanges: string[];
   source: string;
   started_at: string;
   finished_at: string | null;
@@ -345,6 +346,141 @@ export type PipelineScheduleStatusRow = {
   execution_timezone: string;
   intended_status: "running" | "stopped";
   notes: string | null;
+};
+
+export type OperationsExchange = "NSE" | "TSX" | "US";
+
+export type OperationsQueueGroup = {
+  provider: string;
+  exchange: OperationsExchange;
+  work_type: string;
+  status: string;
+  items: number;
+  symbols: number;
+  maximum_attempts: number;
+  oldest_created_at: string | null;
+  earliest_next_attempt_at: string | null;
+};
+
+export type OperationsWorkItemRow = {
+  work_item_id: string;
+  work_type: string;
+  provider: string;
+  exchange: OperationsExchange;
+  canonical_instrument_id: string;
+  provider_symbol: string;
+  interval: string;
+  window_start: string;
+  window_end: string;
+  priority: number;
+  status: string;
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at: string | null;
+  locked_by: string | null;
+  locked_at: string | null;
+  run_id: string | null;
+  parent_work_item_id: string | null;
+  last_status_code: number | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type OperationsWorkItemsResponse = {
+  total: number;
+  limit: number;
+  offset: number;
+  rows: OperationsWorkItemRow[];
+};
+
+export type OperationsLifecycleEventRow = {
+  event_id: string;
+  canonical_instrument_id: string;
+  exchange: OperationsExchange;
+  symbol: string | null;
+  event_type: string;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
+  snapshot_id: string | null;
+  created_at: string;
+};
+
+export type OperationsLifecycleEventsResponse = {
+  total: number;
+  limit: number;
+  offset: number;
+  rows: OperationsLifecycleEventRow[];
+};
+
+export type OperationsAdaptiveRateStateRow = {
+  provider: string;
+  current_rpm: number;
+  last_safe_rpm: number | null;
+  minimum_rpm: number;
+  maximum_rpm: number;
+  current_concurrency: number;
+  consecutive_healthy_windows: number;
+  circuit_state: string;
+  cooldown_until: string | null;
+  last_429_at: string | null;
+  recent_error_rate: number;
+  latency_baseline_ms: number | null;
+  updated_at: string;
+};
+
+export type OperationsFreshnessRow = {
+  provider: string;
+  exchange: OperationsExchange;
+  first_date: string | null;
+  latest_date: string | null;
+  rows: number;
+  symbols: number;
+  suspicious_rows: number;
+  latest_fetched_at: string | null;
+};
+
+export type OperationsUniverseSnapshotRow = {
+  snapshot_id: string;
+  exchange: OperationsExchange;
+  source: string;
+  status: string;
+  fetched_at: string;
+  symbol_count: number;
+  validation: Record<string, unknown>;
+  error_message: string | null;
+};
+
+export type OperationsOverviewResponse = {
+  generated_at: string;
+  provider: string | null;
+  exchange: OperationsExchange | null;
+  queue: OperationsQueueGroup[];
+  freshness: OperationsFreshnessRow[];
+  adaptive_rates: OperationsAdaptiveRateStateRow[];
+  latest_universes: OperationsUniverseSnapshotRow[];
+  recent_runs: DataPipelineRunSummary[];
+  recent_lifecycle_events: OperationsLifecycleEventRow[];
+};
+
+export type OperationsWorkItemsParams = {
+  provider?: "yfinance";
+  exchange: OperationsExchange;
+  status?: string;
+  work_type?: string;
+  symbol?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type OperationsLifecycleEventsParams = {
+  exchange: OperationsExchange;
+  event_type?: string;
+  symbol?: string;
+  limit?: number;
+  offset?: number;
 };
 
 export type ChatExchange = "NSE" | "TSX" | "BOTH";

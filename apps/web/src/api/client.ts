@@ -32,6 +32,13 @@ import type {
   MLRunId,
   MLSummaryResponse,
   MarketStatus,
+  OperationsAdaptiveRateStateRow,
+  OperationsExchange,
+  OperationsLifecycleEventsParams,
+  OperationsLifecycleEventsResponse,
+  OperationsOverviewResponse,
+  OperationsWorkItemsParams,
+  OperationsWorkItemsResponse,
   ProviderCapabilityResponse,
   ProviderCredentialStatusResponse,
   ProviderCredentialTestRequest,
@@ -413,6 +420,50 @@ export function getProviderRequestLogs(
 
 export function getPipelineScheduleStatus(): Promise<PipelineScheduleStatusRow[]> {
   return strictFetchJson("/api/data/schedules/status");
+}
+
+export function getOperationsOverview(
+  exchange: OperationsExchange,
+): Promise<OperationsOverviewResponse> {
+  const query = new URLSearchParams({
+    provider: "yfinance",
+    exchange,
+    recent_run_limit: "20",
+    lifecycle_limit: "12",
+  });
+  return strictFetchJson(`/api/data/operations/overview?${query.toString()}`);
+}
+
+export function getOperationsWorkItems(
+  params: OperationsWorkItemsParams,
+): Promise<OperationsWorkItemsResponse> {
+  const query = new URLSearchParams({
+    provider: params.provider ?? "yfinance",
+    exchange: params.exchange,
+    limit: (params.limit ?? 50).toString(),
+    offset: (params.offset ?? 0).toString(),
+  });
+  if (params.status) query.set("status", params.status);
+  if (params.work_type) query.set("work_type", params.work_type);
+  if (params.symbol) query.set("symbol", params.symbol);
+  return strictFetchJson(`/api/data/operations/work-items?${query.toString()}`);
+}
+
+export function getOperationsLifecycleEvents(
+  params: OperationsLifecycleEventsParams,
+): Promise<OperationsLifecycleEventsResponse> {
+  const query = new URLSearchParams({
+    exchange: params.exchange,
+    limit: (params.limit ?? 50).toString(),
+    offset: (params.offset ?? 0).toString(),
+  });
+  if (params.event_type) query.set("event_type", params.event_type);
+  if (params.symbol) query.set("symbol", params.symbol);
+  return strictFetchJson(`/api/data/operations/lifecycle-events?${query.toString()}`);
+}
+
+export function getOperationsRateLimits(): Promise<OperationsAdaptiveRateStateRow[]> {
+  return strictFetchJson("/api/data/operations/rate-limits?provider=yfinance");
 }
 
 export async function postChatQuery(payload: ChatQueryRequest): Promise<ChatQueryResponse> {
