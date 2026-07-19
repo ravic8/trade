@@ -78,6 +78,8 @@ def run_yfinance_provider_history_evidence_bootstrap(
                 "classifications": {},
                 "quarantined_symbols": [],
                 "pending_work_cancelled": 0,
+                "quarantined_work_cancelled": 0,
+                "verified_work_cancelled": 0,
             },
             warnings=["No successful daily backfill work is available to classify."],
         )
@@ -150,7 +152,7 @@ def run_yfinance_provider_history_evidence_bootstrap(
         for row in evidence_rows
         if row["classification"] == "quarantined_sparse"
     }
-    cancelled = db.cancel_pending_pipeline_work_for_instruments(
+    cancelled_quarantined = db.cancel_pending_pipeline_work_for_instruments(
         quarantined_ids,
         reason="provider_history_quarantined",
         message=(
@@ -159,6 +161,11 @@ def run_yfinance_provider_history_evidence_bootstrap(
         ),
         at=observed_at,
     )
+    cancelled_verified = db.cancel_pipeline_work_items_covered_by_provider_history(
+        exchange=exchange_code,
+        at=observed_at,
+    )
+    cancelled = cancelled_quarantined + cancelled_verified
     return PipelineRunResult(
         name="yfinance_provider_history_evidence_bootstrap",
         status="warn" if quarantined_symbols else "pass",
@@ -172,6 +179,8 @@ def run_yfinance_provider_history_evidence_bootstrap(
             "classifications": dict(sorted(classifications.items())),
             "quarantined_symbols": quarantined_symbols,
             "pending_work_cancelled": cancelled,
+            "quarantined_work_cancelled": cancelled_quarantined,
+            "verified_work_cancelled": cancelled_verified,
         },
         warnings=(
             [
