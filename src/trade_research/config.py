@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
     redis_url: str = "redis://localhost:6379/0"
 
+    bigquery_enabled: bool = False
+    bigquery_project_id: str | None = None
+    bigquery_dataset: str = Field(default="trade_analytics", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    bigquery_location: str = "US"
+    bigquery_auth_method: str = Field(
+        default="adc",
+        pattern="^(adc|service_account_file)$",
+    )
+    bigquery_credentials_path: Path | None = None
+    bigquery_backfill_chunk_size: int = Field(default=10_000, ge=100, le=100_000)
+    bigquery_retry_attempts: int = Field(default=3, ge=1, le=10)
+
     polygon_api_key: str | None = None
     upstox_access_token: str | None = None
     data_pipeline_max_concurrent_fetches: int = Field(default=1, ge=1, le=16)
@@ -163,6 +175,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_yfinance_foundation_settings(self) -> Self:
+        if self.bigquery_enabled and not self.bigquery_project_id:
+            raise ValueError("BIGQUERY_PROJECT_ID is required when BIGQUERY_ENABLED=true")
+        if self.bigquery_enabled and self.bigquery_auth_method == "service_account_file" and not (
+            self.bigquery_credentials_path
+        ):
+            raise ValueError(
+                "BIGQUERY_CREDENTIALS_PATH is required for service_account_file authentication"
+            )
         if not (
             self.yfinance_minimum_rpm <= self.yfinance_initial_rpm <= self.yfinance_maximum_rpm
         ):

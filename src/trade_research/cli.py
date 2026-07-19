@@ -1,4 +1,6 @@
+import getpass
 import json
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -9,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy.exc import SQLAlchemyError
 
+from trade_research.analytics import create_or_update_analyst_role, revoke_analyst_role
 from trade_research.config import get_settings
 from trade_research.data import (
     UpstoxInstrumentMasterProvider,
@@ -277,6 +280,50 @@ def init_db() -> None:
     settings = get_settings()
     TimescaleStore(settings.database_url).initialize()
     console.print("Initialized TimescaleDB schema")
+
+
+@app.command("create-analyst-role")
+def create_analyst_role(
+    role_name: Annotated[
+        str,
+        typer.Argument(help="Unique lowercase PostgreSQL login for one analyst."),
+    ],
+    password_stdin: Annotated[
+        bool,
+        typer.Option(
+            "--password-stdin",
+            help="Read one password line from standard input for a secret-manager pipe.",
+        ),
+    ] = False,
+) -> None:
+    """Create or rotate an analytics-only role without exposing its password."""
+    if password_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = getpass.getpass("Analyst database password: ")
+        confirmation = getpass.getpass("Confirm analyst database password: ")
+        if password != confirmation:
+            raise typer.BadParameter("Passwords do not match.")
+    try:
+        create_or_update_analyst_role(get_settings().database_url, role_name, password)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"Analyst role {role_name} is active with analytics-only read access.")
+
+
+@app.command("revoke-analyst-role")
+def revoke_analyst_login(
+    role_name: Annotated[
+        str,
+        typer.Argument(help="Existing analyst login to disable immediately."),
+    ],
+) -> None:
+    """Disable an analyst login while retaining the role and grants for audit."""
+    try:
+        revoke_analyst_role(get_settings().database_url, role_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"Analyst role {role_name} can no longer log in.")
 
 
 @app.command("provider-request-log")

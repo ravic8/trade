@@ -200,6 +200,12 @@ Runtime application secrets should live on the Ubuntu server, not in GitHub:
 /opt/trade/.env
 ```
 
+Optional BigQuery activation uses outbound credentials under
+`/opt/trade/secrets/gcp`, never the repository or image. The required project,
+dataset, IAM, rollout, and reconciliation steps are documented in
+`docs/bigquery_sync_foundation.md`. Keep `PROD_BIGQUERY_ENABLED=false` until
+that checklist is complete.
+
 Examples:
 
 ```text

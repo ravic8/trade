@@ -38,6 +38,9 @@ from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.research.ml_artifacts import MLArtifactReader
 from trade_research.schemas import (
+    BigQuerySyncOverviewResponse,
+    BigQuerySyncPartitionRow,
+    BigQuerySyncRunRow,
     ChatFeedbackRequest,
     ChatFeedbackResponse,
     ChatQueryRequest,
@@ -1053,6 +1056,31 @@ def data_operations_rate_limits(
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return [OperationsAdaptiveRateStateRow(**row) for row in rows]
+
+
+@app.get(
+    "/api/data/operations/bigquery-sync",
+    response_model=BigQuerySyncOverviewResponse,
+)
+def data_operations_bigquery_sync(
+    run_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    partition_limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+) -> BigQuerySyncOverviewResponse:
+    current_settings = get_settings()
+    try:
+        store = _store()
+        runs = store.bigquery_sync_runs(limit=run_limit)
+        partitions = store.bigquery_sync_partitions(limit=partition_limit)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return BigQuerySyncOverviewResponse(
+        enabled=current_settings.bigquery_enabled,
+        project_id=current_settings.bigquery_project_id,
+        dataset=current_settings.bigquery_dataset,
+        location=current_settings.bigquery_location,
+        runs=[BigQuerySyncRunRow(**row) for row in runs],
+        partitions=[BigQuerySyncPartitionRow(**row) for row in partitions],
+    )
 
 
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)

@@ -55,3 +55,12 @@ def test_phase5_yfinance_queue_jobs_and_schedules_are_stopped_by_default() -> No
         assert job.name == f"yfinance_daily_work_{role}_job"
         assert schedule.name == f"yfinance_daily_work_{role}_schedule"
         assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
+
+
+def test_bigquery_export_job_and_schedule_are_registered_but_stopped() -> None:
+    assert definitions.bigquery_export_sync_job.name == "bigquery_export_sync_job"
+    assert definitions.bigquery_daily_sync_schedule.name == "bigquery_daily_sync_schedule"
+    assert (
+        definitions.bigquery_daily_sync_schedule.default_status
+        == dagster.DefaultScheduleStatus.STOPPED
+    )

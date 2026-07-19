@@ -14,6 +14,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Float,
+    ForeignKey,
     Index,
     MetaData,
     String,
@@ -697,6 +698,78 @@ daily_coverage_summary_table = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+bigquery_sync_runs_table = Table(
+    "bigquery_sync_runs",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("trigger", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("project_id", String, nullable=False),
+    Column("dataset", String, nullable=False),
+    Column("location", String, nullable=False),
+    Column("exchange", String),
+    Column("year", BigInteger),
+    Column("entities", JSON, nullable=False, default=list),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("finished_at", DateTime(timezone=True)),
+    Column("source_row_count", BigInteger, nullable=False, default=0, server_default="0"),
+    Column(
+        "destination_row_count", BigInteger, nullable=False, default=0, server_default="0"
+    ),
+    Column("count_difference", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("inserted_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("updated_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("rejected_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("retry_count", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("duration_seconds", Float),
+    Column("source_watermark", String),
+    Column("destination_watermark", String),
+    Column("last_successful_sync_at", DateTime(timezone=True)),
+    Column("bigquery_job_id", String),
+    Column("schema_drift", JSON, nullable=False, default=dict, server_default="{}"),
+    Column("error_details", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+bigquery_sync_partitions_table = Table(
+    "bigquery_sync_partitions",
+    metadata,
+    Column("partition_id", String, primary_key=True),
+    Column("run_id", String, ForeignKey("bigquery_sync_runs.run_id"), nullable=False),
+    Column("entity", String, nullable=False),
+    Column("exchange", String),
+    Column("partition_start", Date),
+    Column("partition_end", Date),
+    Column("status", String, nullable=False),
+    Column("attempt_count", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("source_row_count", BigInteger, nullable=False, default=0, server_default="0"),
+    Column(
+        "destination_row_count", BigInteger, nullable=False, default=0, server_default="0"
+    ),
+    Column("count_difference", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("inserted_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("updated_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("rejected_rows", BigInteger, nullable=False, default=0, server_default="0"),
+    Column("source_watermark", String),
+    Column("destination_watermark", String),
+    Column("bigquery_job_id", String),
+    Column("duration_seconds", Float),
+    Column("schema_drift", JSON, nullable=False, default=dict, server_default="{}"),
+    Column("error_details", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True)),
+    UniqueConstraint(
+        "run_id",
+        "entity",
+        "exchange",
+        "partition_start",
+        "partition_end",
+        name="uq_bigquery_sync_partition_scope",
+    ),
+)
+
 Index(
     "idx_exchange_sessions_open_date",
     exchange_sessions_table.c.exchange,
@@ -743,6 +816,12 @@ Index(
     daily_coverage_summary_table.c.exchange,
     daily_coverage_summary_table.c.coverage_status,
     daily_coverage_summary_table.c.as_of_date,
+)
+Index("idx_bigquery_sync_runs_started", bigquery_sync_runs_table.c.started_at)
+Index(
+    "idx_bigquery_sync_partitions_status",
+    bigquery_sync_partitions_table.c.status,
+    bigquery_sync_partitions_table.c.updated_at,
 )
 
 
@@ -928,6 +1007,62 @@ class TimescaleStore:
                     "'targets_daily', 'date', if_not_exists => TRUE, migrate_data => TRUE)"
                 )
             )
+
+    def upsert_bigquery_sync_run(self, row: Mapping[str, Any]) -> None:
+        values = dict(row)
+        run_id = str(values["run_id"])
+        with self.engine.begin() as connection:
+            exists = connection.execute(
+                select(bigquery_sync_runs_table.c.run_id).where(
+                    bigquery_sync_runs_table.c.run_id == run_id
+                )
+            ).first()
+            if exists:
+                connection.execute(
+                    bigquery_sync_runs_table.update()
+                    .where(bigquery_sync_runs_table.c.run_id == run_id)
+                    .values(**values)
+                )
+            else:
+                connection.execute(bigquery_sync_runs_table.insert().values(**values))
+
+    def upsert_bigquery_sync_partition(self, row: Mapping[str, Any]) -> None:
+        values = dict(row)
+        partition_id = str(values["partition_id"])
+        with self.engine.begin() as connection:
+            exists = connection.execute(
+                select(bigquery_sync_partitions_table.c.partition_id).where(
+                    bigquery_sync_partitions_table.c.partition_id == partition_id
+                )
+            ).first()
+            if exists:
+                connection.execute(
+                    bigquery_sync_partitions_table.update()
+                    .where(bigquery_sync_partitions_table.c.partition_id == partition_id)
+                    .values(**values)
+                )
+            else:
+                connection.execute(bigquery_sync_partitions_table.insert().values(**values))
+
+    def bigquery_sync_runs(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        query = bigquery_sync_runs_table.select().order_by(
+            bigquery_sync_runs_table.c.started_at.desc()
+        ).limit(limit)
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def bigquery_sync_partitions(
+        self,
+        *,
+        run_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        query = bigquery_sync_partitions_table.select()
+        if run_id:
+            query = query.where(bigquery_sync_partitions_table.c.run_id == run_id)
+        query = query.order_by(bigquery_sync_partitions_table.c.updated_at.desc()).limit(limit)
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
 
     def insert_stock_coverage_run(
         self,

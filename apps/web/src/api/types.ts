@@ -493,6 +493,69 @@ export type OperationsOverviewResponse = {
   recent_lifecycle_events: OperationsLifecycleEventRow[];
 };
 
+export type BigQuerySyncRunRow = {
+  run_id: string;
+  trigger: string;
+  status: string;
+  project_id: string;
+  dataset: string;
+  location: string;
+  exchange: string | null;
+  year: number | null;
+  entities: string[];
+  started_at: string;
+  finished_at: string | null;
+  source_row_count: number;
+  destination_row_count: number;
+  count_difference: number;
+  inserted_rows: number;
+  updated_rows: number;
+  rejected_rows: number;
+  retry_count: number;
+  duration_seconds: number | null;
+  source_watermark: string | null;
+  destination_watermark: string | null;
+  last_successful_sync_at: string | null;
+  bigquery_job_id: string | null;
+  schema_drift: Record<string, unknown>;
+  error_details: string | null;
+};
+
+export type BigQuerySyncPartitionRow = {
+  partition_id: string;
+  run_id: string;
+  entity: string;
+  exchange: string | null;
+  partition_start: string | null;
+  partition_end: string | null;
+  status: string;
+  attempt_count: number;
+  source_row_count: number;
+  destination_row_count: number;
+  count_difference: number;
+  inserted_rows: number;
+  updated_rows: number;
+  rejected_rows: number;
+  source_watermark: string | null;
+  destination_watermark: string | null;
+  bigquery_job_id: string | null;
+  duration_seconds: number | null;
+  schema_drift: Record<string, unknown>;
+  error_details: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type BigQuerySyncOverviewResponse = {
+  enabled: boolean;
+  project_id: string | null;
+  dataset: string;
+  location: string;
+  runs: BigQuerySyncRunRow[];
+  partitions: BigQuerySyncPartitionRow[];
+};
+
 export type OperationsWorkItemsParams = {
   provider?: "yfinance";
   exchange: OperationsExchange;
