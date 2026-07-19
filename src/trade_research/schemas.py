@@ -218,8 +218,8 @@ class ProviderCredentialTestResponse(BaseModel):
 
 
 class DataCoveragePreviewRequest(BaseModel):
-    provider: Literal["upstox"] = "upstox"
-    exchange: Literal["NSE"] = "NSE"
+    provider: Literal["upstox", "yfinance"] = "upstox"
+    exchange: Literal["NSE", "TSX", "US"] = "NSE"
     symbols: list[str] = Field(min_length=1, max_length=500)
     unit: Literal["days"] = "days"
     interval: int = Field(default=1, ge=1)
@@ -227,9 +227,22 @@ class DataCoveragePreviewRequest(BaseModel):
     end_date: date
 
 
-class DataPipelineRequest(DataCoveragePreviewRequest):
+def _default_data_pipeline_steps() -> list[
+    Literal["fetch_ohlcv", "validate_ohlcv"]
+]:
+    return ["fetch_ohlcv", "validate_ohlcv"]
+
+
+class DataPipelineRequest(BaseModel):
+    provider: Literal["upstox"] = "upstox"
+    exchange: Literal["NSE"] = "NSE"
+    symbols: list[str] = Field(min_length=1, max_length=500)
+    unit: Literal["days"] = "days"
+    interval: int = Field(default=1, ge=1)
+    start_date: date
+    end_date: date
     steps: list[Literal["fetch_ohlcv", "validate_ohlcv"]] = Field(
-        default_factory=lambda: ["fetch_ohlcv", "validate_ohlcv"]
+        default_factory=_default_data_pipeline_steps
     )
     mode: Literal["incremental_missing_only"] = "incremental_missing_only"
 
@@ -476,6 +489,121 @@ class PipelineScheduleStatusRow(BaseModel):
     execution_timezone: str
     intended_status: Literal["running", "stopped"]
     notes: str | None = None
+
+
+class OperationsQueueGroup(BaseModel):
+    provider: str
+    exchange: str
+    work_type: str
+    status: str
+    items: int = Field(ge=0)
+    symbols: int = Field(ge=0)
+    maximum_attempts: int = Field(ge=0)
+    oldest_created_at: datetime | None = None
+    earliest_next_attempt_at: datetime | None = None
+
+
+class OperationsWorkItemRow(BaseModel):
+    work_item_id: str
+    work_type: str
+    provider: str
+    exchange: str
+    canonical_instrument_id: str
+    provider_symbol: str
+    interval: str
+    window_start: date
+    window_end: date
+    priority: int
+    status: str
+    attempt_count: int = Field(ge=0)
+    max_attempts: int = Field(ge=0)
+    next_attempt_at: datetime | None = None
+    locked_by: str | None = None
+    locked_at: datetime | None = None
+    run_id: str | None = None
+    parent_work_item_id: str | None = None
+    last_status_code: int | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class OperationsWorkItemsResponse(BaseModel):
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    rows: list[OperationsWorkItemRow] = Field(default_factory=list)
+
+
+class OperationsLifecycleEventRow(BaseModel):
+    event_id: str
+    canonical_instrument_id: str
+    exchange: str
+    symbol: str | None = None
+    event_type: str
+    old_value: dict[str, Any] | None = None
+    new_value: dict[str, Any] | None = None
+    snapshot_id: str | None = None
+    created_at: datetime
+
+
+class OperationsLifecycleEventsResponse(BaseModel):
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    rows: list[OperationsLifecycleEventRow] = Field(default_factory=list)
+
+
+class OperationsAdaptiveRateStateRow(BaseModel):
+    provider: str
+    current_rpm: int = Field(ge=0)
+    last_safe_rpm: int | None = Field(default=None, ge=0)
+    minimum_rpm: int = Field(ge=0)
+    maximum_rpm: int = Field(ge=0)
+    current_concurrency: int = Field(ge=0)
+    consecutive_healthy_windows: int = Field(ge=0)
+    circuit_state: str
+    cooldown_until: datetime | None = None
+    last_429_at: datetime | None = None
+    recent_error_rate: float = Field(ge=0.0)
+    latency_baseline_ms: float | None = Field(default=None, ge=0.0)
+    updated_at: datetime
+
+
+class OperationsFreshnessRow(BaseModel):
+    provider: str
+    exchange: str
+    first_date: date | None = None
+    latest_date: date | None = None
+    rows: int = Field(ge=0)
+    symbols: int = Field(ge=0)
+    suspicious_rows: int = Field(ge=0)
+    latest_fetched_at: datetime | None = None
+
+
+class OperationsUniverseSnapshotRow(BaseModel):
+    snapshot_id: str
+    exchange: str
+    source: str
+    status: str
+    fetched_at: datetime
+    symbol_count: int = Field(ge=0)
+    validation: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
+
+
+class OperationsOverviewResponse(BaseModel):
+    generated_at: datetime
+    provider: str | None = None
+    exchange: str | None = None
+    queue: list[OperationsQueueGroup] = Field(default_factory=list)
+    freshness: list[OperationsFreshnessRow] = Field(default_factory=list)
+    adaptive_rates: list[OperationsAdaptiveRateStateRow] = Field(default_factory=list)
+    latest_universes: list[OperationsUniverseSnapshotRow] = Field(default_factory=list)
+    recent_runs: list[DataPipelineRunSummary] = Field(default_factory=list)
+    recent_lifecycle_events: list[OperationsLifecycleEventRow] = Field(default_factory=list)
 
 
 class ToolCallSpec(BaseModel):

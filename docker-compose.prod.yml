@@ -319,6 +319,8 @@ services:
   postgres:
     image: timescale/timescaledb:latest-pg16
     shm_size: ${PROD_POSTGRES_SHM_SIZE:-512mb}
+    ports:
+      - "127.0.0.1:${PROD_POSTGRES_HOST_PORT:-5433}:5432"
     environment:
       POSTGRES_DB: ${PROD_POSTGRES_DB:-trade_research}
       POSTGRES_USER: ${PROD_POSTGRES_USER:-trade}

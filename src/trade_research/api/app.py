@@ -54,6 +54,15 @@ from trade_research.schemas import (
     DataPipelineRunSummary,
     DataUniverseMemberRow,
     DataUniverseRow,
+    OperationsAdaptiveRateStateRow,
+    OperationsFreshnessRow,
+    OperationsLifecycleEventRow,
+    OperationsLifecycleEventsResponse,
+    OperationsOverviewResponse,
+    OperationsQueueGroup,
+    OperationsUniverseSnapshotRow,
+    OperationsWorkItemRow,
+    OperationsWorkItemsResponse,
     PipelineScheduleStatusRow,
     ProviderCapabilityResponse,
     ProviderCredentialStatusResponse,
@@ -89,6 +98,15 @@ def _canonical_data_exchange(value: str) -> str:
 
     normalized = value.strip().upper()
     return "TSX" if normalized == "CA" else normalized
+
+
+def _operations_exchange(value: str | None) -> str | None:
+    if value is None:
+        return None
+    exchange = _canonical_data_exchange(value)
+    if exchange not in {"NSE", "TSX", "US"}:
+        raise HTTPException(status_code=400, detail="exchange must be NSE, TSX, or US")
+    return exchange
 
 
 def _require_admin(request: Request) -> str:
@@ -757,6 +775,146 @@ def data_provider_history(
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
 
 
+@app.get(
+    "/api/data/operations/overview",
+    response_model=OperationsOverviewResponse,
+)
+def data_operations_overview(
+    provider: str | None = None,
+    exchange: str | None = None,
+    recent_run_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    lifecycle_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> OperationsOverviewResponse:
+    canonical_exchange = _operations_exchange(exchange)
+    normalized_provider = provider.lower() if provider else None
+    try:
+        store = _store()
+        lifecycle = store.symbol_lifecycle_events_page(
+            exchange=canonical_exchange,
+            limit=lifecycle_limit,
+        )
+        snapshots = store.latest_accepted_universe_snapshots(
+            exchange=canonical_exchange,
+        )
+        runs = store.provider_runs(
+            limit=recent_run_limit,
+            source=normalized_provider,
+            exchange=canonical_exchange,
+        )
+        return OperationsOverviewResponse(
+            generated_at=datetime.now(UTC),
+            provider=normalized_provider,
+            exchange=canonical_exchange,
+            queue=[
+                OperationsQueueGroup(**row)
+                for row in store.pipeline_work_queue_groups(
+                    provider=normalized_provider,
+                    exchange=canonical_exchange,
+                )
+            ],
+            freshness=[
+                OperationsFreshnessRow(**row)
+                for row in store.provider_data_freshness(
+                    provider=normalized_provider,
+                    exchange=canonical_exchange,
+                )
+            ],
+            adaptive_rates=[
+                OperationsAdaptiveRateStateRow(**row)
+                for row in store.adaptive_rate_states(provider=normalized_provider)
+            ],
+            latest_universes=[
+                _to_operations_universe_snapshot(row) for row in snapshots
+            ],
+            recent_runs=[_to_data_pipeline_run_summary(row) for row in runs],
+            recent_lifecycle_events=[
+                OperationsLifecycleEventRow(**row) for row in lifecycle["rows"]
+            ],
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+
+@app.get(
+    "/api/data/operations/work-items",
+    response_model=OperationsWorkItemsResponse,
+)
+def data_operations_work_items(
+    provider: str | None = "yfinance",
+    exchange: str | None = None,
+    status: str | None = None,
+    work_type: str | None = None,
+    symbol: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> OperationsWorkItemsResponse:
+    canonical_exchange = _operations_exchange(exchange)
+    try:
+        payload = _store().pipeline_work_items_page(
+            provider=provider.lower() if provider else None,
+            exchange=canonical_exchange,
+            status=status,
+            work_type=work_type,
+            symbol=symbol,
+            limit=limit,
+            offset=offset,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return OperationsWorkItemsResponse(
+        total=payload["total"],
+        limit=limit,
+        offset=offset,
+        rows=[OperationsWorkItemRow(**row) for row in payload["rows"]],
+    )
+
+
+@app.get(
+    "/api/data/operations/lifecycle-events",
+    response_model=OperationsLifecycleEventsResponse,
+)
+def data_operations_lifecycle_events(
+    exchange: str | None = None,
+    event_type: str | None = None,
+    symbol: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> OperationsLifecycleEventsResponse:
+    canonical_exchange = _operations_exchange(exchange)
+    try:
+        payload = _store().symbol_lifecycle_events_page(
+            exchange=canonical_exchange,
+            event_type=event_type,
+            symbol=symbol,
+            limit=limit,
+            offset=offset,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return OperationsLifecycleEventsResponse(
+        total=payload["total"],
+        limit=limit,
+        offset=offset,
+        rows=[OperationsLifecycleEventRow(**row) for row in payload["rows"]],
+    )
+
+
+@app.get(
+    "/api/data/operations/rate-limits",
+    response_model=list[OperationsAdaptiveRateStateRow],
+)
+def data_operations_rate_limits(
+    provider: str | None = None,
+) -> list[OperationsAdaptiveRateStateRow]:
+    try:
+        rows = _store().adaptive_rate_states(
+            provider=provider.lower() if provider else None,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return [OperationsAdaptiveRateStateRow(**row) for row in rows]
+
+
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
 def data_pipeline_health() -> DataPipelineHealthResponse:
     settings = get_settings()
@@ -1310,6 +1468,21 @@ def _to_provider_request_log_row(row: dict) -> ProviderRequestLogRow:
         wait_seconds=float(row.get("wait_seconds") or 0.0),
         duration_ms=float(row.get("duration_ms") or 0.0),
         created_at=row["created_at"],
+    )
+
+
+def _to_operations_universe_snapshot(row: dict) -> OperationsUniverseSnapshotRow:
+    validation_json = row.get("validation_json")
+    validation = validation_json if isinstance(validation_json, dict) else {}
+    return OperationsUniverseSnapshotRow(
+        snapshot_id=str(row["snapshot_id"]),
+        exchange=str(row["exchange"]),
+        source=str(row["source"]),
+        status=str(row["status"]),
+        fetched_at=row["fetched_at"],
+        symbol_count=int(row.get("symbol_count") or 0),
+        validation=validation,
+        error_message=row.get("error_message"),
     )
 
 
