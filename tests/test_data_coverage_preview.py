@@ -204,6 +204,23 @@ def test_daily_coverage_preview_flags_ambiguous_symbols() -> None:
     assert preview["warnings"] == ["Ambiguous symbols: AAA"]
 
 
+def test_yfinance_instrument_resolution_accepts_exchange_or_yahoo_symbol() -> None:
+    instruments = [
+        {
+            "instrument_key": "YF|RY.TO",
+            "trading_symbol": "RY",
+            "yahoo_symbol": "RY.TO",
+            "name": "Royal Bank of Canada",
+        }
+    ]
+
+    exchange_symbol = coverage_module._resolve_unique_instruments(["RY"], instruments)
+    yahoo_symbol = coverage_module._resolve_unique_instruments(["RY.TO"], instruments)
+
+    assert exchange_symbol["resolved"][0]["instrument_key"] == "YF|RY.TO"
+    assert yahoo_symbol["resolved"][0]["instrument_key"] == "YF|RY.TO"
+
+
 def test_daily_coverage_preview_warns_when_holidays_are_not_stored() -> None:
     preview = build_daily_coverage_preview(
         CoveragePreviewInput(

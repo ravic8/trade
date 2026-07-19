@@ -1393,6 +1393,41 @@ failures when the actual problem is missing data or incompatible identity.
 - Add audited manual retry endpoints.
 - Add freshness, queue-age, calendar, universe, and provider alerts.
 
+#### Phase 9.1: Read-only operations API
+
+Phase 9.1 establishes the backend contract for the Data Console without adding
+any mutation or retry action. The following endpoints read the durable state
+already persisted by the equity pipelines:
+
+```text
+GET /api/data/operations/overview
+GET /api/data/operations/work-items
+GET /api/data/operations/lifecycle-events
+GET /api/data/operations/rate-limits
+```
+
+The overview combines queue depth, provider/exchange freshness, adaptive-rate
+and circuit state, the latest accepted universe snapshot, recent ingestion
+runs, and recent symbol lifecycle events. Work items and lifecycle events are
+filterable and paginated so a frontend does not need to load the entire durable
+history. Exchange alias `CA` is normalized to `TSX`; supported equity exchanges
+are `NSE`, `TSX`, and `US`.
+
+The existing coverage preview endpoint also accepts yfinance for all three
+equity exchanges. It resolves symbols from the persisted active universe and
+returns exact expected, stored, and missing session counts. The existing
+Upstox/NSE request endpoint remains unchanged and is the only endpoint in this
+phase that can start provider work.
+
+Phase 9.1 is intentionally read-only. Phase 9.2 connects these contracts to the
+Data Console UI. Phase 9.3 adds authenticated, audited, idempotent queue-based
+manual retry actions. Phase 9.4 adds alert evaluation and delivery.
+
+Direct database inspection is supported as a diagnostic complement to the API,
+not as an application dependency. Production PostgreSQL is published only on
+the server loopback interface and must be reached through SSH or an approved
+private network. See [Database access with DBeaver](database_access_with_dbeaver.md).
+
 ### Phase 10: Cleanup
 
 After at least two weeks of successful scheduled operation for all exchanges:

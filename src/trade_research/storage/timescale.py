@@ -2421,6 +2421,194 @@ class TimescaleStore:
             rows = connection.execute(query).all()
         return {str(status): int(count) for status, count in rows}
 
+    def pipeline_work_queue_groups(
+        self,
+        *,
+        provider: str | None = None,
+        exchange: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = select(
+            pipeline_work_items_table.c.provider,
+            pipeline_work_items_table.c.exchange,
+            pipeline_work_items_table.c.work_type,
+            pipeline_work_items_table.c.status,
+            func.count().label("items"),
+            func.count(func.distinct(pipeline_work_items_table.c.provider_symbol)).label(
+                "symbols"
+            ),
+            func.max(pipeline_work_items_table.c.attempt_count).label("maximum_attempts"),
+            func.min(pipeline_work_items_table.c.created_at).label("oldest_created_at"),
+            func.min(pipeline_work_items_table.c.next_attempt_at).label(
+                "earliest_next_attempt_at"
+            ),
+        )
+        if provider:
+            query = query.where(pipeline_work_items_table.c.provider == provider.lower())
+        if exchange:
+            query = query.where(pipeline_work_items_table.c.exchange == exchange.upper())
+        query = query.group_by(
+            pipeline_work_items_table.c.provider,
+            pipeline_work_items_table.c.exchange,
+            pipeline_work_items_table.c.work_type,
+            pipeline_work_items_table.c.status,
+        ).order_by(
+            pipeline_work_items_table.c.exchange,
+            pipeline_work_items_table.c.work_type,
+            pipeline_work_items_table.c.status,
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def pipeline_work_items_page(
+        self,
+        *,
+        provider: str | None = None,
+        exchange: str | None = None,
+        status: str | None = None,
+        work_type: str | None = None,
+        symbol: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        filters = []
+        if provider:
+            filters.append(pipeline_work_items_table.c.provider == provider.lower())
+        if exchange:
+            filters.append(pipeline_work_items_table.c.exchange == exchange.upper())
+        if status:
+            filters.append(pipeline_work_items_table.c.status == status.lower())
+        if work_type:
+            filters.append(pipeline_work_items_table.c.work_type == work_type.lower())
+        if symbol:
+            filters.append(
+                func.upper(pipeline_work_items_table.c.provider_symbol).contains(symbol.upper())
+            )
+
+        query = pipeline_work_items_table.select()
+        count_query = select(func.count()).select_from(pipeline_work_items_table)
+        for condition in filters:
+            query = query.where(condition)
+            count_query = count_query.where(condition)
+        query = query.order_by(
+            pipeline_work_items_table.c.updated_at.desc(),
+            pipeline_work_items_table.c.priority,
+            pipeline_work_items_table.c.work_item_id,
+        ).limit(max(limit, 1)).offset(max(offset, 0))
+        with self.engine.begin() as connection:
+            total = int(connection.execute(count_query).scalar_one())
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return {"total": total, "rows": rows}
+
+    def symbol_lifecycle_events_page(
+        self,
+        *,
+        exchange: str | None = None,
+        event_type: str | None = None,
+        symbol: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        joined = symbol_lifecycle_events_table.outerjoin(
+            symbols_table,
+            (symbol_lifecycle_events_table.c.canonical_instrument_id
+             == symbols_table.c.canonical_instrument_id)
+            & (symbol_lifecycle_events_table.c.exchange == symbols_table.c.exchange),
+        )
+        filters = []
+        if exchange:
+            filters.append(symbol_lifecycle_events_table.c.exchange == exchange.upper())
+        if event_type:
+            filters.append(symbol_lifecycle_events_table.c.event_type == event_type.lower())
+        if symbol:
+            filters.append(func.upper(symbols_table.c.symbol).contains(symbol.upper()))
+
+        columns = [
+            symbol_lifecycle_events_table.c.event_id,
+            symbol_lifecycle_events_table.c.canonical_instrument_id,
+            symbol_lifecycle_events_table.c.exchange,
+            symbols_table.c.symbol,
+            symbol_lifecycle_events_table.c.event_type,
+            symbol_lifecycle_events_table.c.old_value,
+            symbol_lifecycle_events_table.c.new_value,
+            symbol_lifecycle_events_table.c.snapshot_id,
+            symbol_lifecycle_events_table.c.created_at,
+        ]
+        query = select(*columns).select_from(joined)
+        count_query = select(func.count()).select_from(joined)
+        for condition in filters:
+            query = query.where(condition)
+            count_query = count_query.where(condition)
+        query = query.order_by(
+            symbol_lifecycle_events_table.c.created_at.desc(),
+            symbol_lifecycle_events_table.c.event_id,
+        ).limit(max(limit, 1)).offset(max(offset, 0))
+        with self.engine.begin() as connection:
+            total = int(connection.execute(count_query).scalar_one())
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return {"total": total, "rows": rows}
+
+    def adaptive_rate_states(
+        self,
+        *,
+        provider: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = adaptive_rate_state_table.select()
+        if provider:
+            query = query.where(adaptive_rate_state_table.c.provider == provider.lower())
+        query = query.order_by(adaptive_rate_state_table.c.provider)
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def provider_data_freshness(
+        self,
+        *,
+        provider: str | None = None,
+        exchange: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = select(
+            ohlcv_daily_table.c.source.label("provider"),
+            ohlcv_daily_table.c.exchange,
+            func.min(ohlcv_daily_table.c.date).label("first_date"),
+            func.max(ohlcv_daily_table.c.date).label("latest_date"),
+            func.count().label("rows"),
+            func.count(func.distinct(ohlcv_daily_table.c.instrument_key)).label("symbols"),
+            func.sum(
+                case((ohlcv_daily_table.c.quality_status == "suspicious", 1), else_=0)
+            ).label("suspicious_rows"),
+            func.max(ohlcv_daily_table.c.fetched_at).label("latest_fetched_at"),
+        )
+        if provider:
+            query = query.where(ohlcv_daily_table.c.source == provider.lower())
+        if exchange:
+            query = query.where(ohlcv_daily_table.c.exchange == exchange.upper())
+        query = query.group_by(
+            ohlcv_daily_table.c.source,
+            ohlcv_daily_table.c.exchange,
+        ).order_by(ohlcv_daily_table.c.exchange, ohlcv_daily_table.c.source)
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
+    def latest_accepted_universe_snapshots(
+        self,
+        *,
+        exchange: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = universe_snapshots_table.select().where(
+            universe_snapshots_table.c.status == "accepted"
+        )
+        if exchange:
+            query = query.where(universe_snapshots_table.c.exchange == exchange.upper())
+        query = query.order_by(
+            universe_snapshots_table.c.fetched_at.desc(),
+            universe_snapshots_table.c.snapshot_id.desc(),
+        )
+        latest: dict[str, dict[str, Any]] = {}
+        with self.engine.begin() as connection:
+            for row in connection.execute(query).mappings():
+                payload = dict(row)
+                latest.setdefault(str(payload["exchange"]), payload)
+        return [latest[key] for key in sorted(latest)]
+
     def observed_daily_session_dates(
         self,
         exchange: str,
@@ -3122,9 +3310,30 @@ class TimescaleStore:
         if not normalized_symbols:
             return []
         exchange_upper = exchange.upper()
+        source_lower = source.lower()
+        if source_lower == "yfinance":
+            query = (
+                select(
+                    symbols_table.c.provider_instrument_key.label("instrument_key"),
+                    symbols_table.c.symbol.label("trading_symbol"),
+                    symbols_table.c.yahoo_symbol,
+                    symbols_table.c.name,
+                )
+                .where(symbols_table.c.exchange == exchange_upper)
+                .where(symbols_table.c.is_active.is_(True))
+                .where(symbols_table.c.pipeline_eligibility != "none")
+                .where(symbols_table.c.provider_instrument_key.is_not(None))
+                .where(
+                    (symbols_table.c.symbol.in_(normalized_symbols))
+                    | (symbols_table.c.yahoo_symbol.in_(normalized_symbols))
+                )
+                .order_by(symbols_table.c.symbol)
+            )
+            with self.engine.begin() as connection:
+                return [dict(row) for row in connection.execute(query).mappings()]
         query = (
             provider_instruments_table.select()
-            .where(provider_instruments_table.c.source == source)
+            .where(provider_instruments_table.c.source == source_lower)
             .where(provider_instruments_table.c.active.is_(True))
             .where(provider_instruments_table.c.trading_symbol.in_(normalized_symbols))
             .where(

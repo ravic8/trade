@@ -95,6 +95,16 @@ class FakeCoverageStore:
         source: str = "upstox",
         exchange: str = "NSE",
     ) -> list[dict]:
+        if source == "yfinance":
+            return [
+                {
+                    "instrument_key": f"YF|{symbol}",
+                    "trading_symbol": symbol,
+                    "name": f"{symbol} Incorporated",
+                    "isin": None,
+                }
+                for symbol in symbols
+            ]
         return [
             {
                 "instrument_key": f"NSE_EQ|{symbol}",
@@ -789,6 +799,34 @@ def test_data_coverage_preview_endpoint(monkeypatch) -> None:
     assert payload["missing_rows"] == 3
     assert payload["estimated_provider_calls"] == 3
     assert payload["tasks"][0]["fetch_start"] == "2026-01-06"
+
+
+def test_yfinance_data_coverage_preview_reports_exact_us_gaps(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/data/coverage/preview",
+            json={
+                "provider": "yfinance",
+                "exchange": "US",
+                "symbols": ["AAPL", "MSFT"],
+                "unit": "days",
+                "interval": 1,
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-06",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "yfinance"
+    assert payload["exchange"] == "US"
+    assert payload["symbols_resolved"] == 2
+    assert payload["expected_rows"] == 8
+    assert payload["already_present_rows"] == 5
+    assert payload["missing_rows"] == 3
+    assert payload["estimated_provider_calls"] == 2
 
 
 def test_data_coverage_preview_rejects_year_one_before_holiday_fetch(

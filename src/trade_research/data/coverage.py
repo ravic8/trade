@@ -201,10 +201,14 @@ def build_daily_coverage_preview(
 
 
 def _validate_daily_request(request: CoveragePreviewInput) -> None:
-    if request.provider.lower() != "upstox":
-        raise ValueError("Only provider=upstox is supported for the MVP.")
-    if request.exchange.upper() != "NSE":
-        raise ValueError("Only exchange=NSE is supported for the MVP.")
+    provider = request.provider.lower()
+    exchange = request.exchange.upper()
+    if provider not in {"upstox", "yfinance"}:
+        raise ValueError("provider must be upstox or yfinance.")
+    if provider == "upstox" and exchange != "NSE":
+        raise ValueError("provider=upstox supports only exchange=NSE.")
+    if provider == "yfinance" and exchange not in {"NSE", "TSX", "US"}:
+        raise ValueError("provider=yfinance supports exchange=NSE, TSX, or US.")
     if request.unit != "days" or request.interval != 1:
         raise ValueError("Only daily candles are supported for the MVP.")
     if request.start_date > request.end_date:
@@ -225,8 +229,9 @@ def _resolve_unique_instruments(
     by_symbol: dict[str, list[dict]] = defaultdict(list)
     for row in instruments:
         trading_symbol = str(row.get("trading_symbol") or "").strip().upper()
-        if trading_symbol:
-            by_symbol[trading_symbol].append(row)
+        yahoo_symbol = str(row.get("yahoo_symbol") or "").strip().upper()
+        for alias in {trading_symbol, yahoo_symbol} - {""}:
+            by_symbol[alias].append(row)
 
     resolved = []
     unresolved = set()
