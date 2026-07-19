@@ -164,9 +164,13 @@ export type DataAvailabilityRow = {
   first_stored_ts: string | null;
   latest_stored_ts: string | null;
   stored_rows: number;
+  calendar_matched_rows: number;
+  off_calendar_rows: number;
   expected_rows: number;
   coverage_pct: number;
   missing_rows: number;
+  provider_unavailable_rows: number;
+  actionable_missing_rows: number;
   missing_windows: number;
   coverage_status: "complete" | "partial" | "empty";
   last_successful_run: string | null;
@@ -180,7 +184,13 @@ export type DataAvailabilitySummary = {
   symbols_empty: number;
   expected_rows: number;
   stored_rows: number;
+  calendar_matched_rows: number;
+  off_calendar_rows: number;
   missing_rows: number;
+  provider_unavailable_rows: number;
+  actionable_missing_rows: number;
+  symbols_provider_limited: number;
+  symbols_actionable: number;
   estimated_provider_calls_for_missing: number;
 };
 

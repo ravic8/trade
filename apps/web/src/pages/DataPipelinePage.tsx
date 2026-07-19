@@ -789,16 +789,24 @@ function CoverageView({
   const summary = availability?.summary;
   const coverage =
     !error && summary && summary.expected_rows > 0
-      ? summary.stored_rows / summary.expected_rows
+      ? summary.calendar_matched_rows / summary.expected_rows
       : null;
   return (
     <>
       <div className="metric-grid data-metric-grid">
         <MetricCard icon={Users} label="Symbols" value={formatNumber(summary?.symbols_total)} detail={`${formatNumber(summary?.symbols_complete)} complete`} />
-        <MetricCard icon={DatabaseZap} label="Stored Rows" value={formatNumber(summary?.stored_rows)} detail={`${formatNumber(summary?.expected_rows)} expected`} />
-        <MetricCard icon={Search} label="Missing Rows" value={formatNumber(summary?.missing_rows)} detail={`${formatNumber(summary?.symbols_partial)} partial symbols`} />
+        <MetricCard icon={DatabaseZap} label="Calendar Covered" value={formatNumber(summary?.calendar_matched_rows)} detail={`${formatNumber(summary?.expected_rows)} expected`} />
+        <MetricCard icon={Search} label="Actionable Gaps" value={formatNumber(summary?.actionable_missing_rows)} detail={`${formatNumber(summary?.symbols_actionable)} symbols require work`} />
         <MetricCard icon={ShieldCheck} label="Coverage" value={formatPercent(coverage)} detail={`${market.label} · ten-year target`} />
       </div>
+      {!error && summary ? (
+        <div className="operations-coverage-breakdown" role="note">
+          <div><strong>{formatNumber(summary.stored_rows)}</strong><span>Raw stored observations</span><small>Every persisted candle in the selected window, including off-calendar dates.</small></div>
+          <div><strong>{formatNumber(summary.provider_unavailable_rows)}</strong><span>Provider-unavailable sessions</span><small>Verified history Yahoo does not expose; no retry is required.</small></div>
+          <div><strong>{formatNumber(summary.off_calendar_rows)}</strong><span>Outside-calendar observations</span><small>Stored special or unclassified sessions excluded from the coverage ratio.</small></div>
+          <div><strong>{formatNumber(summary.missing_rows)}</strong><span>Total calendar gaps</span><small>Provider-unavailable plus actionable sessions.</small></div>
+        </div>
+      ) : null}
       <section className="data-card">
         <div className="data-card-header">
           <div><h2>Exact Session Coverage</h2><p>Calendar-aware yfinance daily coverage</p></div>
@@ -829,8 +837,8 @@ function CoverageTable({ rows }: { rows: DataAvailabilityRow[] }) {
   return (
     <div className="operations-table-wrap">
       <table className="operations-table">
-        <thead><tr><th>Symbol</th><th>Status</th><th>Coverage</th><th>Stored / expected</th><th>Missing</th><th>Latest</th></tr></thead>
-        <tbody>{rows.map((row) => <tr key={row.instrument_key}><td><strong>{row.symbol}</strong><small>{row.name ?? row.instrument_key}</small></td><td><span className={`status-pill ${statusClass(row.coverage_status)}`}>{row.coverage_status}</span></td><td><div className="operations-coverage-cell"><div><span style={{ width: `${Math.min(row.coverage_pct * 100, 100)}%` }} /></div><strong>{formatPercent(row.coverage_pct)}</strong></div></td><td>{formatNumber(row.stored_rows)} / {formatNumber(row.expected_rows)}</td><td>{formatNumber(row.missing_rows)}</td><td>{formatDate(row.latest_stored_date)}</td></tr>)}</tbody>
+        <thead><tr><th>Symbol</th><th>Status</th><th>Coverage</th><th>Covered / expected</th><th>Unavailable</th><th>Actionable</th><th>Outside calendar</th><th>Latest</th></tr></thead>
+        <tbody>{rows.map((row) => <tr key={row.instrument_key}><td><strong>{row.symbol}</strong><small>{row.name ?? row.instrument_key}</small></td><td><span className={`status-pill ${statusClass(row.coverage_status)}`}>{row.coverage_status}</span></td><td><div className="operations-coverage-cell"><div><span style={{ width: `${Math.min(row.coverage_pct * 100, 100)}%` }} /></div><strong>{formatPercent(row.coverage_pct)}</strong></div></td><td>{formatNumber(row.calendar_matched_rows)} / {formatNumber(row.expected_rows)}</td><td>{formatNumber(row.provider_unavailable_rows)}</td><td>{formatNumber(row.actionable_missing_rows)}</td><td>{formatNumber(row.off_calendar_rows)}</td><td>{formatDate(row.latest_stored_date)}</td></tr>)}</tbody>
       </table>
     </div>
   );
@@ -1243,9 +1251,11 @@ function SymbolAutocomplete({
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
+        autoComplete="off"
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={open}
+        aria-busy={suggestionsQuery.isFetching}
         aria-controls={`${exchange}-${label.replaceAll(" ", "-")}-suggestions`}
       />
       {open ? (
