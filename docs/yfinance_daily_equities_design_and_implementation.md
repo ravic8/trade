@@ -1428,6 +1428,29 @@ not as an application dependency. Production PostgreSQL is published only on
 the server loopback interface and must be reached through SSH or an approved
 private network. See [Database access with DBeaver](database_access_with_dbeaver.md).
 
+#### Phase 9.1.1: Evidence reconciliation and exchange-aware run visibility
+
+Provider-history evidence is also an operational terminal state. After the
+evidence bootstrap writes active `verified_complete` or `verified_partial`
+evidence, and before each enabled planner pass, the system cancels queued or
+retry-wait historical work whose entire requested window is covered by one
+verified evidence window. The cancellation is durable and uses
+`provider_history_verified` as its reason.
+
+This reconciliation applies only to `initial_backfill`,
+`new_symbol_backfill`, and `gap_repair`. It never cancels running work,
+`daily_incremental` freshness work, a partially overlapping window, inactive
+evidence, quarantined evidence, or evidence from another provider, exchange,
+instrument, or interval. This makes evidence refreshes and routine planner runs
+self-healing without weakening freshness guarantees.
+
+Durable Yahoo workers can process multiple exchanges in one ingestion run, so
+their stored run exchange remains truthfully `MULTI`. Exchange-filtered
+operations queries additionally match the exchanges of the run's claimed work
+items, and each run response exposes `work_item_exchanges`. Consequently, NSE,
+TSX, and US console views include the relevant shared worker runs without
+rewriting their durable run identity.
+
 ### Phase 10: Cleanup
 
 After at least two weeks of successful scheduled operation for all exchanges:

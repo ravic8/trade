@@ -1209,6 +1209,7 @@ def test_data_pipeline_runs_endpoint(monkeypatch) -> None:
     assert payload[0]["duration_seconds"] == 125
     assert payload[0]["items_requested"] == 2
     assert payload[0]["run_metadata"] == {"trigger": "ui"}
+    assert payload[0]["work_item_exchanges"] == ["NSE"]
 
 
 def test_provider_runs_endpoint(monkeypatch) -> None:
@@ -1225,6 +1226,7 @@ def test_provider_runs_endpoint(monkeypatch) -> None:
     payload = response.json()
     assert payload[0]["source"] == "yfinance"
     assert payload[0]["exchange"] == "GLOBAL"
+    assert payload[0]["work_item_exchanges"] == ["GLOBAL"]
     assert payload[0]["name"] == "yfinance_fx_intraday_job"
 
 

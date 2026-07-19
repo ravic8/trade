@@ -15,6 +15,7 @@ class FakeOperationsStore:
             {
                 "provider": "yfinance",
                 "exchange": "TSX",
+                "work_item_exchanges": ["TSX"],
                 "work_type": "daily_incremental",
                 "status": "retry_wait",
                 "items": 2,
@@ -189,6 +190,7 @@ def test_operations_overview_assembles_console_state(monkeypatch) -> None:
     assert payload["adaptive_rates"][0]["current_concurrency"] == 4
     assert payload["latest_universes"][0]["symbol_count"] == 645
     assert payload["recent_runs"][0]["items_succeeded"] == 25
+    assert payload["recent_runs"][0]["work_item_exchanges"] == ["TSX"]
     assert payload["recent_lifecycle_events"][0]["event_id"] == "event-1"
 
 

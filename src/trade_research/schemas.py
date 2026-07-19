@@ -417,6 +417,7 @@ class DataPipelineRunSummary(BaseModel):
     name: str
     status: str
     exchange: str
+    work_item_exchanges: list[str] = Field(default_factory=list)
     source: str
     started_at: datetime
     finished_at: datetime | None = None

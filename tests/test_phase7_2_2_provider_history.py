@@ -121,6 +121,7 @@ def test_verified_provider_window_stops_repeat_backfill_but_not_freshness_work()
 class _PlannerEvidenceStore:
     def __init__(self) -> None:
         self.cancelled_ids: list[str] = []
+        self.cancelled_verified = 2
 
     def initialize(self) -> None:
         pass
@@ -140,6 +141,11 @@ class _PlannerEvidenceStore:
 
     def cancel_pipeline_work_items_before_listing(self, **_kwargs) -> int:
         return 0
+
+    def cancel_pipeline_work_items_covered_by_provider_history(
+        self, **_kwargs
+    ) -> int:
+        return self.cancelled_verified
 
     def active_yfinance_daily_instruments(self, _exchange: str) -> list[dict]:
         return [
@@ -218,6 +224,7 @@ def test_guarded_planner_consumes_evidence_and_cancels_quarantined_work(
     assert result.metrics["work_generated"] == 0
     assert result.metrics["provider_quarantined_symbols"] == 1
     assert result.metrics["provider_quarantined_work_cancelled"] == 1
+    assert result.metrics["work_cancelled_by_provider_history"] == 2
     assert store.cancelled_ids == ["eq_akt"]
     assert result.metrics["exchanges"]["TSX"]["provider_quarantined_symbols"] == [
         "AKT-A.TO"
@@ -228,6 +235,7 @@ class _BootstrapEvidenceStore:
     def __init__(self) -> None:
         self.evidence_rows: list[dict] = []
         self.cancelled_ids: list[str] = []
+        self.cancelled_verified = 3
         self.sessions = [
             date(2025, 1, 1) + timedelta(days=index) for index in range(300)
         ]
@@ -282,6 +290,11 @@ class _BootstrapEvidenceStore:
         self.cancelled_ids = list(canonical_ids)
         return len(self.cancelled_ids)
 
+    def cancel_pipeline_work_items_covered_by_provider_history(
+        self, **_kwargs
+    ) -> int:
+        return self.cancelled_verified
+
 
 def test_bootstrap_classifies_existing_success_and_cancels_quarantine(
     monkeypatch,
@@ -309,7 +322,9 @@ def test_bootstrap_classifies_existing_success_and_cancels_quarantine(
     assert result.status == "warn"
     assert result.metrics["classifications"] == {"quarantined_sparse": 1}
     assert result.metrics["quarantined_symbols"] == ["AKT-A.TO"]
-    assert result.metrics["pending_work_cancelled"] == 1
+    assert result.metrics["pending_work_cancelled"] == 4
+    assert result.metrics["quarantined_work_cancelled"] == 1
+    assert result.metrics["verified_work_cancelled"] == 3
     assert store.cancelled_ids == ["eq_AKT-A.TO"]
 
 

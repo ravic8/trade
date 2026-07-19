@@ -1418,11 +1418,17 @@ def latest_jobs() -> list[dict]:
 
 
 def _to_data_pipeline_run_summary(row: dict) -> DataPipelineRunSummary:
+    work_item_exchanges = row.get("work_item_exchanges")
+    if not isinstance(work_item_exchanges, (list, tuple, set)):
+        work_item_exchanges = (
+            [] if str(row["exchange"]).upper() == "MULTI" else [row["exchange"]]
+        )
     return DataPipelineRunSummary(
         id=str(row["run_id"]),
         name=str(row["job_name"]),
         status=str(row["status"]),
         exchange=str(row["exchange"]),
+        work_item_exchanges=sorted(str(value) for value in work_item_exchanges),
         source=str(row["source"]),
         started_at=row["started_at"],
         finished_at=row.get("finished_at"),

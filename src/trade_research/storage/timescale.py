@@ -2175,6 +2175,82 @@ class TimescaleStore:
             result = connection.execute(statement)
         return int(result.rowcount or 0)
 
+    def cancel_pipeline_work_items_covered_by_provider_history(
+        self,
+        *,
+        exchange: str | None = None,
+        provider: str = "yfinance",
+        at: datetime | None = None,
+    ) -> int:
+        """Cancel pending historical work fully covered by verified evidence."""
+        now = _as_utc(at or datetime.now(UTC))
+        evidence_match = (
+            select(1)
+            .select_from(provider_daily_history_evidence_table)
+            .where(
+                provider_daily_history_evidence_table.c.provider
+                == pipeline_work_items_table.c.provider
+            )
+            .where(
+                provider_daily_history_evidence_table.c.exchange
+                == pipeline_work_items_table.c.exchange
+            )
+            .where(
+                provider_daily_history_evidence_table.c.canonical_instrument_id
+                == pipeline_work_items_table.c.canonical_instrument_id
+            )
+            .where(
+                provider_daily_history_evidence_table.c.interval
+                == pipeline_work_items_table.c.interval
+            )
+            .where(provider_daily_history_evidence_table.c.status == "active")
+            .where(
+                provider_daily_history_evidence_table.c.classification.in_(
+                    ("verified_complete", "verified_partial")
+                )
+            )
+            .where(
+                provider_daily_history_evidence_table.c.coverage_start
+                <= pipeline_work_items_table.c.window_start
+            )
+            .where(
+                provider_daily_history_evidence_table.c.coverage_end
+                >= pipeline_work_items_table.c.window_end
+            )
+            .exists()
+        )
+        statement = (
+            pipeline_work_items_table.update()
+            .where(pipeline_work_items_table.c.provider == provider)
+            .where(
+                pipeline_work_items_table.c.work_type.in_(
+                    ("initial_backfill", "new_symbol_backfill", "gap_repair")
+                )
+            )
+            .where(pipeline_work_items_table.c.status.in_(("queued", "retry_wait")))
+            .where(evidence_match)
+            .values(
+                status="cancelled",
+                next_attempt_at=None,
+                locked_by=None,
+                locked_at=None,
+                last_error_code="provider_history_verified",
+                last_error_message=(
+                    "Cancelled because durable provider-history evidence covers "
+                    "this window."
+                ),
+                completed_at=now,
+                updated_at=now,
+            )
+        )
+        if exchange:
+            statement = statement.where(
+                pipeline_work_items_table.c.exchange == exchange.upper()
+            )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+        return int(result.rowcount or 0)
+
     def claim_pipeline_work_items(
         self,
         *,
@@ -4762,7 +4838,21 @@ class TimescaleStore:
         if source:
             query = query.where(ingestion_runs_table.c.source == source.lower())
         if exchange:
-            query = query.where(ingestion_runs_table.c.exchange == exchange.upper())
+            exchange_code = exchange.upper()
+            work_item_exchange_match = (
+                select(1)
+                .select_from(pipeline_work_items_table)
+                .where(
+                    pipeline_work_items_table.c.run_id
+                    == ingestion_runs_table.c.run_id
+                )
+                .where(pipeline_work_items_table.c.exchange == exchange_code)
+                .exists()
+            )
+            query = query.where(
+                (ingestion_runs_table.c.exchange == exchange_code)
+                | work_item_exchange_match
+            )
         if job_name:
             query = query.where(ingestion_runs_table.c.job_name == job_name)
         if status:
@@ -4773,7 +4863,28 @@ class TimescaleStore:
             query = query.where(ingestion_runs_table.c.started_at < end_date + timedelta(days=1))
         query = query.limit(max(limit, 1)).offset(max(offset, 0))
         with self.engine.begin() as connection:
-            return [dict(row) for row in connection.execute(query).mappings()]
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+            run_ids = [str(row["run_id"]) for row in rows]
+            work_item_exchanges: dict[str, set[str]] = {}
+            if run_ids:
+                exchange_rows = connection.execute(
+                    select(
+                        pipeline_work_items_table.c.run_id,
+                        pipeline_work_items_table.c.exchange,
+                    )
+                    .where(pipeline_work_items_table.c.run_id.in_(run_ids))
+                    .distinct()
+                ).mappings()
+                for exchange_row in exchange_rows:
+                    work_item_exchanges.setdefault(
+                        str(exchange_row["run_id"]), set()
+                    ).add(str(exchange_row["exchange"]))
+        for row in rows:
+            actual_exchanges = work_item_exchanges.get(str(row["run_id"]), set())
+            if not actual_exchanges and str(row["exchange"]).upper() != "MULTI":
+                actual_exchanges = {str(row["exchange"])}
+            row["work_item_exchanges"] = sorted(actual_exchanges)
+        return rows
 
     def ingestion_run(self, run_id: str) -> dict[str, Any] | None:
         query = ingestion_runs_table.select().where(ingestion_runs_table.c.run_id == run_id)

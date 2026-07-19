@@ -76,6 +76,7 @@ def run_yfinance_daily_work_planner(
     observed_at = _as_utc(at or datetime.now(UTC))
     planner = DailyWorkPlanner(max_attempts=settings.yfinance_work_max_attempts)
     generated = inserted = active_count = cancelled_before_listing = 0
+    cancelled_by_provider_history = 0
     quarantined_count = evidence_window_count = cancelled_quarantined_work = 0
     exchange_metrics: dict[str, Any] = {}
 
@@ -110,6 +111,15 @@ def run_yfinance_daily_work_planner(
             else 0
         )
         cancelled_before_listing += exchange_cancelled_before_listing
+        exchange_cancelled_by_provider_history = (
+            db.cancel_pipeline_work_items_covered_by_provider_history(
+                exchange=exchange,
+                at=observed_at,
+            )
+            if enqueue and settings.yfinance_provider_history_evidence_enabled
+            else 0
+        )
+        cancelled_by_provider_history += exchange_cancelled_by_provider_history
         instrument_rows = db.active_yfinance_daily_instruments(exchange)
         if exchange == "TSX":
             instrument_rows = [
@@ -261,6 +271,9 @@ def run_yfinance_daily_work_planner(
             "work_generated": exchange_generated,
             "work_inserted": exchange_inserted,
             "work_cancelled_before_listing": exchange_cancelled_before_listing,
+            "work_cancelled_by_provider_history": (
+                exchange_cancelled_by_provider_history
+            ),
             "provider_history_evidence_enabled": (
                 settings.yfinance_provider_history_evidence_enabled
             ),
@@ -283,6 +296,7 @@ def run_yfinance_daily_work_planner(
             "work_generated": generated,
             "work_inserted": inserted,
             "work_cancelled_before_listing": cancelled_before_listing,
+            "work_cancelled_by_provider_history": cancelled_by_provider_history,
             "provider_history_evidence_enabled": (
                 settings.yfinance_provider_history_evidence_enabled
             ),
