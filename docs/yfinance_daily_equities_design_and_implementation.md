@@ -1479,6 +1479,39 @@ The schedule panel reports configuration-derived intended state for the daily
 planner, worker, universes, and calendars. It does not claim to be live Dagster
 runtime state; runtime schedule and missed-tick alerts remain Phase 9.4.
 
+#### Phase 9.2.1: Data Console correctness and operator diagnostics
+
+Phase 9.2.1 closes the validation gaps found during the first production UI
+review. NSE yfinance availability is seeded from the latest accepted persisted
+NSE snapshot, so Coverage reports the same active universe used by planning
+instead of rejecting NSE or falling back to a static seed. Failed coverage
+requests render as unavailable and never as a real zero-percent result.
+
+Every Data Console symbol search uses an exchange-scoped active-universe
+typeahead. Suggestions start after two characters, are debounced, and rank an
+exact symbol before symbol-prefix, company-name-prefix, provider-symbol-prefix,
+and substring matches. The response retains the exchange symbol, Yahoo symbol,
+company name, canonical identity, and provider instrument key. Coverage, Work
+Queue, and Lifecycle share this behavior.
+
+New durable worker runs persist per-exchange requested, processed, succeeded,
+failed, retry-wait, terminal, cancelled, and lost-claim counts in run metadata.
+This prevents one exchange from inheriting another exchange's failures from a
+shared `MULTI` worker. Older shared runs without this metadata remain visible
+but are explicitly labelled as unscoped global runs and are excluded from
+exchange health calculations.
+
+Run inspection is read-only and combines the run record, originally claimed
+work items, current durable outcomes, provider request logs, HTTP status,
+retry/rate-limit evidence, and the next automatic retry. Identical errors are
+grouped while retaining affected symbols. A historical failed run whose work
+later recovered is labelled recovered rather than left as an unexplained red
+badge. Manual mutation remains Phase 9.3.
+
+Initial-universe `added` events are displayed as `First observed`. This reflects
+the durable event semantics without implying that the full baseline was newly
+listed on the exchange on the snapshot date.
+
 ### Phase 10: Cleanup
 
 After at least two weeks of successful scheduled operation for all exchanges:

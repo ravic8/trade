@@ -1304,6 +1304,40 @@ class TimescaleStore:
             rows = connection.execute(query).mappings()
             return [Symbol(**dict(row)) for row in rows]
 
+    def persisted_universe_instruments(self, exchange: str) -> list[dict[str, Any]]:
+        """Return the active members of the latest accepted universe snapshot."""
+        exchange_code = exchange.upper()
+        latest = self.latest_accepted_universe_snapshot(exchange_code)
+        if latest is None:
+            return []
+        query = (
+            select(
+                symbols_table.c.canonical_instrument_id,
+                symbols_table.c.symbol,
+                symbols_table.c.yahoo_symbol.label("provider_symbol"),
+                symbols_table.c.name,
+                symbols_table.c.provider_instrument_key.label("instrument_key"),
+                symbols_table.c.instrument_type,
+            )
+            .select_from(
+                universe_snapshot_members_table.join(
+                    symbols_table,
+                    (
+                        universe_snapshot_members_table.c.canonical_instrument_id
+                        == symbols_table.c.canonical_instrument_id
+                    )
+                    & (symbols_table.c.exchange == exchange_code),
+                )
+            )
+            .where(universe_snapshot_members_table.c.snapshot_id == str(latest["snapshot_id"]))
+            .where(symbols_table.c.is_active.is_(True))
+            .where(symbols_table.c.pipeline_eligibility != "none")
+            .where(symbols_table.c.provider_instrument_key.is_not(None))
+            .order_by(symbols_table.c.symbol)
+        )
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
     def record_universe_snapshot(
         self,
         *,
@@ -1971,9 +2005,7 @@ class TimescaleStore:
                     )
                 )
                 if active_only:
-                    query = query.where(
-                        provider_daily_history_evidence_table.c.status == "active"
-                    )
+                    query = query.where(provider_daily_history_evidence_table.c.status == "active")
                 for row in connection.execute(query).mappings():
                     item = dict(row)
                     grouped.setdefault(str(item["instrument_key"]), []).append(item)
@@ -1985,9 +2017,7 @@ class TimescaleStore:
         *,
         provider: str = "yfinance",
     ) -> list[dict[str, Any]]:
-        canonical_ids = list(
-            dict.fromkeys(str(value) for value in canonical_instrument_ids)
-        )
+        canonical_ids = list(dict.fromkeys(str(value) for value in canonical_instrument_ids))
         if not canonical_ids:
             return []
         rows: list[dict[str, Any]] = []
@@ -2008,27 +2038,21 @@ class TimescaleStore:
                                 pipeline_work_items_table.c.canonical_instrument_id
                                 == symbols_table.c.canonical_instrument_id
                             )
-                            & (
-                                pipeline_work_items_table.c.exchange
-                                == symbols_table.c.exchange
-                            ),
+                            & (pipeline_work_items_table.c.exchange == symbols_table.c.exchange),
                         )
                     )
                     .where(pipeline_work_items_table.c.provider == provider)
                     .where(pipeline_work_items_table.c.status == "succeeded")
                     .where(symbols_table.c.is_active.is_(True))
                     .where(
-                        symbols_table.c.yahoo_symbol
-                        == pipeline_work_items_table.c.provider_symbol
+                        symbols_table.c.yahoo_symbol == pipeline_work_items_table.c.provider_symbol
                     )
                     .where(
                         pipeline_work_items_table.c.work_type.in_(
                             ("initial_backfill", "new_symbol_backfill", "gap_repair")
                         )
                     )
-                    .where(
-                        pipeline_work_items_table.c.canonical_instrument_id.in_(chunk)
-                    )
+                    .where(pipeline_work_items_table.c.canonical_instrument_id.in_(chunk))
                     .order_by(
                         pipeline_work_items_table.c.provider_symbol,
                         pipeline_work_items_table.c.window_start,
@@ -2075,18 +2099,13 @@ class TimescaleStore:
         quarantine_query = (
             provider_daily_history_evidence_table.select()
             .where(*filters)
-            .where(
-                provider_daily_history_evidence_table.c.classification
-                == "quarantined_sparse"
-            )
+            .where(provider_daily_history_evidence_table.c.classification == "quarantined_sparse")
             .order_by(provider_daily_history_evidence_table.c.provider_symbol)
             .limit(50)
         )
         with self.engine.begin() as connection:
             groups = [dict(row) for row in connection.execute(grouped_query).mappings()]
-            quarantined = [
-                dict(row) for row in connection.execute(quarantine_query).mappings()
-            ]
+            quarantined = [dict(row) for row in connection.execute(quarantine_query).mappings()]
         return {
             "provider": provider,
             "exchange": exchange.upper(),
@@ -2149,18 +2168,14 @@ class TimescaleStore:
         message: str,
         at: datetime | None = None,
     ) -> int:
-        canonical_ids = list(
-            dict.fromkeys(str(value) for value in canonical_instrument_ids)
-        )
+        canonical_ids = list(dict.fromkeys(str(value) for value in canonical_instrument_ids))
         if not canonical_ids:
             return 0
         now = _as_utc(at or datetime.now(UTC))
         statement = (
             pipeline_work_items_table.update()
             .where(pipeline_work_items_table.c.provider == provider)
-            .where(
-                pipeline_work_items_table.c.canonical_instrument_id.in_(canonical_ids)
-            )
+            .where(pipeline_work_items_table.c.canonical_instrument_id.in_(canonical_ids))
             .where(pipeline_work_items_table.c.status.in_(("queued", "retry_wait")))
             .values(
                 status="cancelled",
@@ -2236,17 +2251,14 @@ class TimescaleStore:
                 locked_at=None,
                 last_error_code="provider_history_verified",
                 last_error_message=(
-                    "Cancelled because durable provider-history evidence covers "
-                    "this window."
+                    "Cancelled because durable provider-history evidence covers this window."
                 ),
                 completed_at=now,
                 updated_at=now,
             )
         )
         if exchange:
-            statement = statement.where(
-                pipeline_work_items_table.c.exchange == exchange.upper()
-            )
+            statement = statement.where(pipeline_work_items_table.c.exchange == exchange.upper())
         with self.engine.begin() as connection:
             result = connection.execute(statement)
         return int(result.rowcount or 0)
@@ -2509,14 +2521,10 @@ class TimescaleStore:
             pipeline_work_items_table.c.work_type,
             pipeline_work_items_table.c.status,
             func.count().label("items"),
-            func.count(func.distinct(pipeline_work_items_table.c.provider_symbol)).label(
-                "symbols"
-            ),
+            func.count(func.distinct(pipeline_work_items_table.c.provider_symbol)).label("symbols"),
             func.max(pipeline_work_items_table.c.attempt_count).label("maximum_attempts"),
             func.min(pipeline_work_items_table.c.created_at).label("oldest_created_at"),
-            func.min(pipeline_work_items_table.c.next_attempt_at).label(
-                "earliest_next_attempt_at"
-            ),
+            func.min(pipeline_work_items_table.c.next_attempt_at).label("earliest_next_attempt_at"),
         )
         if provider:
             query = query.where(pipeline_work_items_table.c.provider == provider.lower())
@@ -2565,15 +2573,47 @@ class TimescaleStore:
         for condition in filters:
             query = query.where(condition)
             count_query = count_query.where(condition)
-        query = query.order_by(
-            pipeline_work_items_table.c.updated_at.desc(),
-            pipeline_work_items_table.c.priority,
-            pipeline_work_items_table.c.work_item_id,
-        ).limit(max(limit, 1)).offset(max(offset, 0))
+        query = (
+            query.order_by(
+                pipeline_work_items_table.c.updated_at.desc(),
+                pipeline_work_items_table.c.priority,
+                pipeline_work_items_table.c.work_item_id,
+            )
+            .limit(max(limit, 1))
+            .offset(max(offset, 0))
+        )
         with self.engine.begin() as connection:
             total = int(connection.execute(count_query).scalar_one())
             rows = [dict(row) for row in connection.execute(query).mappings()]
         return {"total": total, "rows": rows}
+
+    def pipeline_work_items_for_run(
+        self,
+        run_id: str,
+        *,
+        claimed_work_item_ids: Iterable[str] | None = None,
+        exchange: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return claimed work, even when a later retry replaced its run_id."""
+        claimed_ids = list(dict.fromkeys(str(value) for value in (claimed_work_item_ids or ())))
+        query = pipeline_work_items_table.select()
+        if claimed_ids:
+            query = query.where(pipeline_work_items_table.c.work_item_id.in_(claimed_ids))
+        else:
+            query = query.where(pipeline_work_items_table.c.run_id == run_id)
+        if exchange:
+            query = query.where(pipeline_work_items_table.c.exchange == exchange.upper())
+        query = query.order_by(
+            case(
+                (pipeline_work_items_table.c.last_error_code.is_not(None), 0),
+                else_=1,
+            ),
+            pipeline_work_items_table.c.exchange,
+            pipeline_work_items_table.c.provider_symbol,
+        ).limit(max(1, limit))
+        with self.engine.begin() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
 
     def symbol_lifecycle_events_page(
         self,
@@ -2586,8 +2626,10 @@ class TimescaleStore:
     ) -> dict[str, Any]:
         joined = symbol_lifecycle_events_table.outerjoin(
             symbols_table,
-            (symbol_lifecycle_events_table.c.canonical_instrument_id
-             == symbols_table.c.canonical_instrument_id)
+            (
+                symbol_lifecycle_events_table.c.canonical_instrument_id
+                == symbols_table.c.canonical_instrument_id
+            )
             & (symbol_lifecycle_events_table.c.exchange == symbols_table.c.exchange),
         )
         filters = []
@@ -2614,10 +2656,14 @@ class TimescaleStore:
         for condition in filters:
             query = query.where(condition)
             count_query = count_query.where(condition)
-        query = query.order_by(
-            symbol_lifecycle_events_table.c.created_at.desc(),
-            symbol_lifecycle_events_table.c.event_id,
-        ).limit(max(limit, 1)).offset(max(offset, 0))
+        query = (
+            query.order_by(
+                symbol_lifecycle_events_table.c.created_at.desc(),
+                symbol_lifecycle_events_table.c.event_id,
+            )
+            .limit(max(limit, 1))
+            .offset(max(offset, 0))
+        )
         with self.engine.begin() as connection:
             total = int(connection.execute(count_query).scalar_one())
             rows = [dict(row) for row in connection.execute(query).mappings()]
@@ -2648,9 +2694,9 @@ class TimescaleStore:
             func.max(ohlcv_daily_table.c.date).label("latest_date"),
             func.count().label("rows"),
             func.count(func.distinct(ohlcv_daily_table.c.instrument_key)).label("symbols"),
-            func.sum(
-                case((ohlcv_daily_table.c.quality_status == "suspicious", 1), else_=0)
-            ).label("suspicious_rows"),
+            func.sum(case((ohlcv_daily_table.c.quality_status == "suspicious", 1), else_=0)).label(
+                "suspicious_rows"
+            ),
             func.max(ohlcv_daily_table.c.fetched_at).label("latest_fetched_at"),
         )
         if provider:
@@ -4362,6 +4408,63 @@ class TimescaleStore:
             for row in rows
         ]
 
+    def search_persisted_symbols(
+        self,
+        query_text: str,
+        *,
+        provider: str = "yfinance",
+        exchange: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search the accepted active equity universe for typeahead suggestions."""
+        normalized = query_text.strip().upper()
+        if not normalized:
+            return []
+        exchange_code = exchange.upper()
+        exact = normalized
+        prefix = f"{normalized}%"
+        contains = f"%{normalized}%"
+        ranking = case(
+            (func.upper(symbols_table.c.symbol) == exact, 0),
+            (func.upper(symbols_table.c.symbol).like(prefix), 1),
+            (func.upper(func.coalesce(symbols_table.c.name, "")).like(prefix), 2),
+            (func.upper(func.coalesce(symbols_table.c.yahoo_symbol, "")).like(prefix), 3),
+            else_=4,
+        )
+        query = (
+            select(
+                symbols_table.c.symbol,
+                symbols_table.c.yahoo_symbol.label("provider_symbol"),
+                symbols_table.c.name,
+                symbols_table.c.provider_instrument_key.label("instrument_key"),
+                symbols_table.c.canonical_instrument_id,
+                symbols_table.c.instrument_type.label("asset_type"),
+            )
+            .where(symbols_table.c.exchange == exchange_code)
+            .where(symbols_table.c.is_active.is_(True))
+            .where(symbols_table.c.pipeline_eligibility != "none")
+            .where(symbols_table.c.provider_instrument_key.is_not(None))
+            .where(
+                func.upper(symbols_table.c.symbol).like(contains)
+                | func.upper(func.coalesce(symbols_table.c.name, "")).like(contains)
+                | func.upper(func.coalesce(symbols_table.c.yahoo_symbol, "")).like(contains)
+            )
+            .order_by(ranking, symbols_table.c.symbol)
+            .limit(max(1, limit))
+        )
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return [
+            {
+                **row,
+                "provider": provider.lower(),
+                "exchange": exchange_code,
+                "isin": None,
+                "segment": f"{exchange_code}_EQ",
+            }
+            for row in rows
+        ]
+
     def tradable_universes(
         self,
         exchange: str = "NSE",
@@ -4787,19 +4890,32 @@ class TimescaleStore:
         items_succeeded: int,
         items_failed: int,
         error_message: str | None = None,
+        run_metadata_patch: Mapping[str, Any] | None = None,
     ) -> None:
+        values: dict[str, Any] = {
+            "status": status,
+            "finished_at": datetime.now(UTC),
+            "items_processed": items_processed,
+            "items_succeeded": items_succeeded,
+            "items_failed": items_failed,
+            "error_message": error_message,
+        }
         with self.engine.begin() as connection:
+            if run_metadata_patch:
+                existing_metadata = connection.execute(
+                    select(ingestion_runs_table.c.run_metadata).where(
+                        ingestion_runs_table.c.run_id == str(run_id)
+                    )
+                ).scalar_one_or_none()
+                merged_metadata = (
+                    dict(existing_metadata) if isinstance(existing_metadata, Mapping) else {}
+                )
+                merged_metadata.update(dict(run_metadata_patch))
+                values["run_metadata"] = merged_metadata
             connection.execute(
                 ingestion_runs_table.update()
                 .where(ingestion_runs_table.c.run_id == str(run_id))
-                .values(
-                    status=status,
-                    finished_at=datetime.now(UTC),
-                    items_processed=items_processed,
-                    items_succeeded=items_succeeded,
-                    items_failed=items_failed,
-                    error_message=error_message,
-                )
+                .values(**values)
             )
 
     def latest_runs(
@@ -4842,16 +4958,12 @@ class TimescaleStore:
             work_item_exchange_match = (
                 select(1)
                 .select_from(pipeline_work_items_table)
-                .where(
-                    pipeline_work_items_table.c.run_id
-                    == ingestion_runs_table.c.run_id
-                )
+                .where(pipeline_work_items_table.c.run_id == ingestion_runs_table.c.run_id)
                 .where(pipeline_work_items_table.c.exchange == exchange_code)
                 .exists()
             )
             query = query.where(
-                (ingestion_runs_table.c.exchange == exchange_code)
-                | work_item_exchange_match
+                (ingestion_runs_table.c.exchange == exchange_code) | work_item_exchange_match
             )
         if job_name:
             query = query.where(ingestion_runs_table.c.job_name == job_name)
@@ -4876,9 +4988,9 @@ class TimescaleStore:
                     .distinct()
                 ).mappings()
                 for exchange_row in exchange_rows:
-                    work_item_exchanges.setdefault(
-                        str(exchange_row["run_id"]), set()
-                    ).add(str(exchange_row["exchange"]))
+                    work_item_exchanges.setdefault(str(exchange_row["run_id"]), set()).add(
+                        str(exchange_row["exchange"])
+                    )
         for row in rows:
             actual_exchanges = work_item_exchanges.get(str(row["run_id"]), set())
             if not actual_exchanges and str(row["exchange"]).upper() != "MULTI":

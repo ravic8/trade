@@ -227,9 +227,7 @@ class DataCoveragePreviewRequest(BaseModel):
     end_date: date
 
 
-def _default_data_pipeline_steps() -> list[
-    Literal["fetch_ohlcv", "validate_ohlcv"]
-]:
+def _default_data_pipeline_steps() -> list[Literal["fetch_ohlcv", "validate_ohlcv"]]:
     return ["fetch_ohlcv", "validate_ohlcv"]
 
 
@@ -361,8 +359,10 @@ class DataBulkFetchPreviewResponse(BaseModel):
 
 class DataInstrumentSearchRow(BaseModel):
     symbol: str
+    provider_symbol: str | None = None
     name: str | None = None
     instrument_key: str
+    canonical_instrument_id: str | None = None
     provider: str
     exchange: str
     isin: str | None = None
@@ -412,6 +412,18 @@ class UniverseReconciliationResponse(BaseModel):
     groups: list[UniverseReconciliationGroup] = Field(default_factory=list)
 
 
+class DataPipelineRunExchangeResult(BaseModel):
+    exchange: str
+    items_requested: int = Field(ge=0)
+    items_processed: int = Field(ge=0)
+    items_succeeded: int = Field(ge=0)
+    items_failed: int = Field(ge=0)
+    items_retry_wait: int = Field(default=0, ge=0)
+    items_terminal: int = Field(default=0, ge=0)
+    items_cancelled: int = Field(default=0, ge=0)
+    lost_claims: int = Field(default=0, ge=0)
+
+
 class DataPipelineRunSummary(BaseModel):
     id: str
     name: str
@@ -428,6 +440,7 @@ class DataPipelineRunSummary(BaseModel):
     items_failed: int = Field(ge=0)
     error_message: str | None = None
     run_metadata: dict[str, Any] = Field(default_factory=dict)
+    exchange_results: list[DataPipelineRunExchangeResult] = Field(default_factory=list)
 
 
 class DailyOhlcvFetchCoverageRow(BaseModel):
@@ -445,11 +458,6 @@ class DailyOhlcvFetchCoverageRow(BaseModel):
     skip_reason: str | None = None
     error_message: str | None = None
     created_at: datetime
-
-
-class DataPipelineRunDetail(BaseModel):
-    run: DataPipelineRunSummary
-    fetch_coverage: list[DailyOhlcvFetchCoverageRow] = Field(default_factory=list)
 
 
 class ProviderRequestSummaryRow(BaseModel):
@@ -481,6 +489,36 @@ class ProviderRequestLogRow(BaseModel):
     wait_seconds: float = Field(ge=0.0)
     duration_ms: float = Field(ge=0.0)
     created_at: datetime
+
+
+class DataPipelineRunWorkItemRow(BaseModel):
+    work_item_id: str
+    work_type: str
+    provider: str
+    exchange: str
+    canonical_instrument_id: str
+    provider_symbol: str
+    interval: str
+    window_start: date
+    window_end: date
+    priority: int
+    status: str
+    attempt_count: int = Field(ge=0)
+    max_attempts: int = Field(ge=0)
+    next_attempt_at: datetime | None = None
+    run_id: str | None = None
+    last_status_code: int | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    updated_at: datetime
+
+
+class DataPipelineRunDetail(BaseModel):
+    run: DataPipelineRunSummary
+    selected_exchange: str | None = None
+    fetch_coverage: list[DailyOhlcvFetchCoverageRow] = Field(default_factory=list)
+    work_items: list[DataPipelineRunWorkItemRow] = Field(default_factory=list)
+    provider_requests: list[ProviderRequestLogRow] = Field(default_factory=list)
 
 
 class PipelineScheduleStatusRow(BaseModel):

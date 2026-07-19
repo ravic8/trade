@@ -1827,6 +1827,200 @@ tbody tr:hover {
   margin: 18px;
 }
 
+.operations-autocomplete {
+  z-index: 4;
+}
+
+.operations-suggestions {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  display: grid;
+  overflow: hidden;
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid #cddbd4;
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgb(24 52 40 / 14%);
+}
+
+.operations-suggestions button {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid #edf2ef;
+  background: #ffffff;
+  padding: 11px 13px;
+  color: var(--ops-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.operations-suggestions button:last-of-type {
+  border-bottom: 0;
+}
+
+.operations-suggestions button:hover,
+.operations-suggestions button.active {
+  background: #f1f8f4;
+}
+
+.operations-suggestions button span,
+.operations-suggestions button small {
+  overflow: hidden;
+  color: var(--ops-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operations-suggestion-state {
+  padding: 13px;
+  color: var(--ops-muted);
+  font-weight: 500;
+}
+
+.operations-drawer-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(15 32 25 / 36%);
+  backdrop-filter: blur(2px);
+}
+
+.operations-run-drawer {
+  width: min(820px, 96vw);
+  height: 100%;
+  overflow-y: auto;
+  border-left: 1px solid var(--ops-border);
+  background: #f7f9f8;
+  box-shadow: -18px 0 46px rgb(15 32 25 / 18%);
+}
+
+.operations-drawer-header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--ops-border);
+  background: rgb(255 255 255 / 96%);
+  padding: 22px 24px;
+}
+
+.operations-drawer-header h2,
+.operations-drawer-header p {
+  margin: 0;
+}
+
+.operations-drawer-header p {
+  margin-top: 5px;
+  color: var(--ops-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.77rem;
+}
+
+.operations-eyebrow {
+  color: var(--ops-green);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.operations-drawer-body {
+  display: grid;
+  gap: 16px;
+  padding: 20px 24px 36px;
+}
+
+.operations-run-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.operations-run-summary-grid > div {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--ops-border);
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 13px;
+}
+
+.operations-run-summary-grid span {
+  color: var(--ops-muted);
+  font-size: 0.78rem;
+}
+
+.operations-recovery-note {
+  display: flex;
+  gap: 10px;
+  border: 1px solid #bddacb;
+  border-radius: 9px;
+  background: #f4faf7;
+  padding: 13px;
+  color: #08734e;
+}
+
+.operations-recovery-note > div {
+  display: grid;
+  gap: 3px;
+}
+
+.operations-recovery-note span {
+  font-size: 0.82rem;
+}
+
+.operations-run-errors {
+  overflow: hidden;
+  border: 1px solid var(--ops-border);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.operations-run-errors h3,
+.operations-run-errors > p {
+  margin: 0 0 12px;
+}
+
+.operations-run-errors article {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid #edf2ef;
+  padding: 13px 0;
+}
+
+.operations-run-errors article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.operations-run-errors article p,
+.operations-run-errors article small {
+  margin: 0;
+  color: var(--ops-muted);
+}
+
+.operations-table.compact {
+  min-width: 650px;
+}
+
+.operations-table.compact th,
+.operations-table.compact td {
+  padding: 10px;
+}
+
 .operations-pagination {
   display: flex;
   align-items: center;
@@ -1876,6 +2070,15 @@ tbody tr:hover {
 
   .operations-rate-grid {
     grid-template-columns: 1fr;
+  }
+
+  .operations-run-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .operations-suggestions button {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 
   .operations-pagination > div,

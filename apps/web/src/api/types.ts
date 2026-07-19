@@ -214,8 +214,10 @@ export type DataAvailabilityParams = {
 
 export type DataInstrumentSearchRow = {
   symbol: string;
+  provider_symbol: string | null;
   name: string | null;
   instrument_key: string;
+  canonical_instrument_id: string | null;
   provider: string;
   exchange: string;
   isin: string | null;
@@ -224,8 +226,8 @@ export type DataInstrumentSearchRow = {
 };
 
 export type DataInstrumentSearchParams = {
-  provider?: "upstox";
-  exchange?: "NSE";
+  provider?: "upstox" | "yfinance";
+  exchange?: "NSE" | "TSX" | "US";
   query: string;
   limit?: number;
 };
@@ -271,6 +273,19 @@ export type DataPipelineRunSummary = {
   items_failed: number;
   error_message: string | null;
   run_metadata: Record<string, unknown>;
+  exchange_results: DataPipelineRunExchangeResult[];
+};
+
+export type DataPipelineRunExchangeResult = {
+  exchange: string;
+  items_requested: number;
+  items_processed: number;
+  items_succeeded: number;
+  items_failed: number;
+  items_retry_wait: number;
+  items_terminal: number;
+  items_cancelled: number;
+  lost_claims: number;
 };
 
 export type DailyOhlcvFetchCoverageRow = {
@@ -292,7 +307,10 @@ export type DailyOhlcvFetchCoverageRow = {
 
 export type DataPipelineRunDetail = {
   run: DataPipelineRunSummary;
+  selected_exchange: string | null;
   fetch_coverage: DailyOhlcvFetchCoverageRow[];
+  work_items: OperationsWorkItemRow[];
+  provider_requests: ProviderRequestLogRow[];
 };
 
 export type ProviderRequestSummaryRow = {

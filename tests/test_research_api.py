@@ -44,9 +44,7 @@ class FakeCoverageStore:
             ],
         }
 
-    def provider_daily_history_summary(
-        self, exchange: str, *, provider: str = "yfinance"
-    ) -> dict:
+    def provider_daily_history_summary(self, exchange: str, *, provider: str = "yfinance") -> dict:
         return {
             "provider": provider,
             "exchange": exchange,
@@ -183,6 +181,33 @@ class FakeCoverageStore:
 
     def ingestion_run(self, run_id: str) -> dict | None:
         return _run_row() if run_id == "run-1" else None
+
+    def pipeline_work_items_for_run(
+        self,
+        run_id: str,
+        *,
+        claimed_work_item_ids=None,
+        exchange: str | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        assert run_id == "run-1"
+        assert claimed_work_item_ids == []
+        assert exchange is None
+        assert limit == 500
+        return []
+
+    def provider_request_logs_for_run(
+        self,
+        run_id: str,
+        provider: str | None = None,
+        endpoint_group: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        assert run_id == "run-1"
+        assert provider == "upstox"
+        assert endpoint_group is None
+        assert limit == 500
+        return []
 
     def provider_runs(
         self,
@@ -383,36 +408,47 @@ class FakeCoverageStore:
         sort: str = "symbol",
     ) -> dict:
         assert source == "yfinance"
-        assert exchange == "US"
-        assert symbols[0] == {
-            "symbol": "AAPL",
-            "name": "Apple",
-            "instrument_key": "YF|AAPL",
-        }
+        assert exchange in {"NSE", "US"}
+        if exchange == "US":
+            assert symbols[0] == {
+                "symbol": "AAPL",
+                "name": "Apple",
+                "instrument_key": "YF|AAPL",
+            }
+        else:
+            assert symbols[0] == {
+                "symbol": "RELIANCE",
+                "name": "Reliance Industries Limited",
+                "instrument_key": "YF|RELIANCE.NS",
+            }
         assert start_date == date(2026, 1, 1)
         assert end_date == date(2026, 1, 6)
-        assert query_text == "AAPL"
+        assert query_text == ("AAPL" if exchange == "US" else "RELIANCE")
         assert coverage_status == "partial"
-        assert expected_rows_per_symbol == 4
+        expected_rows = 4 if exchange == "US" else 3
+        assert expected_rows_per_symbol == expected_rows
         assert limit == 10
         assert offset == 0
         assert sort == "symbol"
+        result_symbol = "AAPL" if exchange == "US" else "RELIANCE"
+        result_name = "Apple" if exchange == "US" else "Reliance Industries Limited"
+        instrument_key = "YF|AAPL" if exchange == "US" else "YF|RELIANCE.NS"
         return {
             "total": 1,
             "rows": [
                 {
-                    "symbol": "AAPL",
-                    "name": "Apple",
-                    "instrument_key": "YF|AAPL",
+                    "symbol": result_symbol,
+                    "name": result_name,
+                    "instrument_key": instrument_key,
                     "provider": "yfinance",
-                    "exchange": "US",
+                    "exchange": exchange,
                     "interval": "1d",
                     "first_stored_date": date(2026, 1, 1),
                     "latest_stored_date": date(2026, 1, 2),
                     "stored_rows": 2,
-                    "expected_rows": 4,
-                    "coverage_pct": 0.5,
-                    "missing_rows": 2,
+                    "expected_rows": expected_rows,
+                    "coverage_pct": 2 / expected_rows,
+                    "missing_rows": expected_rows - 2,
                     "coverage_status": "partial",
                     "last_successful_run": "run-yf",
                     "last_fetch_status": "fetched",
@@ -423,9 +459,9 @@ class FakeCoverageStore:
                 "symbols_complete": 0,
                 "symbols_partial": 1,
                 "symbols_empty": 0,
-                "expected_rows": 4,
+                "expected_rows": expected_rows,
                 "stored_rows": 2,
-                "missing_rows": 2,
+                "missing_rows": expected_rows - 2,
                 "estimated_provider_calls_for_missing": 1,
             },
         }
@@ -518,6 +554,46 @@ class FakeCoverageStore:
                 "isin": "INE002A01018",
                 "segment": "NSE_EQ",
                 "asset_type": "EQ",
+            }
+        ]
+
+    def persisted_universe_instruments(self, exchange: str) -> list[dict]:
+        assert exchange == "NSE"
+        return [
+            {
+                "canonical_instrument_id": "eq_reliance",
+                "symbol": "RELIANCE",
+                "provider_symbol": "RELIANCE.NS",
+                "name": "Reliance Industries Limited",
+                "instrument_key": "YF|RELIANCE.NS",
+                "instrument_type": "equity",
+            }
+        ]
+
+    def search_persisted_symbols(
+        self,
+        query_text: str,
+        *,
+        provider: str,
+        exchange: str,
+        limit: int,
+    ) -> list[dict]:
+        assert query_text == "re"
+        assert provider == "yfinance"
+        assert exchange == "NSE"
+        assert limit == 10
+        return [
+            {
+                "symbol": "RELIANCE",
+                "provider_symbol": "RELIANCE.NS",
+                "name": "Reliance Industries Limited",
+                "instrument_key": "YF|RELIANCE.NS",
+                "canonical_instrument_id": "eq_reliance",
+                "provider": "yfinance",
+                "exchange": "NSE",
+                "isin": None,
+                "segment": "NSE_EQ",
+                "asset_type": "equity",
             }
         ]
 
@@ -895,8 +971,7 @@ def test_data_coverage_get_endpoint(monkeypatch) -> None:
 
     with TestClient(app) as client:
         response = client.get(
-            "/api/data/coverage"
-            "?symbols=AAA&symbols=BBB&start_date=2026-01-01&end_date=2026-01-06"
+            "/api/data/coverage?symbols=AAA&symbols=BBB&start_date=2026-01-01&end_date=2026-01-06"
         )
 
     assert response.status_code == 200
@@ -978,6 +1053,27 @@ def test_data_availability_supports_yfinance_seeded_universe(monkeypatch) -> Non
     assert payload["rows"][0]["last_successful_run"] == "run-yf"
 
 
+def test_data_availability_supports_persisted_nse_yfinance_universe(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?provider=yfinance&exchange=NSE"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+            "&query=RELIANCE&coverage_status=partial&limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "yfinance"
+    assert payload["exchange"] == "NSE"
+    assert payload["rows"][0]["symbol"] == "RELIANCE"
+    assert payload["rows"][0]["instrument_key"] == "YF|RELIANCE.NS"
+
+
 def test_data_availability_supports_yfinance_intraday(monkeypatch) -> None:
     monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
 
@@ -1006,8 +1102,7 @@ def test_data_availability_supports_yfinance_intraday(monkeypatch) -> None:
 def test_data_availability_rejects_yfinance_exchange_mismatch() -> None:
     with TestClient(app) as client:
         response = client.get(
-            "/api/data/availability"
-            "?provider=yfinance&exchange=CA&universe_id=us_seed"
+            "/api/data/availability?provider=yfinance&exchange=CA&universe_id=us_seed"
         )
 
     assert response.status_code == 400
@@ -1039,8 +1134,7 @@ def test_data_availability_normalizes_legacy_ca_alias(monkeypatch) -> None:
 
     with TestClient(app) as client:
         response = client.get(
-            "/api/data/availability"
-            "?provider=yfinance&exchange=CA&universe_id=canada_seed"
+            "/api/data/availability?provider=yfinance&exchange=CA&universe_id=canada_seed"
         )
 
     assert response.status_code == 200
@@ -1136,8 +1230,10 @@ def test_data_instruments_search_endpoint(monkeypatch) -> None:
     assert payload == [
         {
             "symbol": "RELIANCE",
+            "provider_symbol": None,
             "name": "Reliance Industries Limited",
             "instrument_key": "NSE_EQ|INE002A01018",
+            "canonical_instrument_id": None,
             "provider": "upstox",
             "exchange": "NSE",
             "isin": "INE002A01018",
@@ -1145,6 +1241,22 @@ def test_data_instruments_search_endpoint(monkeypatch) -> None:
             "asset_type": "EQ",
         }
     ]
+
+
+def test_data_instruments_search_supports_yfinance_equity_universes(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/instruments/search?provider=yfinance&exchange=NSE&query=re&limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["symbol"] == "RELIANCE"
+    assert payload[0]["provider_symbol"] == "RELIANCE.NS"
+    assert payload[0]["name"] == "Reliance Industries Limited"
+    assert payload[0]["canonical_instrument_id"] == "eq_reliance"
 
 
 def test_data_universes_endpoint(monkeypatch) -> None:
@@ -1164,9 +1276,7 @@ def test_data_universe_members_endpoint(monkeypatch) -> None:
     monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
-        response = client.get(
-            "/api/data/universes/nse_liquid_adt_100cr/members?limit=100"
-        )
+        response = client.get("/api/data/universes/nse_liquid_adt_100cr/members?limit=100")
 
     assert response.status_code == 200
     payload = response.json()
@@ -1329,6 +1439,106 @@ def test_data_pipeline_run_detail_endpoint(monkeypatch) -> None:
     assert payload["run"]["id"] == "run-1"
     assert payload["fetch_coverage"][0]["instrument_key"] == "NSE_EQ|AAA"
     assert payload["fetch_coverage"][0]["rows_fetched"] == 2
+
+
+def test_data_pipeline_run_detail_exposes_exchange_errors(monkeypatch) -> None:
+    class FailedRunStore(FakeCoverageStore):
+        def ingestion_run(self, run_id: str) -> dict | None:
+            if run_id != "failed-run":
+                return None
+            row = _run_row(
+                source="yfinance",
+                exchange="MULTI",
+                job_name="yfinance_daily_work_queue",
+                status="completed_with_failures",
+            )
+            row["run_id"] = run_id
+            row["items_succeeded"] = 1
+            row["items_failed"] = 1
+            row["run_metadata"] = {
+                "trigger": "dagster",
+                "claimed_work_item_ids": ["work-reliance"],
+                "exchange_results": [
+                    {
+                        "exchange": "NSE",
+                        "items_requested": 1,
+                        "items_processed": 1,
+                        "items_succeeded": 0,
+                        "items_failed": 1,
+                        "items_retry_wait": 1,
+                        "items_terminal": 0,
+                        "items_cancelled": 0,
+                        "lost_claims": 0,
+                    }
+                ],
+            }
+            return row
+
+        def pipeline_work_items_for_run(self, run_id: str, **kwargs) -> list[dict]:
+            assert run_id == "failed-run"
+            assert kwargs["exchange"] == "NSE"
+            return [
+                {
+                    "work_item_id": "work-reliance",
+                    "work_type": "daily_incremental",
+                    "provider": "yfinance",
+                    "exchange": "NSE",
+                    "canonical_instrument_id": "eq_reliance",
+                    "provider_symbol": "RELIANCE.NS",
+                    "interval": "1d",
+                    "window_start": date(2026, 7, 17),
+                    "window_end": date(2026, 7, 18),
+                    "priority": 10,
+                    "status": "retry_wait",
+                    "attempt_count": 1,
+                    "max_attempts": 9,
+                    "next_attempt_at": datetime(2026, 7, 19, 1, tzinfo=UTC),
+                    "run_id": "failed-run",
+                    "last_status_code": 429,
+                    "last_error_code": "rate_limited",
+                    "last_error_message": "Yahoo rate limited the request.",
+                    "updated_at": datetime(2026, 7, 19, tzinfo=UTC),
+                }
+            ]
+
+        def provider_request_logs_for_run(self, *args, **kwargs) -> list[dict]:
+            return [
+                {
+                    "id": "request-1",
+                    "run_id": "failed-run",
+                    "provider": "yfinance",
+                    "endpoint_group": "daily_download",
+                    "request_key": "RELIANCE.NS:1d",
+                    "instrument_key": "YF|RELIANCE.NS",
+                    "symbol": "RELIANCE.NS",
+                    "interval": "1d",
+                    "window_start": date(2026, 7, 17),
+                    "window_end": date(2026, 7, 18),
+                    "status_code": 429,
+                    "status": "error",
+                    "error_message": "Too Many Requests",
+                    "retry_count": 1,
+                    "rate_limited": True,
+                    "wait_seconds": 5.0,
+                    "duration_ms": 250.0,
+                    "created_at": datetime(2026, 7, 19, tzinfo=UTC),
+                }
+            ]
+
+        def daily_ohlcv_fetch_coverage_for_run(self, *args, **kwargs) -> list[dict]:
+            return []
+
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FailedRunStore())
+
+    with TestClient(app) as client:
+        response = client.get("/api/data/pipeline-runs/failed-run?exchange=NSE")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_exchange"] == "NSE"
+    assert payload["run"]["exchange_results"][0]["items_failed"] == 1
+    assert payload["work_items"][0]["last_error_code"] == "rate_limited"
+    assert payload["provider_requests"][0]["error_message"] == "Too Many Requests"
 
 
 def test_data_pipeline_run_detail_returns_404(monkeypatch) -> None:

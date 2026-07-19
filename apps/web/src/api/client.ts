@@ -377,8 +377,16 @@ export function getDataPipelineRuns(): Promise<DataPipelineRunSummary[]> {
   return strictFetchJson("/api/data/pipeline-runs");
 }
 
-export function getDataPipelineRunDetail(runId: string): Promise<DataPipelineRunDetail> {
-  return strictFetchJson(`/api/data/pipeline-runs/${encodeURIComponent(runId)}`);
+export function getDataPipelineRunDetail(
+  runId: string,
+  exchange?: "NSE" | "TSX" | "US",
+): Promise<DataPipelineRunDetail> {
+  const query = new URLSearchParams();
+  if (exchange) query.set("exchange", exchange);
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return strictFetchJson(
+    `/api/data/pipeline-runs/${encodeURIComponent(runId)}${suffix}`,
+  );
 }
 
 function appendObservabilityParams(query: URLSearchParams, params: ProviderObservabilityParams) {
