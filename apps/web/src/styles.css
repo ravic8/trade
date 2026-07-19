@@ -1781,6 +1781,37 @@ tbody tr:hover {
   grid-template-columns: minmax(230px, 1fr) repeat(3, minmax(140px, 0.45fr));
 }
 
+.operations-coverage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: -2px 0 18px;
+}
+
+.operations-coverage-breakdown > div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--ops-border);
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 13px 15px;
+}
+
+.operations-coverage-breakdown strong {
+  color: var(--ops-ink);
+  font-size: 1.1rem;
+}
+
+.operations-coverage-breakdown span {
+  color: var(--ops-ink);
+  font-weight: 750;
+}
+
+.operations-coverage-breakdown small {
+  color: var(--ops-muted);
+  line-height: 1.35;
+}
+
 .operations-work-filters {
   grid-template-columns: minmax(260px, 1fr) repeat(2, minmax(180px, 0.55fr));
 }
@@ -1829,6 +1860,10 @@ tbody tr:hover {
 
 .operations-autocomplete {
   z-index: 4;
+}
+
+.data-card:has(.operations-autocomplete) {
+  overflow: visible;
 }
 
 .operations-suggestions {
@@ -2069,6 +2104,10 @@ tbody tr:hover {
   }
 
   .operations-rate-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .operations-coverage-breakdown {
     grid-template-columns: 1fr;
   }
 

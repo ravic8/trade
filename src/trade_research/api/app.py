@@ -414,14 +414,21 @@ def data_availability(
 
         if start_date and end_date:
             _ensure_exchange_holidays(store, exchange_normalized, start_date, end_date)
-        expected_rows = _expected_daily_rows(store, exchange_normalized, start_date, end_date)
+        expected_dates = (
+            _expected_daily_dates(store, exchange_normalized, start_date, end_date)
+            if start_date is not None and end_date is not None
+            else []
+        )
+        expected_rows = len(expected_dates)
         if provider_normalized == "yfinance":
-            if exchange_normalized == "NSE":
-                if universe_id:
-                    raise ValueError("universe_id is not supported for persisted NSE coverage.")
-                persisted = store.persisted_universe_instruments("NSE")
-                if not persisted:
-                    raise ValueError("No accepted NSE universe snapshot is available.")
+            if exchange_normalized == "NSE" and universe_id:
+                raise ValueError("universe_id is not supported for persisted NSE coverage.")
+            persisted = (
+                store.persisted_universe_instruments(exchange_normalized)
+                if universe_id is None
+                else []
+            )
+            if persisted:
                 symbols = [
                     {
                         "symbol": str(symbol["symbol"]),
@@ -431,6 +438,8 @@ def data_availability(
                     for symbol in persisted
                 ]
             else:
+                if exchange_normalized == "NSE":
+                    raise ValueError("No accepted NSE universe snapshot is available.")
                 seed_universe = universe_id or (
                     "canada_seed" if exchange_normalized == "TSX" else "us_seed"
                 )
@@ -462,6 +471,7 @@ def data_availability(
                 query_text=query,
                 coverage_status=coverage_status,
                 expected_rows_per_symbol=expected_rows,
+                expected_session_dates=expected_dates,
                 limit=limit,
                 offset=offset,
                 sort=sort,
@@ -1661,18 +1671,6 @@ def _to_operations_universe_snapshot(row: dict) -> OperationsUniverseSnapshotRow
         validation=validation,
         error_message=row.get("error_message"),
     )
-
-
-def _expected_daily_rows(
-    store: TimescaleStore,
-    exchange: str,
-    start_date: date | None,
-    end_date: date | None,
-) -> int:
-    if start_date is None or end_date is None:
-        return 0
-
-    return len(_expected_daily_dates(store, exchange, start_date, end_date))
 
 
 def _intraday_bounds(

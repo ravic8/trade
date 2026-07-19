@@ -297,9 +297,13 @@ class DataAvailabilityRow(BaseModel):
     first_stored_ts: datetime | None = None
     latest_stored_ts: datetime | None = None
     stored_rows: int = Field(ge=0)
+    calendar_matched_rows: int = Field(default=0, ge=0)
+    off_calendar_rows: int = Field(default=0, ge=0)
     expected_rows: int = Field(ge=0)
     coverage_pct: float = Field(ge=0.0)
     missing_rows: int = Field(ge=0)
+    provider_unavailable_rows: int = Field(default=0, ge=0)
+    actionable_missing_rows: int = Field(default=0, ge=0)
     missing_windows: int = Field(default=0, ge=0)
     coverage_status: Literal["complete", "partial", "empty"]
     last_successful_run: str | None = None
@@ -313,7 +317,13 @@ class DataAvailabilitySummary(BaseModel):
     symbols_empty: int = Field(ge=0)
     expected_rows: int = Field(ge=0)
     stored_rows: int = Field(ge=0)
+    calendar_matched_rows: int = Field(default=0, ge=0)
+    off_calendar_rows: int = Field(default=0, ge=0)
     missing_rows: int = Field(ge=0)
+    provider_unavailable_rows: int = Field(default=0, ge=0)
+    actionable_missing_rows: int = Field(default=0, ge=0)
+    symbols_provider_limited: int = Field(default=0, ge=0)
+    symbols_actionable: int = Field(default=0, ge=0)
     estimated_provider_calls_for_missing: int = Field(ge=0)
 
 

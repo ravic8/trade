@@ -403,6 +403,7 @@ class FakeCoverageStore:
         query_text: str | None = None,
         coverage_status: str | None = None,
         expected_rows_per_symbol: int = 0,
+        expected_session_dates: list[date] | tuple[date, ...] | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: str = "symbol",
@@ -427,6 +428,8 @@ class FakeCoverageStore:
         assert coverage_status == "partial"
         expected_rows = 4 if exchange == "US" else 3
         assert expected_rows_per_symbol == expected_rows
+        assert expected_session_dates is not None
+        assert len(expected_session_dates) == expected_rows
         assert limit == 10
         assert offset == 0
         assert sort == "symbol"
@@ -445,10 +448,14 @@ class FakeCoverageStore:
                     "interval": "1d",
                     "first_stored_date": date(2026, 1, 1),
                     "latest_stored_date": date(2026, 1, 2),
-                    "stored_rows": 2,
+                    "stored_rows": 3,
+                    "calendar_matched_rows": 2,
+                    "off_calendar_rows": 1,
                     "expected_rows": expected_rows,
                     "coverage_pct": 2 / expected_rows,
                     "missing_rows": expected_rows - 2,
+                    "provider_unavailable_rows": expected_rows - 2,
+                    "actionable_missing_rows": 0,
                     "coverage_status": "partial",
                     "last_successful_run": "run-yf",
                     "last_fetch_status": "fetched",
@@ -460,9 +467,15 @@ class FakeCoverageStore:
                 "symbols_partial": 1,
                 "symbols_empty": 0,
                 "expected_rows": expected_rows,
-                "stored_rows": 2,
+                "stored_rows": 3,
+                "calendar_matched_rows": 2,
+                "off_calendar_rows": 1,
                 "missing_rows": expected_rows - 2,
-                "estimated_provider_calls_for_missing": 1,
+                "provider_unavailable_rows": expected_rows - 2,
+                "actionable_missing_rows": 0,
+                "symbols_provider_limited": 1,
+                "symbols_actionable": 0,
+                "estimated_provider_calls_for_missing": 0,
             },
         }
 
@@ -558,7 +571,8 @@ class FakeCoverageStore:
         ]
 
     def persisted_universe_instruments(self, exchange: str) -> list[dict]:
-        assert exchange == "NSE"
+        if exchange != "NSE":
+            return []
         return [
             {
                 "canonical_instrument_id": "eq_reliance",
@@ -1040,6 +1054,7 @@ def test_data_availability_supports_yfinance_seeded_universe(monkeypatch) -> Non
             "?provider=yfinance&exchange=US"
             "&start_date=2026-01-01&end_date=2026-01-06"
             "&query=AAPL&coverage_status=partial&limit=10"
+            "&universe_id=us_seed"
         )
 
     assert response.status_code == 200
@@ -1048,9 +1063,50 @@ def test_data_availability_supports_yfinance_seeded_universe(monkeypatch) -> Non
     assert payload["exchange"] == "US"
     assert payload["total"] == 1
     assert payload["summary"]["missing_rows"] == 2
+    assert payload["summary"]["stored_rows"] == 3
+    assert payload["summary"]["calendar_matched_rows"] == 2
+    assert payload["summary"]["off_calendar_rows"] == 1
+    assert payload["summary"]["provider_unavailable_rows"] == 2
+    assert payload["summary"]["actionable_missing_rows"] == 0
+    assert payload["summary"]["estimated_provider_calls_for_missing"] == 0
     assert payload["rows"][0]["symbol"] == "AAPL"
     assert payload["rows"][0]["instrument_key"] == "YF|AAPL"
     assert payload["rows"][0]["last_successful_run"] == "run-yf"
+
+
+def test_data_availability_prefers_persisted_us_yfinance_universe(
+    monkeypatch,
+) -> None:
+    store = FakeCoverageStore()
+
+    def persisted_universe(exchange: str) -> list[dict]:
+        assert exchange == "US"
+        return [
+            {
+                "canonical_instrument_id": "eq_aapl",
+                "symbol": "AAPL",
+                "provider_symbol": "AAPL",
+                "name": "Apple",
+                "instrument_key": "YF|AAPL",
+                "instrument_type": "equity",
+            }
+        ]
+
+    monkeypatch.setattr(store, "persisted_universe_instruments", persisted_universe)
+    monkeypatch.setattr("trade_research.api.app._store", lambda: store)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/availability"
+            "?provider=yfinance&exchange=US"
+            "&start_date=2026-01-01&end_date=2026-01-06"
+            "&query=AAPL&coverage_status=partial&limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["rows"][0]["instrument_key"] == "YF|AAPL"
+    assert payload["summary"]["off_calendar_rows"] == 1
 
 
 def test_data_availability_supports_persisted_nse_yfinance_universe(
@@ -1072,6 +1128,9 @@ def test_data_availability_supports_persisted_nse_yfinance_universe(
     assert payload["exchange"] == "NSE"
     assert payload["rows"][0]["symbol"] == "RELIANCE"
     assert payload["rows"][0]["instrument_key"] == "YF|RELIANCE.NS"
+    assert payload["rows"][0]["calendar_matched_rows"] == 2
+    assert payload["rows"][0]["provider_unavailable_rows"] == 1
+    assert payload["rows"][0]["actionable_missing_rows"] == 0
 
 
 def test_data_availability_supports_yfinance_intraday(monkeypatch) -> None:

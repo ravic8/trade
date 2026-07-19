@@ -1512,6 +1512,33 @@ Initial-universe `added` events are displayed as `First observed`. This reflects
 the durable event semantics without implying that the full baseline was newly
 listed on the exchange on the snapshot date.
 
+#### Phase 9.2.2: Coverage semantics and provider-history disposition
+
+The production NSE acceptance review showed that raw stored rows and expected
+exchange sessions are not interchangeable. Yahoo can contain observations on a
+date that the current materialized calendar does not classify as a trading
+session, including historical special sessions that still need calendar review.
+Availability therefore retains the raw stored-row count but computes the
+coverage ratio from the intersection of stored dates and the exact expected
+session set. Rows outside that set are reported separately as off-calendar
+observations and never inflate the coverage numerator.
+
+Missing expected sessions are split into two durable dispositions. A missing
+session covered by active `verified_complete` or `verified_partial`
+provider-history evidence is provider-unavailable and does not require another
+Yahoo request. A missing session without that evidence is actionable. Only
+actionable gaps contribute to estimated provider calls and manual-retry
+candidates. The Data Console displays calendar-covered, provider-unavailable,
+actionable, and off-calendar counts independently so zero open work can coexist
+with a provider-limited ten-year coverage percentage without appearing
+contradictory.
+
+Default yfinance coverage uses the latest accepted persisted universe for NSE,
+TSX, and US when it is available. Explicit legacy seed-universe requests remain
+compatible for TSX and US. The shared symbol typeahead remains debounced and
+keyboard accessible; its containing card permits the suggestion list to render
+above following table content instead of clipping it.
+
 ### Phase 10: Cleanup
 
 After at least two weeks of successful scheduled operation for all exchanges:

@@ -3759,7 +3759,13 @@ class TimescaleStore:
             "symbols_empty": 0,
             "expected_rows": 0,
             "stored_rows": 0,
+            "calendar_matched_rows": 0,
+            "off_calendar_rows": 0,
             "missing_rows": 0,
+            "provider_unavailable_rows": 0,
+            "actionable_missing_rows": 0,
+            "symbols_provider_limited": 0,
+            "symbols_actionable": 0,
             "estimated_provider_calls_for_missing": 0,
         }
         total = 0
@@ -3773,7 +3779,13 @@ class TimescaleStore:
                 "symbols_empty": int(first["symbols_empty"] or 0),
                 "expected_rows": int(first["summary_expected_rows"] or 0),
                 "stored_rows": int(first["summary_stored_rows"] or 0),
+                "calendar_matched_rows": int(first["summary_stored_rows"] or 0),
+                "off_calendar_rows": 0,
                 "missing_rows": int(first["summary_missing_rows"] or 0),
+                "provider_unavailable_rows": 0,
+                "actionable_missing_rows": int(first["summary_missing_rows"] or 0),
+                "symbols_provider_limited": 0,
+                "symbols_actionable": int(first["estimated_provider_calls_for_missing"] or 0),
                 "estimated_provider_calls_for_missing": int(
                     first["estimated_provider_calls_for_missing"] or 0
                 ),
@@ -3792,9 +3804,13 @@ class TimescaleStore:
                     "first_stored_date": row.get("first_stored_date"),
                     "latest_stored_date": row.get("latest_stored_date"),
                     "stored_rows": int(row["stored_rows"] or 0),
+                    "calendar_matched_rows": int(row["stored_rows"] or 0),
+                    "off_calendar_rows": 0,
                     "expected_rows": int(row["expected_rows"] or 0),
                     "coverage_pct": float(row["coverage_pct"] or 0.0),
                     "missing_rows": int(row["missing_rows"] or 0),
+                    "provider_unavailable_rows": 0,
+                    "actionable_missing_rows": int(row["missing_rows"] or 0),
                     "coverage_status": row["coverage_status"],
                     "last_successful_run": row.get("last_successful_run"),
                     "last_fetch_status": row.get("last_fetch_status"),
@@ -3812,6 +3828,7 @@ class TimescaleStore:
         query_text: str | None = None,
         coverage_status: str | None = None,
         expected_rows_per_symbol: int = 0,
+        expected_session_dates: Iterable[date] | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: str = "symbol",
@@ -3822,6 +3839,9 @@ class TimescaleStore:
             raise ValueError("start_date must be on or before end_date.")
 
         seed_rows = [row for row in symbols if row.get("symbol") and row.get("instrument_key")]
+        expected_dates = tuple(dict.fromkeys(expected_session_dates or ()))
+        if expected_dates and len(expected_dates) != expected_rows_per_symbol:
+            raise ValueError("expected_session_dates must match expected_rows_per_symbol.")
         if not seed_rows:
             return {
                 "total": 0,
@@ -3833,7 +3853,13 @@ class TimescaleStore:
                     "symbols_empty": 0,
                     "expected_rows": 0,
                     "stored_rows": 0,
+                    "calendar_matched_rows": 0,
+                    "off_calendar_rows": 0,
                     "missing_rows": 0,
+                    "provider_unavailable_rows": 0,
+                    "actionable_missing_rows": 0,
+                    "symbols_provider_limited": 0,
+                    "symbols_actionable": 0,
                     "estimated_provider_calls_for_missing": 0,
                 },
             }
@@ -3854,6 +3880,17 @@ class TimescaleStore:
             params[symbol_key] = str(row["symbol"]).upper()
             params[name_key] = row.get("name")
             params[instrument_key] = str(row["instrument_key"])
+
+        expected_values_sql = []
+        for index, session_date in enumerate(expected_dates):
+            date_key = f"expected_date_{index}"
+            expected_values_sql.append(f"(:{date_key})")
+            params[date_key] = session_date
+        expected_sessions_sql = (
+            f"VALUES {', '.join(expected_values_sql)}"
+            if expected_values_sql
+            else "SELECT CAST(NULL AS date) WHERE false"
+        )
 
         ohlcv_date_filter = ""
         if start_date and end_date:
@@ -3899,6 +3936,9 @@ class TimescaleStore:
             WITH seed_symbols(symbol, name, instrument_key) AS (
                 VALUES {", ".join(values_sql)}
             ),
+            expected_sessions(session_date) AS (
+                {expected_sessions_sql}
+            ),
             latest_fetch AS (
                 SELECT DISTINCT ON (instrument_key)
                     instrument_key,
@@ -3927,7 +3967,8 @@ class TimescaleStore:
                     :exchange AS exchange,
                     min(d.date) AS first_stored_date,
                     max(d.date) AS latest_stored_date,
-                    count(d.date)::bigint AS stored_rows,
+                    count(d.date)::bigint AS raw_stored_rows,
+                    count(expected.session_date)::bigint AS matched_stored_rows,
                     ls.last_successful_run,
                     lf.last_fetch_status
                 FROM seed_symbols s
@@ -3936,6 +3977,8 @@ class TimescaleStore:
                    AND d.source = :source
                    AND d.exchange = :exchange
                    {ohlcv_date_filter}
+                LEFT JOIN expected_sessions expected
+                    ON expected.session_date = d.date
                 LEFT JOIN latest_fetch lf
                     ON lf.instrument_key = s.instrument_key
                 LEFT JOIN latest_success ls
@@ -3948,25 +3991,109 @@ class TimescaleStore:
                     ls.last_successful_run,
                     lf.last_fetch_status
             ),
+            verified_evidence_sessions AS (
+                SELECT DISTINCT
+                    evidence.instrument_key,
+                    expected.session_date
+                FROM provider_daily_history_evidence evidence
+                JOIN seed_symbols seeded
+                    ON seeded.instrument_key = evidence.instrument_key
+                JOIN expected_sessions expected
+                    ON expected.session_date BETWEEN
+                        evidence.coverage_start AND evidence.coverage_end
+                WHERE evidence.provider = :source
+                  AND evidence.exchange = :exchange
+                  AND evidence.interval = '1d'
+                  AND evidence.status = 'active'
+                  AND evidence.classification IN (
+                      'verified_complete',
+                      'verified_partial'
+                  )
+            ),
+            provider_unavailable AS (
+                SELECT
+                    evidence.instrument_key,
+                    count(*) FILTER (WHERE stored.date IS NULL)::bigint
+                        AS provider_unavailable_rows
+                FROM verified_evidence_sessions evidence
+                LEFT JOIN ohlcv_daily stored
+                    ON stored.instrument_key = evidence.instrument_key
+                   AND stored.source = :source
+                   AND stored.exchange = :exchange
+                   AND stored.date = evidence.session_date
+                GROUP BY evidence.instrument_key
+            ),
             scored AS (
                 SELECT
-                    *,
+                    base.*,
+                    raw_stored_rows AS stored_rows,
+                    CASE
+                        WHEN CAST(:expected_rows AS bigint) <= 0
+                            THEN raw_stored_rows
+                        ELSE matched_stored_rows
+                    END::bigint AS calendar_matched_rows,
+                    CASE
+                        WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0
+                        ELSE greatest(raw_stored_rows - matched_stored_rows, 0)
+                    END::bigint AS off_calendar_rows,
                     CAST(:expected_rows AS bigint) AS expected_rows,
                     greatest(
-                        CAST(:expected_rows AS bigint) - stored_rows,
+                        CAST(:expected_rows AS bigint) -
+                            CASE
+                                WHEN CAST(:expected_rows AS bigint) <= 0
+                                    THEN raw_stored_rows
+                                ELSE matched_stored_rows
+                            END,
                         0
                     )::bigint AS missing_rows,
+                    least(
+                        greatest(
+                            CAST(:expected_rows AS bigint) -
+                                CASE
+                                    WHEN CAST(:expected_rows AS bigint) <= 0
+                                        THEN raw_stored_rows
+                                    ELSE matched_stored_rows
+                                END,
+                            0
+                        ),
+                        coalesce(unavailable.provider_unavailable_rows, 0)
+                    )::bigint AS provider_unavailable_rows,
+                    greatest(
+                        greatest(
+                            CAST(:expected_rows AS bigint) -
+                                CASE
+                                    WHEN CAST(:expected_rows AS bigint) <= 0
+                                        THEN raw_stored_rows
+                                    ELSE matched_stored_rows
+                                END,
+                            0
+                        ) - coalesce(unavailable.provider_unavailable_rows, 0),
+                        0
+                    )::bigint AS actionable_missing_rows,
                     CASE
                         WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0.0
-                        ELSE least(stored_rows::float / CAST(:expected_rows AS float), 1.0)
+                        ELSE least(
+                            matched_stored_rows::float /
+                                CAST(:expected_rows AS float),
+                            1.0
+                        )
                     END AS coverage_pct,
                     CASE
-                        WHEN stored_rows = 0 THEN 'empty'
+                        WHEN (
+                            CASE
+                                WHEN CAST(:expected_rows AS bigint) <= 0
+                                    THEN raw_stored_rows
+                                ELSE matched_stored_rows
+                            END
+                        ) = 0 THEN 'empty'
                         WHEN CAST(:expected_rows AS bigint) > 0
-                            AND stored_rows >= CAST(:expected_rows AS bigint) THEN 'complete'
+                            AND matched_stored_rows >= CAST(:expected_rows AS bigint)
+                            THEN 'complete'
                         ELSE 'partial'
                     END AS coverage_status
                 FROM base
+                LEFT JOIN provider_unavailable unavailable
+                    ON unavailable.instrument_key = base.instrument_key
             ),
             filtered AS (
                 SELECT * FROM scored
@@ -3982,9 +4109,22 @@ class TimescaleStore:
                     count(*) FILTER (WHERE coverage_status = 'empty')::bigint AS symbols_empty,
                     coalesce(sum(expected_rows), 0)::bigint AS expected_rows,
                     coalesce(sum(stored_rows), 0)::bigint AS stored_rows,
+                    coalesce(sum(calendar_matched_rows), 0)::bigint
+                        AS calendar_matched_rows,
+                    coalesce(sum(off_calendar_rows), 0)::bigint AS off_calendar_rows,
                     coalesce(sum(missing_rows), 0)::bigint AS missing_rows,
+                    coalesce(sum(provider_unavailable_rows), 0)::bigint
+                        AS provider_unavailable_rows,
+                    coalesce(sum(actionable_missing_rows), 0)::bigint
+                        AS actionable_missing_rows,
                     count(*) FILTER (
-                        WHERE missing_rows > 0
+                        WHERE provider_unavailable_rows > 0
+                    )::bigint AS symbols_provider_limited,
+                    count(*) FILTER (
+                        WHERE actionable_missing_rows > 0
+                    )::bigint AS symbols_actionable,
+                    count(*) FILTER (
+                        WHERE actionable_missing_rows > 0
                     )::bigint AS estimated_provider_calls_for_missing
                 FROM filtered
             ),
@@ -4000,7 +4140,13 @@ class TimescaleStore:
                 s.symbols_empty,
                 s.expected_rows AS summary_expected_rows,
                 s.stored_rows AS summary_stored_rows,
+                s.calendar_matched_rows AS summary_calendar_matched_rows,
+                s.off_calendar_rows AS summary_off_calendar_rows,
                 s.missing_rows AS summary_missing_rows,
+                s.provider_unavailable_rows AS summary_provider_unavailable_rows,
+                s.actionable_missing_rows AS summary_actionable_missing_rows,
+                s.symbols_provider_limited,
+                s.symbols_actionable,
                 s.estimated_provider_calls_for_missing
             FROM filtered f
             CROSS JOIN total_count tc
@@ -4019,7 +4165,13 @@ class TimescaleStore:
             "symbols_empty": 0,
             "expected_rows": 0,
             "stored_rows": 0,
+            "calendar_matched_rows": 0,
+            "off_calendar_rows": 0,
             "missing_rows": 0,
+            "provider_unavailable_rows": 0,
+            "actionable_missing_rows": 0,
+            "symbols_provider_limited": 0,
+            "symbols_actionable": 0,
             "estimated_provider_calls_for_missing": 0,
         }
         total = 0
@@ -4033,7 +4185,13 @@ class TimescaleStore:
                 "symbols_empty": int(first["symbols_empty"] or 0),
                 "expected_rows": int(first["summary_expected_rows"] or 0),
                 "stored_rows": int(first["summary_stored_rows"] or 0),
+                "calendar_matched_rows": int(first["summary_calendar_matched_rows"] or 0),
+                "off_calendar_rows": int(first["summary_off_calendar_rows"] or 0),
                 "missing_rows": int(first["summary_missing_rows"] or 0),
+                "provider_unavailable_rows": int(first["summary_provider_unavailable_rows"] or 0),
+                "actionable_missing_rows": int(first["summary_actionable_missing_rows"] or 0),
+                "symbols_provider_limited": int(first["symbols_provider_limited"] or 0),
+                "symbols_actionable": int(first["symbols_actionable"] or 0),
                 "estimated_provider_calls_for_missing": int(
                     first["estimated_provider_calls_for_missing"] or 0
                 ),
@@ -4052,9 +4210,13 @@ class TimescaleStore:
                     "first_stored_date": row.get("first_stored_date"),
                     "latest_stored_date": row.get("latest_stored_date"),
                     "stored_rows": int(row["stored_rows"] or 0),
+                    "calendar_matched_rows": int(row["calendar_matched_rows"] or 0),
+                    "off_calendar_rows": int(row["off_calendar_rows"] or 0),
                     "expected_rows": int(row["expected_rows"] or 0),
                     "coverage_pct": float(row["coverage_pct"] or 0.0),
                     "missing_rows": int(row["missing_rows"] or 0),
+                    "provider_unavailable_rows": int(row["provider_unavailable_rows"] or 0),
+                    "actionable_missing_rows": int(row["actionable_missing_rows"] or 0),
                     "coverage_status": row["coverage_status"],
                     "last_successful_run": row.get("last_successful_run"),
                     "last_fetch_status": row.get("last_fetch_status"),
