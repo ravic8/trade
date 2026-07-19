@@ -309,6 +309,21 @@ def test_worker_acknowledges_success_and_schedules_retryable_failure(monkeypatch
     assert result.metrics["retry_wait"] == 1
     assert result.metrics["ohlcv_rows_written"] == 42
     assert store.finished["items_processed"] == 2
+    assert store.finished["run_metadata_patch"] == {
+        "exchange_results": [
+            {
+                "exchange": "US",
+                "items_requested": 2,
+                "items_processed": 2,
+                "items_succeeded": 1,
+                "items_failed": 1,
+                "items_retry_wait": 1,
+                "items_terminal": 0,
+                "items_cancelled": 0,
+                "lost_claims": 0,
+            }
+        ]
+    }
 
 
 def test_worker_does_not_claim_when_daily_execution_flag_is_disabled(monkeypatch) -> None:
@@ -325,6 +340,50 @@ def test_worker_does_not_claim_when_daily_execution_flag_is_disabled(monkeypatch
     assert result.metrics["execution_enabled"] is False
     assert result.metrics["claimed"] == 0
     assert store.transitions == []
+
+
+def test_worker_records_exchange_scoped_results_for_multi_exchange_run(monkeypatch) -> None:
+    nse_claim = _claimed("nse-success", "RELIANCE.NS")
+    nse_claim["exchange"] = "NSE"
+    us_claim = _claimed("us-retry", "AAPL")
+    store = _MemoryQueueStore([nse_claim, us_claim])
+    settings = Settings(
+        _env_file=None,
+        yfinance_daily_enabled=True,
+        yfinance_work_heartbeat_seconds=5,
+        yfinance_work_stale_minutes=1,
+    )
+    monkeypatch.setattr(yfinance_work_queue, "get_settings", lambda: settings)
+    monkeypatch.setattr(yfinance_work_queue, "TimescaleStore", lambda _: store)
+
+    def execute(**kwargs):
+        item = kwargs["work_items"][0]
+        if kwargs["exchange"] == "NSE":
+            return ([{"work_item_id": item["work_item_id"], "status": "success"}], 1, 0)
+        return (
+            [
+                {
+                    "work_item_id": item["work_item_id"],
+                    "status": "timeout",
+                    "retryable": True,
+                    "error_message": "timed out",
+                }
+            ],
+            0,
+            0,
+        )
+
+    monkeypatch.setattr(yfinance_work_queue, "_execute_claimed_exchange_work", execute)
+
+    yfinance_work_queue.run_yfinance_daily_work_queue(worker_id="multi", at=NOW)
+
+    results = {
+        row["exchange"]: row for row in store.finished["run_metadata_patch"]["exchange_results"]
+    }
+    assert results["NSE"]["items_succeeded"] == 1
+    assert results["NSE"]["items_failed"] == 0
+    assert results["US"]["items_succeeded"] == 0
+    assert results["US"]["items_failed"] == 1
 
 
 def test_executor_outcomes_preserve_work_item_identity() -> None:

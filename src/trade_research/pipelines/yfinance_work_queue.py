@@ -55,22 +55,15 @@ def run_yfinance_daily_work_planner(
     resolved_exchanges = tuple(exchanges) if exchanges is not None else enabled_exchanges
     if not resolved_exchanges:
         raise ValueError(
-            "No yfinance daily exchanges are enabled. Enable an exchange-specific "
-            "feature flag."
+            "No yfinance daily exchanges are enabled. Enable an exchange-specific feature flag."
         )
     if instrument_limit_per_exchange is not None and instrument_limit_per_exchange < 1:
         raise ValueError("instrument_limit_per_exchange must be positive when provided.")
     disabled = sorted(
-        {
-            value.upper()
-            for value in resolved_exchanges
-            if value.upper() not in enabled_exchanges
-        }
+        {value.upper() for value in resolved_exchanges if value.upper() not in enabled_exchanges}
     )
     if disabled and not allow_disabled_exchanges:
-        raise ValueError(
-            "Yfinance daily exchange flags are disabled for: " + ", ".join(disabled)
-        )
+        raise ValueError("Yfinance daily exchange flags are disabled for: " + ", ".join(disabled))
     db = TimescaleStore(settings.database_url)
     db.initialize()
     observed_at = _as_utc(at or datetime.now(UTC))
@@ -136,10 +129,7 @@ def run_yfinance_daily_work_planner(
         covered_windows: dict[str, list[tuple[date, date]]] = {}
         if settings.yfinance_provider_history_evidence_enabled:
             selected_keys = [
-                str(
-                    row.get("provider_instrument_key")
-                    or f"YF|{row['provider_symbol']}"
-                )
+                str(row.get("provider_instrument_key") or f"YF|{row['provider_symbol']}")
                 for row in instrument_rows
             ]
             evidence_by_key = db.provider_daily_history_evidence(
@@ -151,8 +141,7 @@ def run_yfinance_daily_work_planner(
             retained_rows: list[dict[str, Any]] = []
             for row in instrument_rows:
                 instrument_key = str(
-                    row.get("provider_instrument_key")
-                    or f"YF|{row['provider_symbol']}"
+                    row.get("provider_instrument_key") or f"YF|{row['provider_symbol']}"
                 )
                 evidence = evidence_by_key.get(instrument_key, [])
                 if provider_history_is_quarantined(evidence):
@@ -191,10 +180,7 @@ def run_yfinance_daily_work_planner(
                 provider_instrument_key=row.get("provider_instrument_key"),
                 provider_history_start_date=verified_provider_history_start(
                     evidence_by_key.get(
-                        str(
-                            row.get("provider_instrument_key")
-                            or f"YF|{row['provider_symbol']}"
-                        ),
+                        str(row.get("provider_instrument_key") or f"YF|{row['provider_symbol']}"),
                         [],
                     )
                 ),
@@ -271,9 +257,7 @@ def run_yfinance_daily_work_planner(
             "work_generated": exchange_generated,
             "work_inserted": exchange_inserted,
             "work_cancelled_before_listing": exchange_cancelled_before_listing,
-            "work_cancelled_by_provider_history": (
-                exchange_cancelled_by_provider_history
-            ),
+            "work_cancelled_by_provider_history": (exchange_cancelled_by_provider_history),
             "provider_history_evidence_enabled": (
                 settings.yfinance_provider_history_evidence_enabled
             ),
@@ -281,9 +265,7 @@ def run_yfinance_daily_work_planner(
                 len(value) for value in covered_windows.values()
             ),
             "provider_quarantined_symbols": quarantined_symbols,
-            "provider_quarantined_work_cancelled": (
-                exchange_cancelled_quarantined_work
-            ),
+            "provider_quarantined_work_cancelled": (exchange_cancelled_quarantined_work),
         }
 
     return PipelineRunResult(
@@ -330,9 +312,7 @@ def run_yfinance_tsx_canary_planner(
             "TSX canary symbol limit exceeds configured maximum: "
             f"{symbol_limit}>{settings.yfinance_tsx_canary_max_symbols}"
         )
-    if enqueue and not (
-        settings.yfinance_tsx_canary_enabled or settings.yfinance_full_tsx_enabled
-    ):
+    if enqueue and not (settings.yfinance_tsx_canary_enabled or settings.yfinance_full_tsx_enabled):
         raise ValueError(
             "TSX canary enqueue is disabled. Enable YFINANCE_TSX_CANARY_ENABLED "
             "for bounded canaries; do not enable the full TSX flag yet."
@@ -372,9 +352,7 @@ def run_yfinance_nse_canary_planner(
             "NSE canary symbol limit exceeds configured maximum: "
             f"{symbol_limit}>{settings.yfinance_nse_canary_max_symbols}"
         )
-    if enqueue and not (
-        settings.yfinance_nse_canary_enabled or settings.yfinance_nse_enabled
-    ):
+    if enqueue and not (settings.yfinance_nse_canary_enabled or settings.yfinance_nse_enabled):
         raise ValueError(
             "NSE canary enqueue is disabled. Enable YFINANCE_NSE_CANARY_ENABLED "
             "for bounded canaries; do not enable the full NSE flag yet."
@@ -462,6 +440,48 @@ def run_yfinance_daily_work_queue(
             "claimed_work_item_ids": [row["work_item_id"] for row in claimed],
         },
     )
+    exchange_results: dict[str, dict[str, int | str]] = {}
+    item_exchanges: dict[str, str] = {}
+    for item in claimed:
+        item_exchange = str(item["exchange"]).upper()
+        item_exchanges[str(item["work_item_id"])] = item_exchange
+        result = exchange_results.setdefault(
+            item_exchange,
+            {
+                "exchange": item_exchange,
+                "items_requested": 0,
+                "items_processed": 0,
+                "items_succeeded": 0,
+                "items_failed": 0,
+                "items_retry_wait": 0,
+                "items_terminal": 0,
+                "items_cancelled": 0,
+                "lost_claims": 0,
+            },
+        )
+        result["items_requested"] = int(result["items_requested"]) + 1
+
+    def record_exchange_result(work_item_id: str, status: str) -> None:
+        item_exchange = item_exchanges[work_item_id]
+        result = exchange_results[item_exchange]
+        result["items_processed"] = int(result["items_processed"]) + 1
+        if status == "succeeded":
+            result["items_succeeded"] = int(result["items_succeeded"]) + 1
+        elif status == "cancelled":
+            result["items_cancelled"] = int(result["items_cancelled"]) + 1
+        elif status == "retry_wait":
+            result["items_retry_wait"] = int(result["items_retry_wait"]) + 1
+            result["items_failed"] = int(result["items_failed"]) + 1
+        elif status == "terminal":
+            result["items_terminal"] = int(result["items_terminal"]) + 1
+            result["items_failed"] = int(result["items_failed"]) + 1
+
+    def record_lost_claim(work_item_id: str) -> None:
+        item_exchange = item_exchanges[work_item_id]
+        result = exchange_results[item_exchange]
+        result["lost_claims"] = int(result["lost_claims"]) + 1
+        result["items_failed"] = int(result["items_failed"]) + 1
+
     succeeded = retry_wait = terminal = cancelled = lost_claims = rows_written = 0
     adjustment_rows = 0
     heartbeat = _WorkHeartbeat(
@@ -482,15 +502,15 @@ def run_yfinance_daily_work_queue(
                 worker_id=resolved_worker_id,
                 status="cancelled",
                 error_code="outside_listing_window",
-                error_message=(
-                    "Work window ends before the active instrument listing boundary."
-                ),
+                error_message=("Work window ends before the active instrument listing boundary."),
                 run_id=str(run_id),
             )
             if transitioned is None:
                 lost_claims += 1
+                record_lost_claim(str(item["work_item_id"]))
             else:
                 cancelled += int(transitioned["status"] == "cancelled")
+                record_exchange_result(str(item["work_item_id"]), str(transitioned["status"]))
 
         for exchange, exchange_work in _group_by_exchange(executable).items():
             outcomes, written, adjustments = _execute_claimed_exchange_work(
@@ -563,8 +583,10 @@ def run_yfinance_daily_work_queue(
                 )
                 if transitioned is None:
                     lost_claims += 1
+                    record_lost_claim(work_item_id)
                     continue
                 resolved = str(transitioned["status"])
+                record_exchange_result(work_item_id, resolved)
                 if hasattr(db, "update_symbol_provider_status"):
                     db.update_symbol_provider_status(
                         str(item["canonical_instrument_id"]),
@@ -586,8 +608,10 @@ def run_yfinance_daily_work_queue(
                 run_id=str(run_id),
             )
             if transitioned:
-                retry_wait += int(transitioned["status"] == "retry_wait")
-                terminal += int(transitioned["status"] == "terminal")
+                resolved = str(transitioned["status"])
+                retry_wait += int(resolved == "retry_wait")
+                terminal += int(resolved == "terminal")
+                record_exchange_result(str(item["work_item_id"]), resolved)
     finally:
         heartbeat.stop()
 
@@ -601,6 +625,9 @@ def run_yfinance_daily_work_queue(
         items_processed=len(claimed),
         items_succeeded=succeeded,
         items_failed=retry_wait + terminal + lost_claims,
+        run_metadata_patch={
+            "exchange_results": list(exchange_results.values()),
+        },
     )
     return PipelineRunResult(
         name="yfinance_daily_work_queue",
@@ -727,8 +754,7 @@ def _record_successful_provider_history_evidence(
         item
         for item in work_items
         if str(item["work_item_id"]) in successful_ids
-        and item.get("work_type")
-        in {"initial_backfill", "new_symbol_backfill", "gap_repair"}
+        and item.get("work_type") in {"initial_backfill", "new_symbol_backfill", "gap_repair"}
     ]
     if not successful_work:
         return 0
@@ -737,14 +763,10 @@ def _record_successful_provider_history_evidence(
     sessions = [
         row["session_date"]
         for row in db.exchange_sessions(exchange, minimum_start, maximum_end)
-        if row["is_trading_day"]
-        and str(row["validation_status"]).startswith("valid")
+        if row["is_trading_day"] and str(row["validation_status"]).startswith("valid")
     ]
     instrument_keys = [
-        str(
-            item.get("provider_instrument_key")
-            or f"YF|{item['provider_symbol']}"
-        )
+        str(item.get("provider_instrument_key") or f"YF|{item['provider_symbol']}")
         for item in successful_work
     ]
     observed_by_key = db.daily_ohlcv_dates_by_instrument(
@@ -759,20 +781,15 @@ def _record_successful_provider_history_evidence(
     evidence_rows: list[dict[str, Any]] = []
     for work_item in successful_work:
         instrument_key = str(
-            work_item.get("provider_instrument_key")
-            or f"YF|{work_item['provider_symbol']}"
+            work_item.get("provider_instrument_key") or f"YF|{work_item['provider_symbol']}"
         )
         evidence = build_provider_daily_history_evidence(
             work_item,
             expected_sessions=expected_sessions_for_work_item(work_item, sessions),
             observed_dates=sorted(observed_by_key.get(instrument_key, set())),
             run_id=run_id,
-            sparse_minimum_expected_rows=(
-                settings.yfinance_sparse_history_minimum_expected_rows
-            ),
-            sparse_maximum_observed_rows=(
-                settings.yfinance_sparse_history_maximum_observed_rows
-            ),
+            sparse_minimum_expected_rows=(settings.yfinance_sparse_history_minimum_expected_rows),
+            sparse_maximum_observed_rows=(settings.yfinance_sparse_history_maximum_observed_rows),
         )
         if evidence is not None:
             evidence_rows.append(evidence.as_row())

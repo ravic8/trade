@@ -18,13 +18,16 @@ import {
   TableProperties,
   Users,
   Workflow,
+  X,
   Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
   useDataAvailability,
+  useDataInstrumentSearch,
+  useDataPipelineRunDetail,
   useOperationsLifecycleEvents,
   useOperationsOverview,
   useOperationsRateLimits,
@@ -36,6 +39,9 @@ import type {
   DataAvailabilityParams,
   DataAvailabilityResponse,
   DataAvailabilityRow,
+  DataInstrumentSearchRow,
+  DataPipelineRunExchangeResult,
+  DataPipelineRunDetail,
   DataPipelineRunSummary,
   OperationsAdaptiveRateStateRow,
   OperationsExchange,
@@ -87,6 +93,15 @@ const markets: MarketOption[] = [
 ];
 
 const pageSize = 50;
+
+function useDebouncedValue<T>(value: T, delayMs = 200): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [delayMs, value]);
+  return debounced;
+}
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -145,7 +160,11 @@ function statusClass(status: string): string {
   ) {
     return "warning";
   }
-  if (normalized === "cancelled" || normalized === "stopped") return "neutral";
+  if (
+    normalized === "cancelled" ||
+    normalized === "stopped" ||
+    normalized === "shared_run"
+  ) return "neutral";
   return "completed";
 }
 
@@ -153,6 +172,27 @@ function humanize(value: string): string {
   return value
     .replaceAll("_", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function lifecycleEventLabel(eventType: string): string {
+  return eventType === "added" ? "First Observed" : humanize(eventType);
+}
+
+function runResultForExchange(
+  run: DataPipelineRunSummary,
+  exchange: OperationsExchange,
+): DataPipelineRunExchangeResult | null {
+  return run.exchange_results.find((result) => result.exchange === exchange) ?? null;
+}
+
+function runStatusForExchange(
+  run: DataPipelineRunSummary,
+  exchange: OperationsExchange,
+): string {
+  const result = runResultForExchange(run, exchange);
+  if (result) return result.items_failed > 0 ? "completed_with_failures" : "completed";
+  if (run.exchange === exchange) return run.status;
+  return run.exchange === "MULTI" ? "shared_run" : run.status;
 }
 
 export function DataPipelinePage() {
@@ -171,9 +211,13 @@ export function DataPipelinePage() {
   const [runStatus, setRunStatus] = useState("");
   const [runStart, setRunStart] = useState(daysAgoIso(30));
   const [runEnd, setRunEnd] = useState(todayIso());
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [lifecycleType, setLifecycleType] = useState("");
   const [lifecycleSymbol, setLifecycleSymbol] = useState("");
   const [lifecycleOffset, setLifecycleOffset] = useState(0);
+  const debouncedCoverageQuery = useDebouncedValue(coverageQuery);
+  const debouncedWorkSymbol = useDebouncedValue(workSymbol);
+  const debouncedLifecycleSymbol = useDebouncedValue(lifecycleSymbol);
 
   const market = markets.find((item) => item.exchange === exchange) ?? markets[0];
   const overviewQuery = useOperationsOverview(exchange);
@@ -186,12 +230,12 @@ export function DataPipelinePage() {
       interval: "1d",
       start_date: coverageStart,
       end_date: coverageEnd,
-      query: coverageQuery.trim() || undefined,
+      query: debouncedCoverageQuery.trim() || undefined,
       coverage_status: coverageStatus,
       limit: 100,
       sort: "-coverage_pct",
     }),
-    [coverageEnd, coverageQuery, coverageStart, coverageStatus, exchange],
+    [coverageEnd, coverageStart, coverageStatus, debouncedCoverageQuery, exchange],
   );
   const availabilityQuery = useDataAvailability(
     availabilityParams,
@@ -203,7 +247,7 @@ export function DataPipelinePage() {
       exchange,
       status: workStatus || undefined,
       work_type: workType || undefined,
-      symbol: workSymbol.trim() || undefined,
+      symbol: debouncedWorkSymbol.trim() || undefined,
       limit: pageSize,
       offset: workOffset,
     },
@@ -224,29 +268,31 @@ export function DataPipelinePage() {
     {
       exchange,
       event_type: lifecycleType || undefined,
-      symbol: lifecycleSymbol.trim() || undefined,
+      symbol: debouncedLifecycleSymbol.trim() || undefined,
       limit: pageSize,
       offset: lifecycleOffset,
     },
     activeTab === "lifecycle",
   );
+  const runDetailQuery = useDataPipelineRunDetail(selectedRunId, exchange);
 
   const overview = overviewQuery.data;
-  const freshness = overview?.freshness[0];
   const rate = rateQuery.data?.[0] ?? overview?.adaptive_rates[0];
   const openWork = sumQueue(overview?.queue ?? [], ["queued", "running", "retry_wait"]);
   const retryWork = sumQueue(overview?.queue ?? [], ["retry_wait"]);
   const recentFailures = (overview?.recent_runs ?? []).filter(
-    (run) => statusClass(run.status) === "failed",
+    (run) => statusClass(runStatusForExchange(run, exchange)) === "failed",
   ).length;
+  const terminalWork = sumQueue(overview?.queue ?? [], ["terminal", "failed"]);
   const isHealthy =
     !overviewQuery.error &&
     rate?.circuit_state === "closed" &&
-    recentFailures === 0 &&
-    (freshness?.suspicious_rows ?? 0) === 0;
+    openWork === 0 &&
+    terminalWork === 0;
 
   function selectExchange(nextExchange: OperationsExchange) {
     setExchange(nextExchange);
+    setSelectedRunId(null);
     setWorkOffset(0);
     setLifecycleOffset(0);
   }
@@ -333,6 +379,7 @@ export function DataPipelinePage() {
 
       {activeTab === "work" ? (
         <WorkQueueView
+          exchange={exchange}
           groups={overview?.queue ?? []}
           rows={workItemsQuery.data?.rows ?? []}
           total={workItemsQuery.data?.total ?? 0}
@@ -362,6 +409,7 @@ export function DataPipelinePage() {
 
       {activeTab === "runs" ? (
         <RunsView
+          exchange={exchange}
           runs={runsQuery.data ?? []}
           isLoading={runsQuery.isLoading}
           isFetching={runsQuery.isFetching}
@@ -373,11 +421,23 @@ export function DataPipelinePage() {
           onStartDateChange={setRunStart}
           onEndDateChange={setRunEnd}
           onRefresh={() => void runsQuery.refetch()}
+          onSelectRun={setSelectedRunId}
+        />
+      ) : null}
+
+      {selectedRunId ? (
+        <RunDetailDrawer
+          exchange={exchange}
+          detail={runDetailQuery.data ?? null}
+          isLoading={runDetailQuery.isLoading}
+          error={runDetailQuery.error}
+          onClose={() => setSelectedRunId(null)}
         />
       ) : null}
 
       {activeTab === "lifecycle" ? (
         <LifecycleView
+          exchange={exchange}
           rows={lifecycleQuery.data?.rows ?? []}
           total={lifecycleQuery.data?.total ?? 0}
           offset={lifecycleOffset}
@@ -541,7 +601,7 @@ function OverviewView({
       </div>
 
       <div className="operations-overview-grid">
-        <RecentRuns runs={overview?.recent_runs ?? []} onOpen={() => onSelectTab("runs")} />
+        <RecentRuns exchange={market.exchange} runs={overview?.recent_runs ?? []} onOpen={() => onSelectTab("runs")} />
         <RecentLifecycle rows={overview?.recent_lifecycle_events ?? []} onOpen={() => onSelectTab("lifecycle")} />
       </div>
     </>
@@ -646,17 +706,23 @@ function ScheduleSnapshot({ schedules }: { schedules: PipelineScheduleStatusRow[
   );
 }
 
-function RecentRuns({ runs, onOpen }: { runs: DataPipelineRunSummary[]; onOpen: () => void }) {
+function RecentRuns({ exchange, runs, onOpen }: { exchange: OperationsExchange; runs: DataPipelineRunSummary[]; onOpen: () => void }) {
   return (
     <section className="data-card">
       <CardHeader title="Recent Runs" subtitle="Latest exchange-matched ingestion activity" onOpen={onOpen} />
       <div className="operations-stack-list">
-        {runs.slice(0, 8).map((run) => (
-          <article key={run.id}>
-            <div><strong>{humanize(run.name)}</strong><span>{formatDateTime(run.started_at)} · {formatNumber(run.items_succeeded)} succeeded</span></div>
-            <span className={`status-pill ${statusClass(run.status)}`}>{humanize(run.status)}</span>
-          </article>
-        ))}
+        {runs.slice(0, 8).map((run) => {
+          const result = runResultForExchange(run, exchange);
+          const status = runStatusForExchange(run, exchange);
+          const succeeded = result?.items_succeeded ?? run.items_succeeded;
+          const failed = result?.items_failed ?? run.items_failed;
+          return (
+            <article key={run.id}>
+              <div><strong>{humanize(run.name)}</strong><span>{formatDateTime(run.started_at)} · {formatNumber(succeeded)} succeeded · {formatNumber(failed)} failed</span></div>
+              <span className={`status-pill ${statusClass(status)}`}>{humanize(status)}</span>
+            </article>
+          );
+        })}
         {!runs.length ? <EmptyState label="No recent runs matched this exchange." /> : null}
       </div>
     </section>
@@ -670,8 +736,8 @@ function RecentLifecycle({ rows, onOpen }: { rows: OperationsLifecycleEventRow[]
       <div className="operations-stack-list">
         {rows.slice(0, 8).map((row) => (
           <article key={row.event_id}>
-            <div><strong>{row.symbol ?? row.canonical_instrument_id}</strong><span>{formatDateTime(row.created_at)} · {humanize(row.event_type)}</span></div>
-            <span className={`status-pill ${statusClass(row.event_type)}`}>{humanize(row.event_type)}</span>
+            <div><strong>{row.symbol ?? row.canonical_instrument_id}</strong><span>{formatDateTime(row.created_at)} · {lifecycleEventLabel(row.event_type)}</span></div>
+            <span className={`status-pill ${statusClass(row.event_type)}`}>{lifecycleEventLabel(row.event_type)}</span>
           </article>
         ))}
         {!rows.length ? <EmptyState label="No lifecycle events were recorded." /> : null}
@@ -721,7 +787,10 @@ function CoverageView({
   onRefresh: () => void;
 }) {
   const summary = availability?.summary;
-  const coverage = summary && summary.expected_rows > 0 ? summary.stored_rows / summary.expected_rows : 0;
+  const coverage =
+    !error && summary && summary.expected_rows > 0
+      ? summary.stored_rows / summary.expected_rows
+      : null;
   return (
     <>
       <div className="metric-grid data-metric-grid">
@@ -736,7 +805,13 @@ function CoverageView({
           <button className="icon-button" type="button" onClick={onRefresh}><RefreshCw size={16} />{isFetching && !isLoading ? "Refreshing" : "Refresh"}</button>
         </div>
         <div className="data-filter-row operations-coverage-filters">
-          <label className="data-search-field">Symbol or name<Search size={16} /><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder={`Search ${market.label}`} /></label>
+          <SymbolAutocomplete
+            label="Symbol or name"
+            exchange={market.exchange}
+            value={query}
+            onChange={onQueryChange}
+            placeholder={`Search ${market.label}`}
+          />
           <label>Status<select value={status ?? ""} onChange={(event) => onStatusChange(event.target.value as DataAvailabilityParams["coverage_status"])}><option value="">All</option><option value="complete">Complete</option><option value="partial">Partial</option><option value="empty">Empty</option></select></label>
           <label>Start<input type="date" value={startDate} onChange={(event) => onStartDateChange(event.target.value)} /></label>
           <label>End<input type="date" value={endDate} onChange={(event) => onEndDateChange(event.target.value)} /></label>
@@ -762,6 +837,7 @@ function CoverageTable({ rows }: { rows: DataAvailabilityRow[] }) {
 }
 
 function WorkQueueView({
+  exchange,
   groups,
   rows,
   total,
@@ -778,6 +854,7 @@ function WorkQueueView({
   onOffsetChange,
   onRefresh,
 }: {
+  exchange: OperationsExchange;
   groups: OperationsQueueGroup[];
   rows: OperationsWorkItemRow[];
   total: number;
@@ -809,7 +886,13 @@ function WorkQueueView({
       <section className="data-card">
         <div className="data-card-header"><div><h2>Durable Work Items</h2><p>{formatNumber(total)} matching records · read-only</p></div><button className="icon-button" type="button" onClick={onRefresh}><RefreshCw size={16} />{isFetching && !isLoading ? "Refreshing" : "Refresh"}</button></div>
         <div className="data-filter-row operations-work-filters">
-          <label className="data-search-field">Symbol<Search size={16} /><input value={symbol} onChange={(event) => onSymbolChange(event.target.value)} placeholder="AAPL, RELIANCE, RY.TO" /></label>
+          <SymbolAutocomplete
+            label="Symbol"
+            exchange={exchange}
+            value={symbol}
+            onChange={onSymbolChange}
+            placeholder="AAPL, RELIANCE, RY.TO"
+          />
           <label>Status<select value={status} onChange={(event) => onStatusChange(event.target.value)}><option value="">All</option><option value="queued">Queued</option><option value="running">Running</option><option value="retry_wait">Retry wait</option><option value="succeeded">Succeeded</option><option value="cancelled">Cancelled</option><option value="terminal">Terminal</option></select></label>
           <label>Work type<select value={workType} onChange={(event) => onWorkTypeChange(event.target.value)}><option value="">All</option><option value="daily_incremental">Daily incremental</option><option value="initial_backfill">Initial backfill</option><option value="new_symbol_backfill">New symbol backfill</option><option value="gap_repair">Gap repair</option></select></label>
         </div>
@@ -835,6 +918,7 @@ function WorkItemsTable({ rows }: { rows: OperationsWorkItemRow[] }) {
 }
 
 function RunsView({
+  exchange,
   runs,
   isLoading,
   isFetching,
@@ -846,7 +930,9 @@ function RunsView({
   onStartDateChange,
   onEndDateChange,
   onRefresh,
+  onSelectRun,
 }: {
+  exchange: OperationsExchange;
   runs: DataPipelineRunSummary[];
   isLoading: boolean;
   isFetching: boolean;
@@ -858,20 +944,31 @@ function RunsView({
   onStartDateChange: (value: string) => void;
   onEndDateChange: (value: string) => void;
   onRefresh: () => void;
+  onSelectRun: (runId: string) => void;
 }) {
-  const succeeded = runs.filter((run) => statusClass(run.status) === "completed").length;
-  const failed = runs.filter((run) => statusClass(run.status) === "failed").length;
-  const processed = runs.reduce((total, run) => total + run.items_processed, 0);
+  const statuses = runs.map((run) => runStatusForExchange(run, exchange));
+  const attributableStatuses = statuses.filter((status) => status !== "shared_run");
+  const succeeded = attributableStatuses.filter(
+    (status) => statusClass(status) === "completed",
+  ).length;
+  const failed = attributableStatuses.filter(
+    (status) => statusClass(status) === "failed",
+  ).length;
+  const processed = runs.reduce((total, run) => {
+    const result = runResultForExchange(run, exchange);
+    if (result) return total + result.items_processed;
+    return run.exchange === exchange ? total + run.items_processed : total;
+  }, 0);
   return (
     <>
       <div className="metric-grid data-metric-grid">
-        <MetricCard icon={History} label="Visible Runs" value={formatNumber(runs.length)} detail={`${formatNumber(failed)} failed`} />
-        <MetricCard icon={TableProperties} label="Items Processed" value={formatNumber(processed)} detail="Across visible runs" />
-        <MetricCard icon={ShieldCheck} label="Success Rate" value={formatPercent(runs.length ? succeeded / runs.length : 0)} detail="Visible run window" />
+        <MetricCard icon={History} label="Visible Runs" value={formatNumber(runs.length)} detail={`${formatNumber(failed)} ${exchange} failures`} />
+        <MetricCard icon={TableProperties} label="Items Processed" value={formatNumber(processed)} detail={`${exchange}-attributed items`} />
+        <MetricCard icon={ShieldCheck} label="Success Rate" value={formatPercent(attributableStatuses.length ? succeeded / attributableStatuses.length : null)} detail={`${formatNumber(attributableStatuses.length)} attributable runs`} />
         <MetricCard icon={Clock3} label="Average Time" value={`${formatNumber(averageDuration(runs))}s`} detail="Finished runs" />
       </div>
       <section className="data-card">
-        <div className="data-card-header"><div><h2>Ingestion Runs</h2><p>Exchange-aware history includes shared MULTI workers</p></div><button className="icon-button" type="button" onClick={onRefresh}><RefreshCw size={16} />{isFetching && !isLoading ? "Refreshing" : "Refresh"}</button></div>
+        <div className="data-card-header"><div><h2>Ingestion Runs</h2><p>{exchange}-scoped outcomes; legacy shared runs are explicitly marked</p></div><button className="icon-button" type="button" onClick={onRefresh}><RefreshCw size={16} />{isFetching && !isLoading ? "Refreshing" : "Refresh"}</button></div>
         <div className="data-filter-row operations-run-filters">
           <label>Status<select value={status} onChange={(event) => onStatusChange(event.target.value)}><option value="">All</option><option value="completed">Completed</option><option value="completed_with_failures">With failures</option><option value="running">Running</option><option value="failed">Failed</option></select></label>
           <label>Start<input type="date" value={startDate} onChange={(event) => onStartDateChange(event.target.value)} /></label>
@@ -880,24 +977,139 @@ function RunsView({
         {isLoading ? <LoadingState /> : null}
         {error ? <p className="form-error operations-form-error">Runs could not load: {error.message}</p> : null}
         {!isLoading && !error && !runs.length ? <EmptyState label="No ingestion runs matched this exchange and window." /> : null}
-        {runs.length ? <RunsTable runs={runs} /> : null}
+        {runs.length ? <RunsTable exchange={exchange} runs={runs} onSelectRun={onSelectRun} /> : null}
       </section>
     </>
   );
 }
 
-function RunsTable({ runs }: { runs: DataPipelineRunSummary[] }) {
+function RunsTable({ exchange, runs, onSelectRun }: { exchange: OperationsExchange; runs: DataPipelineRunSummary[]; onSelectRun: (runId: string) => void }) {
   return (
     <div className="operations-table-wrap">
       <table className="operations-table">
-        <thead><tr><th>Run</th><th>Status</th><th>Exchange scope</th><th>Processed</th><th>Failed</th><th>Duration</th><th>Started</th></tr></thead>
-        <tbody>{runs.map((run) => <tr key={run.id}><td><strong>{humanize(run.name)}</strong><small>{run.id.slice(0, 8)} · {String(run.run_metadata.trigger ?? "pipeline")}</small></td><td><span className={`status-pill ${statusClass(run.status)}`}>{humanize(run.status)}</span></td><td>{run.exchange}<small>{run.work_item_exchanges.length ? run.work_item_exchanges.join(", ") : "No claimed exchange"}</small></td><td>{formatNumber(run.items_processed)}</td><td>{formatNumber(run.items_failed)}</td><td>{run.duration_seconds === null ? "Running" : `${run.duration_seconds}s`}</td><td>{formatDateTime(run.started_at)}</td></tr>)}</tbody>
+        <thead><tr><th>Run</th><th>Status</th><th>Exchange scope</th><th>Processed</th><th>Succeeded</th><th>Failed</th><th>Duration</th><th>Started</th><th>Details</th></tr></thead>
+        <tbody>{runs.map((run) => {
+          const result = runResultForExchange(run, exchange);
+          const isDirect = run.exchange === exchange;
+          const status = runStatusForExchange(run, exchange);
+          const processed = result?.items_processed ?? (isDirect ? run.items_processed : null);
+          const runSucceeded = result?.items_succeeded ?? (isDirect ? run.items_succeeded : null);
+          const runFailed = result?.items_failed ?? (isDirect ? run.items_failed : null);
+          return <tr key={run.id}><td><strong>{humanize(run.name)}</strong><small>{run.id.slice(0, 8)} · {String(run.run_metadata.trigger ?? "pipeline")}</small></td><td><span className={`status-pill ${statusClass(status)}`}>{humanize(status)}</span></td><td>{result ? exchange : run.exchange}<small>{result ? `${exchange} outcome` : run.exchange === "MULTI" ? `Global: ${run.work_item_exchanges.join(", ")}` : exchange}</small></td><td>{formatNumber(processed)}</td><td>{formatNumber(runSucceeded)}</td><td>{formatNumber(runFailed)}</td><td>{run.duration_seconds === null ? "Running" : `${run.duration_seconds}s`}</td><td>{formatDateTime(run.started_at)}</td><td><button className="operations-text-button" type="button" onClick={() => onSelectRun(run.id)}>Inspect <ArrowRight size={14} /></button></td></tr>;
+        })}</tbody>
       </table>
     </div>
   );
 }
 
+function RunDetailDrawer({
+  exchange,
+  detail,
+  isLoading,
+  error,
+  onClose,
+}: {
+  exchange: OperationsExchange;
+  detail: DataPipelineRunDetail | null;
+  isLoading: boolean;
+  error: Error | null;
+  onClose: () => void;
+}) {
+  const run = detail?.run;
+  const result = run ? runResultForExchange(run, exchange) : null;
+  const workItems = detail?.work_items ?? [];
+  const unresolved = workItems.filter((item) =>
+    ["queued", "running", "retry_wait", "terminal", "failed"].includes(item.status),
+  );
+  const errorGroups = (() => {
+    const groups = new Map<string, { message: string; code: string; statusCode: number | null; symbols: Set<string>; occurrences: number }>();
+    for (const item of workItems) {
+      if (!item.last_error_code && !item.last_error_message) continue;
+      const code = item.last_error_code ?? "work_item_error";
+      const message = item.last_error_message ?? "No work-item error detail was recorded.";
+      const key = `${code}|${item.last_status_code ?? ""}|${message}`;
+      const group = groups.get(key) ?? { message, code, statusCode: item.last_status_code, symbols: new Set<string>(), occurrences: 0 };
+      group.symbols.add(item.provider_symbol);
+      group.occurrences += 1;
+      groups.set(key, group);
+    }
+    for (const request of detail?.provider_requests ?? []) {
+      if (!request.error_message && !request.rate_limited && statusClass(request.status) !== "failed") continue;
+      const code = request.rate_limited ? "rate_limited" : request.status || "provider_error";
+      const message = request.error_message ?? (request.rate_limited ? "Yahoo rate limited this request." : `Provider request ended with status ${request.status}.`);
+      const key = `${code}|${request.status_code ?? ""}|${message}`;
+      const group = groups.get(key) ?? { message, code, statusCode: request.status_code, symbols: new Set<string>(), occurrences: 0 };
+      if (request.symbol) group.symbols.add(request.symbol);
+      group.occurrences += 1;
+      groups.set(key, group);
+    }
+    return [...groups.values()].sort((left, right) => right.occurrences - left.occurrences);
+  })();
+  const wasRecovered = Boolean(run?.items_failed) && unresolved.length === 0 && workItems.length > 0;
+
+  return (
+    <div className="operations-drawer-backdrop" role="presentation" onMouseDown={onClose}>
+      <aside
+        className="operations-run-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pipeline run details"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="operations-drawer-header">
+          <div>
+            <span className="operations-eyebrow">Run inspection</span>
+            <h2>{run ? humanize(run.name) : "Loading run"}</h2>
+            {run ? <p>{run.id} · {String(run.run_metadata.trigger ?? "pipeline")}</p> : null}
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close run details"><X size={18} /></button>
+        </div>
+        {isLoading ? <LoadingState /> : null}
+        {error ? <p className="form-error operations-form-error">Run details could not load: {error.message}</p> : null}
+        {run ? (
+          <div className="operations-drawer-body">
+            <div className="operations-run-summary-grid">
+              <div><span>Status</span><strong><span className={`status-pill ${statusClass(runStatusForExchange(run, exchange))}`}>{humanize(runStatusForExchange(run, exchange))}</span></strong></div>
+              <div><span>Exchange</span><strong>{result ? exchange : `${run.exchange} global`}</strong></div>
+              <div><span>Processed</span><strong>{formatNumber(result?.items_processed ?? run.items_processed)}</strong></div>
+              <div><span>Succeeded</span><strong>{formatNumber(result?.items_succeeded ?? run.items_succeeded)}</strong></div>
+              <div><span>Failed</span><strong>{formatNumber(result?.items_failed ?? run.items_failed)}</strong></div>
+              <div><span>Duration</span><strong>{run.duration_seconds === null ? "Running" : `${run.duration_seconds}s`}</strong></div>
+            </div>
+
+            {wasRecovered ? <div className="operations-recovery-note"><CheckCircle2 size={18} /><div><strong>Recovered after this run</strong><span>All claimed work is now resolved or safely cancelled.</span></div></div> : null}
+            {run.error_message ? <section className="operations-run-errors"><h3>Run error</h3><p>{run.error_message}</p></section> : null}
+
+            <section className="operations-run-errors">
+              <h3>Error evidence</h3>
+              {errorGroups.length ? errorGroups.map((group) => (
+                <article key={`${group.code}-${group.statusCode}-${group.message}`}>
+                  <div><strong>{humanize(group.code)}</strong><span>{formatNumber(group.occurrences)} occurrence{group.occurrences === 1 ? "" : "s"}{group.statusCode ? ` · HTTP ${group.statusCode}` : ""}</span></div>
+                  <p>{group.message}</p>
+                  {group.symbols.size ? <small>{[...group.symbols].slice(0, 20).join(", ")}{group.symbols.size > 20 ? ` and ${group.symbols.size - 20} more` : ""}</small> : null}
+                </article>
+              )) : <EmptyState label="No item-level or provider error message was retained for this run." />}
+            </section>
+
+            <section className="operations-run-errors">
+              <h3>Claimed work ({formatNumber(workItems.length)})</h3>
+              <div className="operations-table-wrap">
+                <table className="operations-table compact">
+                  <thead><tr><th>Symbol</th><th>Exchange</th><th>Current status</th><th>Attempts</th><th>Next retry</th></tr></thead>
+                  <tbody>{workItems.slice(0, 100).map((item) => <tr key={item.work_item_id}><td><strong>{item.provider_symbol}</strong><small>{formatDate(item.window_start)}–{formatDate(item.window_end)}</small></td><td>{item.exchange}</td><td><span className={`status-pill ${statusClass(item.status)}`}>{humanize(item.status)}</span></td><td>{item.attempt_count} / {item.max_attempts}</td><td>{item.next_attempt_at ? formatDateTime(item.next_attempt_at) : "—"}</td></tr>)}</tbody>
+                </table>
+              </div>
+              {workItems.length > 100 ? <p>Showing the first 100 claimed items.</p> : null}
+            </section>
+          </div>
+        ) : null}
+      </aside>
+    </div>
+  );
+}
+
 function LifecycleView({
+  exchange,
   rows,
   total,
   offset,
@@ -911,6 +1123,7 @@ function LifecycleView({
   onOffsetChange,
   onRefresh,
 }: {
+  exchange: OperationsExchange;
   rows: OperationsLifecycleEventRow[];
   total: number;
   offset: number;
@@ -926,10 +1139,16 @@ function LifecycleView({
 }) {
   return (
     <section className="data-card">
-      <div className="data-card-header"><div><h2>Universe Lifecycle</h2><p>{formatNumber(total)} additions, removals, and status transitions</p></div><button className="icon-button" type="button" onClick={onRefresh}><RefreshCw size={16} />{isFetching && !isLoading ? "Refreshing" : "Refresh"}</button></div>
+      <div className="data-card-header"><div><h2>Universe Lifecycle</h2><p>{formatNumber(total)} observations, removals, and status transitions</p></div><button className="icon-button" type="button" onClick={onRefresh}><RefreshCw size={16} />{isFetching && !isLoading ? "Refreshing" : "Refresh"}</button></div>
       <div className="data-filter-row operations-lifecycle-filters">
-        <label className="data-search-field">Symbol<Search size={16} /><input value={symbol} onChange={(event) => onSymbolChange(event.target.value)} placeholder="Search exchange symbol" /></label>
-        <label>Event<select value={eventType} onChange={(event) => onEventTypeChange(event.target.value)}><option value="">All</option><option value="added">Added</option><option value="reactivated">Reactivated</option><option value="suspected_inactive">Suspected inactive</option><option value="inactive">Inactive</option><option value="renamed">Renamed</option></select></label>
+        <SymbolAutocomplete
+          label="Symbol"
+          exchange={exchange}
+          value={symbol}
+          onChange={onSymbolChange}
+          placeholder="Search exchange symbol"
+        />
+        <label>Event<select value={eventType} onChange={(event) => onEventTypeChange(event.target.value)}><option value="">All</option><option value="added">First observed</option><option value="reactivated">Reactivated</option><option value="suspected_inactive">Suspected inactive</option><option value="inactive">Inactive</option><option value="renamed">Renamed</option></select></label>
       </div>
       {isLoading ? <LoadingState /> : null}
       {error ? <p className="form-error operations-form-error">Lifecycle events could not load: {error.message}</p> : null}
@@ -945,9 +1164,116 @@ function LifecycleTable({ rows }: { rows: OperationsLifecycleEventRow[] }) {
     <div className="operations-table-wrap">
       <table className="operations-table">
         <thead><tr><th>Symbol</th><th>Event</th><th>Detected</th><th>Snapshot</th><th>Canonical identity</th></tr></thead>
-        <tbody>{rows.map((row) => <tr key={row.event_id}><td><strong>{row.symbol ?? "Unknown symbol"}</strong><small>{row.exchange}</small></td><td><span className={`status-pill ${statusClass(row.event_type)}`}>{humanize(row.event_type)}</span></td><td>{formatDateTime(row.created_at)}</td><td>{row.snapshot_id ? row.snapshot_id.slice(0, 12) : "—"}</td><td><small className="operations-mono">{row.canonical_instrument_id}</small></td></tr>)}</tbody>
+        <tbody>{rows.map((row) => <tr key={row.event_id}><td><strong>{row.symbol ?? "Unknown symbol"}</strong><small>{row.exchange}</small></td><td><span className={`status-pill ${statusClass(row.event_type)}`}>{lifecycleEventLabel(row.event_type)}</span></td><td>{formatDateTime(row.created_at)}</td><td>{row.snapshot_id ? row.snapshot_id.slice(0, 12) : "—"}</td><td><small className="operations-mono">{row.canonical_instrument_id}</small></td></tr>)}</tbody>
       </table>
     </div>
+  );
+}
+
+function SymbolAutocomplete({
+  label,
+  exchange,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  exchange: OperationsExchange;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const blurTimer = useRef<number | null>(null);
+  const debounced = useDebouncedValue(value.trim(), 200);
+  const suggestionsQuery = useDataInstrumentSearch(
+    {
+      provider: "yfinance",
+      exchange,
+      query: debounced,
+      limit: 10,
+    },
+    debounced.length >= 2,
+  );
+  const suggestions = suggestionsQuery.data ?? [];
+
+  useEffect(() => () => {
+    if (blurTimer.current !== null) window.clearTimeout(blurTimer.current);
+  }, []);
+
+  function selectSuggestion(suggestion: DataInstrumentSearchRow) {
+    onChange(suggestion.symbol);
+    setOpen(false);
+    setActiveIndex(-1);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (!open || !suggestions.length) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.min(current + 1, suggestions.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(current - 1, 0));
+    } else if (event.key === "Enter" && activeIndex >= 0) {
+      event.preventDefault();
+      selectSuggestion(suggestions[activeIndex]);
+    }
+  }
+
+  return (
+    <label className="data-search-field operations-autocomplete">
+      {label}
+      <Search size={16} />
+      <input
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setActiveIndex(-1);
+          setOpen(event.target.value.trim().length >= 2);
+        }}
+        onFocus={() => setOpen(value.trim().length >= 2)}
+        onBlur={() => {
+          blurTimer.current = window.setTimeout(() => setOpen(false), 120);
+        }}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={`${exchange}-${label.replaceAll(" ", "-")}-suggestions`}
+      />
+      {open ? (
+        <div
+          id={`${exchange}-${label.replaceAll(" ", "-")}-suggestions`}
+          className="operations-suggestions"
+          role="listbox"
+        >
+          {suggestionsQuery.isFetching ? <span className="operations-suggestion-state">Searching…</span> : null}
+          {!suggestionsQuery.isFetching && suggestions.map((suggestion, index) => (
+            <button
+              key={suggestion.canonical_instrument_id ?? suggestion.instrument_key}
+              type="button"
+              role="option"
+              aria-selected={index === activeIndex}
+              className={index === activeIndex ? "active" : ""}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectSuggestion(suggestion)}
+            >
+              <strong>{suggestion.symbol}</strong>
+              <span>{suggestion.name ?? suggestion.provider_symbol ?? suggestion.instrument_key}</span>
+              {suggestion.provider_symbol && suggestion.provider_symbol !== suggestion.symbol ? <small>{suggestion.provider_symbol}</small> : null}
+            </button>
+          ))}
+          {!suggestionsQuery.isFetching && !suggestions.length ? <span className="operations-suggestion-state">No active {exchange} symbols found.</span> : null}
+        </div>
+      ) : null}
+    </label>
   );
 }
 

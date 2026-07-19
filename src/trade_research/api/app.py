@@ -52,6 +52,7 @@ from trade_research.schemas import (
     DataPipelineRequest,
     DataPipelineRunDetail,
     DataPipelineRunSummary,
+    DataPipelineRunWorkItemRow,
     DataUniverseMemberRow,
     DataUniverseRow,
     OperationsAdaptiveRateStateRow,
@@ -334,6 +335,7 @@ def data_availability(
     if provider_normalized == "upstox" and exchange_normalized != "NSE":
         raise HTTPException(status_code=400, detail="provider=upstox supports only exchange=NSE.")
     if provider_normalized == "yfinance" and exchange_normalized not in {
+        "NSE",
         "US",
         "TSX",
         "GLOBAL",
@@ -341,8 +343,8 @@ def data_availability(
         raise HTTPException(
             status_code=400,
             detail=(
-                "provider=yfinance supports only exchange=US, exchange=TSX, "
-                "or exchange=GLOBAL."
+                "provider=yfinance supports only exchange=NSE, exchange=US, "
+                "exchange=TSX, or exchange=GLOBAL."
             ),
         )
     interval_normalized = "1d" if interval == "daily" else interval
@@ -412,32 +414,47 @@ def data_availability(
 
         if start_date and end_date:
             _ensure_exchange_holidays(store, exchange_normalized, start_date, end_date)
-        expected_rows = _expected_daily_rows(
-            store, exchange_normalized, start_date, end_date
-        )
+        expected_rows = _expected_daily_rows(store, exchange_normalized, start_date, end_date)
         if provider_normalized == "yfinance":
-            seed_universe = universe_id or (
-                "canada_seed" if exchange_normalized == "TSX" else "us_seed"
-            )
-            symbols = yfinance_universe(seed_universe)
-            invalid_symbols = [
-                symbol.symbol
-                for symbol in symbols
-                if symbol.exchange.upper() != exchange_normalized
-            ]
-            if invalid_symbols:
-                raise ValueError(
-                    f"universe_id={seed_universe} does not match exchange={exchange_normalized}."
+            if exchange_normalized == "NSE":
+                if universe_id:
+                    raise ValueError("universe_id is not supported for persisted NSE coverage.")
+                persisted = store.persisted_universe_instruments("NSE")
+                if not persisted:
+                    raise ValueError("No accepted NSE universe snapshot is available.")
+                symbols = [
+                    {
+                        "symbol": str(symbol["symbol"]),
+                        "name": symbol.get("name"),
+                        "instrument_key": str(symbol["instrument_key"]),
+                    }
+                    for symbol in persisted
+                ]
+            else:
+                seed_universe = universe_id or (
+                    "canada_seed" if exchange_normalized == "TSX" else "us_seed"
                 )
-            payload = store.seeded_daily_ohlcv_availability(
-                symbols=[
+                seeded_symbols = yfinance_universe(seed_universe)
+                invalid_symbols = [
+                    symbol.symbol
+                    for symbol in seeded_symbols
+                    if symbol.exchange.upper() != exchange_normalized
+                ]
+                if invalid_symbols:
+                    raise ValueError(
+                        f"universe_id={seed_universe} does not match "
+                        f"exchange={exchange_normalized}."
+                    )
+                symbols = [
                     {
                         "symbol": symbol.symbol,
                         "name": symbol.name,
                         "instrument_key": f"YF|{symbol.yahoo_symbol or symbol.symbol}",
                     }
-                    for symbol in symbols
-                ],
+                    for symbol in seeded_symbols
+                ]
+            payload = store.seeded_daily_ohlcv_availability(
+                symbols=symbols,
                 source=provider_normalized,
                 exchange=exchange_normalized,
                 start_date=start_date,
@@ -584,9 +601,7 @@ def data_schedule_status() -> list[PipelineScheduleStatusRow]:
             current.yfinance_full_us_enabled,
         )
     )
-    calendar_status = (
-        "running" if current.materialized_exchange_sessions_enabled else "stopped"
-    )
+    calendar_status = "running" if current.materialized_exchange_sessions_enabled else "stopped"
     return [
         PipelineScheduleStatusRow(
             schedule_name="daily_research_schedule",
@@ -595,8 +610,7 @@ def data_schedule_status() -> list[PipelineScheduleStatusRow]:
             execution_timezone="Asia/Kolkata",
             intended_status=(
                 "running"
-                if current.nse_daily_primary_source == "yfinance"
-                and current.yfinance_nse_enabled
+                if current.nse_daily_primary_source == "yfinance" and current.yfinance_nse_enabled
                 else "stopped"
             ),
             notes="Configured intent only; actual Dagster controls remain private.",
@@ -770,17 +784,43 @@ def data_instruments_search(
     exchange: str = "NSE",
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
 ) -> list[DataInstrumentSearchRow]:
-    if provider.lower() != "upstox":
-        raise HTTPException(status_code=400, detail="Only provider=upstox is supported.")
-    if exchange.upper() != "NSE":
-        raise HTTPException(status_code=400, detail="Only exchange=NSE is supported.")
-    try:
-        rows = _store().search_provider_instruments(
-            query_text=query,
-            source=provider.lower(),
-            exchange=exchange.upper(),
-            limit=limit,
+    normalized_provider = provider.lower()
+    normalized_exchange = _canonical_data_exchange(exchange)
+    if normalized_provider not in {"upstox", "yfinance"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only provider=upstox or provider=yfinance is supported.",
         )
+    if normalized_provider == "upstox" and normalized_exchange != "NSE":
+        raise HTTPException(
+            status_code=400,
+            detail="provider=upstox supports only exchange=NSE.",
+        )
+    if normalized_provider == "yfinance" and normalized_exchange not in {
+        "NSE",
+        "TSX",
+        "US",
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="provider=yfinance search supports exchange=NSE, TSX, or US.",
+        )
+    try:
+        store = _store()
+        if normalized_provider == "yfinance":
+            rows = store.search_persisted_symbols(
+                query,
+                provider=normalized_provider,
+                exchange=normalized_exchange,
+                limit=limit,
+            )
+        else:
+            rows = store.search_provider_instruments(
+                query_text=query,
+                source=normalized_provider,
+                exchange=normalized_exchange,
+                limit=limit,
+            )
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return [DataInstrumentSearchRow(**row) for row in rows]
@@ -915,9 +955,7 @@ def data_operations_overview(
                 OperationsAdaptiveRateStateRow(**row)
                 for row in store.adaptive_rate_states(provider=normalized_provider)
             ],
-            latest_universes=[
-                _to_operations_universe_snapshot(row) for row in snapshots
-            ],
+            latest_universes=[_to_operations_universe_snapshot(row) for row in snapshots],
             recent_runs=[_to_data_pipeline_run_summary(row) for row in runs],
             recent_lifecycle_events=[
                 OperationsLifecycleEventRow(**row) for row in lifecycle["rows"]
@@ -1048,16 +1086,51 @@ def data_pipeline_runs(
 
 
 @app.get("/api/data/pipeline-runs/{run_id}", response_model=DataPipelineRunDetail)
-def data_pipeline_run_detail(run_id: str) -> DataPipelineRunDetail:
+def data_pipeline_run_detail(
+    run_id: str,
+    exchange: str | None = None,
+) -> DataPipelineRunDetail:
+    selected_exchange = _operations_exchange(exchange)
     try:
         store = _store()
         row = store.ingestion_run(run_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Pipeline run not found")
+        run_metadata = row.get("run_metadata")
+        claimed_work_item_ids = (
+            run_metadata.get("claimed_work_item_ids", []) if isinstance(run_metadata, dict) else []
+        )
+        work_items = store.pipeline_work_items_for_run(
+            run_id,
+            claimed_work_item_ids=claimed_work_item_ids,
+            exchange=selected_exchange,
+        )
+        provider_requests = store.provider_request_logs_for_run(
+            run_id,
+            provider=row["source"],
+            limit=500,
+        )
+        if selected_exchange and work_items:
+            provider_symbols = {str(item["provider_symbol"]).upper() for item in work_items}
+            instrument_keys = {
+                str(item.get("provider_instrument_key") or "").upper()
+                for item in work_items
+                if item.get("provider_instrument_key")
+            }
+            provider_requests = [
+                request
+                for request in provider_requests
+                if str(request.get("symbol") or "").upper() in provider_symbols
+                or str(request.get("instrument_key") or "").upper() in instrument_keys
+                or any(
+                    symbol in str(request.get("request_key") or "").upper()
+                    for symbol in provider_symbols
+                )
+            ]
         coverage = store.daily_ohlcv_fetch_coverage_for_run(
             run_id,
             source=row["source"],
-            exchange=row["exchange"],
+            exchange=selected_exchange or row["exchange"],
         )
     except HTTPException:
         raise
@@ -1065,7 +1138,10 @@ def data_pipeline_run_detail(run_id: str) -> DataPipelineRunDetail:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return DataPipelineRunDetail(
         run=_to_data_pipeline_run_summary(row),
+        selected_exchange=selected_exchange,
         fetch_coverage=coverage,
+        work_items=[DataPipelineRunWorkItemRow(**item) for item in work_items],
+        provider_requests=[_to_provider_request_log_row(item) for item in provider_requests],
     )
 
 
@@ -1256,8 +1332,7 @@ def latest_intraday_range() -> list[dict]:
         },
     ]
     return [
-        ScreenerResult(**_to_screener_result(row)).model_dump(mode="json") | row
-        for row in rows
+        ScreenerResult(**_to_screener_result(row)).model_dump(mode="json") | row for row in rows
     ]
 
 
@@ -1512,9 +1587,12 @@ def latest_jobs() -> list[dict]:
 def _to_data_pipeline_run_summary(row: dict) -> DataPipelineRunSummary:
     work_item_exchanges = row.get("work_item_exchanges")
     if not isinstance(work_item_exchanges, (list, tuple, set)):
-        work_item_exchanges = (
-            [] if str(row["exchange"]).upper() == "MULTI" else [row["exchange"]]
-        )
+        work_item_exchanges = [] if str(row["exchange"]).upper() == "MULTI" else [row["exchange"]]
+    run_metadata = row.get("run_metadata")
+    normalized_metadata = run_metadata if isinstance(run_metadata, dict) else {}
+    exchange_results = normalized_metadata.get("exchange_results", [])
+    if not isinstance(exchange_results, list):
+        exchange_results = []
     return DataPipelineRunSummary(
         id=str(row["run_id"]),
         name=str(row["job_name"]),
@@ -1530,7 +1608,8 @@ def _to_data_pipeline_run_summary(row: dict) -> DataPipelineRunSummary:
         items_succeeded=int(row.get("items_succeeded") or 0),
         items_failed=int(row.get("items_failed") or 0),
         error_message=row.get("error_message"),
-        run_metadata=row.get("run_metadata") if isinstance(row.get("run_metadata"), dict) else {},
+        run_metadata=normalized_metadata,
+        exchange_results=exchange_results,
     )
 
 
@@ -1706,11 +1785,7 @@ def _build_yfinance_bulk_fetch_preview(
             exchange=exchange,
         )
         if first_date_loader is not None
-        else {
-            key: min(values)
-            for key, values in stored_dates.items()
-            if values
-        }
+        else {key: min(values) for key, values in stored_dates.items() if values}
     )
     avg_turnover_by_key = store.daily_ohlcv_average_turnover_by_instrument(
         [row["instrument_key"] for row in seed_rows],
@@ -1897,10 +1972,7 @@ def _ensure_exchange_holidays(
 
     for year in validated_exchange_calendar_years(start_date, end_date):
         cached = store.exchange_holidays(exchange, year)
-        if cached is not None and (
-            cached.get("closed_dates")
-            or cached.get("early_close_dates")
-        ):
+        if cached is not None and (cached.get("closed_dates") or cached.get("early_close_dates")):
             continue
         try:
             holidays = fetch_exchange_holidays(exchange, year)
@@ -1919,6 +1991,8 @@ def _ensure_exchange_holidays(
             early_close_dates=holidays.early_close_dates,
             source_url=holidays.source_url,
         )
+
+
 def _to_screener_result(row: dict) -> dict:
     return {
         "ticker": row["ticker"],

@@ -271,10 +271,13 @@ export function useOperationsRateLimits() {
   });
 }
 
-export function useDataPipelineRunDetail(runId: string | null) {
+export function useDataPipelineRunDetail(
+  runId: string | null,
+  exchange?: "NSE" | "TSX" | "US",
+) {
   return useQuery({
-    queryKey: ["data-pipeline-run", runId],
-    queryFn: () => getDataPipelineRunDetail(runId as string),
+    queryKey: ["data-pipeline-run", runId, exchange],
+    queryFn: () => getDataPipelineRunDetail(runId as string, exchange),
     enabled: Boolean(runId),
   });
 }
