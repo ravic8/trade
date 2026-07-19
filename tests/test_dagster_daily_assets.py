@@ -20,6 +20,33 @@ def _result(name: str, status: str = "pass") -> object:
     )
 
 
+def test_bigquery_asset_passes_dagster_scope_and_emits_disabled_status(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_sync(**kwargs):
+        captured.update(kwargs)
+        return daily_assets.BigQuerySyncResult(run_id="dagster-bq", status="disabled")
+
+    monkeypatch.setattr(daily_assets, "run_bigquery_sync", fake_sync)
+    context = dagster.build_op_context(
+        op_config={
+            "exchange": "TSX",
+            "year": 2025,
+            "entities": ["ohlcv_daily"],
+        }
+    )
+    result = daily_assets.bigquery_export_sync(context)
+
+    assert result.status == "disabled"
+    assert captured == {
+        "exchange": "TSX",
+        "year": 2025,
+        "entities": ["ohlcv_daily"],
+        "trigger": "dagster",
+        "run_id": context.run_id,
+    }
+
+
 def test_daily_feature_asset_calls_pipeline_after_validation(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

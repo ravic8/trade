@@ -21,6 +21,14 @@ services:
       DATA_DIR: /app/data
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
+      BIGQUERY_ENABLED: ${PROD_BIGQUERY_ENABLED:-false}
+      BIGQUERY_PROJECT_ID: ${PROD_BIGQUERY_PROJECT_ID:-}
+      BIGQUERY_DATASET: ${PROD_BIGQUERY_DATASET:-trade_analytics}
+      BIGQUERY_LOCATION: ${PROD_BIGQUERY_LOCATION:-US}
+      BIGQUERY_AUTH_METHOD: ${PROD_BIGQUERY_AUTH_METHOD:-adc}
+      BIGQUERY_CREDENTIALS_PATH: ${PROD_BIGQUERY_CREDENTIALS_PATH:-}
+      BIGQUERY_BACKFILL_CHUNK_SIZE: ${PROD_BIGQUERY_BACKFILL_CHUNK_SIZE:-10000}
+      BIGQUERY_RETRY_ATTEMPTS: ${PROD_BIGQUERY_RETRY_ATTEMPTS:-3}
       INGESTION_PROFILE: prod
       PROVIDER_RATE_LIMIT_BACKEND: redis
       PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
@@ -132,6 +140,14 @@ services:
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
+      BIGQUERY_ENABLED: ${PROD_BIGQUERY_ENABLED:-false}
+      BIGQUERY_PROJECT_ID: ${PROD_BIGQUERY_PROJECT_ID:-}
+      BIGQUERY_DATASET: ${PROD_BIGQUERY_DATASET:-trade_analytics}
+      BIGQUERY_LOCATION: ${PROD_BIGQUERY_LOCATION:-US}
+      BIGQUERY_AUTH_METHOD: ${PROD_BIGQUERY_AUTH_METHOD:-adc}
+      BIGQUERY_CREDENTIALS_PATH: ${PROD_BIGQUERY_CREDENTIALS_PATH:-}
+      BIGQUERY_BACKFILL_CHUNK_SIZE: ${PROD_BIGQUERY_BACKFILL_CHUNK_SIZE:-10000}
+      BIGQUERY_RETRY_ATTEMPTS: ${PROD_BIGQUERY_RETRY_ATTEMPTS:-3}
       INGESTION_PROFILE: prod
       PROVIDER_RATE_LIMIT_BACKEND: redis
       PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
@@ -204,6 +220,7 @@ services:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
       - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_home
+      - ${PROD_BIGQUERY_CREDENTIALS_DIR:-./secrets/gcp}:/run/secrets/gcp:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -235,6 +252,14 @@ services:
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
+      BIGQUERY_ENABLED: ${PROD_BIGQUERY_ENABLED:-false}
+      BIGQUERY_PROJECT_ID: ${PROD_BIGQUERY_PROJECT_ID:-}
+      BIGQUERY_DATASET: ${PROD_BIGQUERY_DATASET:-trade_analytics}
+      BIGQUERY_LOCATION: ${PROD_BIGQUERY_LOCATION:-US}
+      BIGQUERY_AUTH_METHOD: ${PROD_BIGQUERY_AUTH_METHOD:-adc}
+      BIGQUERY_CREDENTIALS_PATH: ${PROD_BIGQUERY_CREDENTIALS_PATH:-}
+      BIGQUERY_BACKFILL_CHUNK_SIZE: ${PROD_BIGQUERY_BACKFILL_CHUNK_SIZE:-10000}
+      BIGQUERY_RETRY_ATTEMPTS: ${PROD_BIGQUERY_RETRY_ATTEMPTS:-3}
       INGESTION_PROFILE: prod
       PROVIDER_RATE_LIMIT_BACKEND: redis
       PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
@@ -307,6 +332,7 @@ services:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
       - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_home
+      - ${PROD_BIGQUERY_CREDENTIALS_DIR:-./secrets/gcp}:/run/secrets/gcp:ro
     depends_on:
       postgres:
         condition: service_healthy

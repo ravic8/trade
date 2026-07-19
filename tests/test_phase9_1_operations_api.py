@@ -8,6 +8,71 @@ NOW = datetime(2026, 7, 19, 6, 30, tzinfo=UTC)
 
 
 class FakeOperationsStore:
+    def bigquery_sync_runs(self, *, limit=20):
+        assert limit == 5
+        return [
+            {
+                "run_id": "bq-run-1",
+                "trigger": "dagster",
+                "status": "completed",
+                "project_id": "analytics-project",
+                "dataset": "trade_analytics",
+                "location": "US",
+                "exchange": "TSX",
+                "year": 2025,
+                "entities": ["ohlcv_daily"],
+                "started_at": NOW,
+                "finished_at": NOW,
+                "source_row_count": 100,
+                "destination_row_count": 100,
+                "count_difference": 0,
+                "inserted_rows": 100,
+                "updated_rows": 0,
+                "rejected_rows": 0,
+                "retry_count": 1,
+                "duration_seconds": 12.5,
+                "source_watermark": "2025-12-31",
+                "destination_watermark": "2025-12-31",
+                "last_successful_sync_at": NOW,
+                "bigquery_job_id": "bq-job-1",
+                "schema_drift": {},
+                "error_details": None,
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+        ]
+
+    def bigquery_sync_partitions(self, *, limit=500, run_id=None):
+        assert limit == 10
+        assert run_id is None
+        return [
+            {
+                "partition_id": "partition-1",
+                "run_id": "bq-run-1",
+                "entity": "ohlcv_daily",
+                "exchange": "TSX",
+                "partition_start": date(2025, 1, 1),
+                "partition_end": date(2025, 12, 31),
+                "status": "completed",
+                "attempt_count": 1,
+                "source_row_count": 100,
+                "destination_row_count": 100,
+                "count_difference": 0,
+                "inserted_rows": 100,
+                "updated_rows": 0,
+                "rejected_rows": 0,
+                "source_watermark": "2025-12-31",
+                "destination_watermark": "2025-12-31",
+                "bigquery_job_id": "bq-job-1",
+                "duration_seconds": 12.5,
+                "schema_drift": {},
+                "error_details": None,
+                "created_at": NOW,
+                "updated_at": NOW,
+                "completed_at": NOW,
+            }
+        ]
+
     def pipeline_work_queue_groups(self, *, provider=None, exchange=None):
         assert provider == "yfinance"
         assert exchange == "TSX"
@@ -235,3 +300,18 @@ def test_operations_endpoints_reject_unsupported_exchange() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "exchange must be NSE, TSX, or US"
+
+
+def test_bigquery_sync_observability_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeOperationsStore())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/data/operations/bigquery-sync?run_limit=5&partition_limit=10"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["enabled"] is False
+    assert payload["runs"][0]["bigquery_job_id"] == "bq-job-1"
+    assert payload["partitions"][0]["count_difference"] == 0

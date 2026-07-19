@@ -1,5 +1,6 @@
 import { candles, jobRuns, marketStatus, researchNotes, screenerResults } from "./mockData";
 import type {
+  BigQuerySyncOverviewResponse,
   Candle,
   ChatAuditResponse,
   ChatHealthResponse,
@@ -472,6 +473,10 @@ export function getOperationsLifecycleEvents(
 
 export function getOperationsRateLimits(): Promise<OperationsAdaptiveRateStateRow[]> {
   return strictFetchJson("/api/data/operations/rate-limits?provider=yfinance");
+}
+
+export function getBigQuerySyncOverview(): Promise<BigQuerySyncOverviewResponse> {
+  return strictFetchJson("/api/data/operations/bigquery-sync");
 }
 
 export async function postChatQuery(payload: ChatQueryRequest): Promise<ChatQueryResponse> {

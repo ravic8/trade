@@ -1,6 +1,7 @@
 from dagster import DefaultScheduleStatus, Definitions, ScheduleDefinition, define_asset_job
 
 from trade_research.dagster.daily_assets import (
+    bigquery_export_sync,
     daily_features_v1,
     daily_pipeline_health,
     daily_targets_v1,
@@ -23,6 +24,11 @@ from trade_research.dagster.daily_assets import (
     yfinance_fx_crypto_intraday_ohlcv,
     yfinance_fx_intraday_gap_validation,
     yfinance_us_daily_ohlcv,
+)
+
+bigquery_export_sync_job = define_asset_job(
+    name="bigquery_export_sync_job",
+    selection=[bigquery_export_sync],
 )
 
 nse_exchange_sessions_job = define_asset_job(
@@ -186,6 +192,14 @@ yfinance_daily_work_worker_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+bigquery_daily_sync_schedule = ScheduleDefinition(
+    name="bigquery_daily_sync_schedule",
+    job=bigquery_export_sync_job,
+    cron_schedule="30 8 * * *",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 nse_exchange_sessions_schedule = ScheduleDefinition(
     name="nse_exchange_sessions_schedule",
     job=nse_exchange_sessions_job,
@@ -212,6 +226,7 @@ us_exchange_sessions_schedule = ScheduleDefinition(
 
 defs = Definitions(
     assets=[
+        bigquery_export_sync,
         upstox_daily_ohlcv,
         nse_daily_ohlcv,
         nse_exchange_sessions,
@@ -236,6 +251,7 @@ defs = Definitions(
         daily_pipeline_health,
     ],
     jobs=[
+        bigquery_export_sync_job,
         daily_research_pipeline_job,
         factor_research_job,
         north_america_daily_yfinance_job,
@@ -251,6 +267,7 @@ defs = Definitions(
         us_exchange_sessions_job,
     ],
     schedules=[
+        bigquery_daily_sync_schedule,
         daily_research_schedule,
         north_america_daily_yfinance_schedule,
         fx_intraday_dukascopy_schedule,

@@ -25,6 +25,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
+  useBigQuerySyncOverview,
   useDataAvailability,
   useDataInstrumentSearch,
   useDataPipelineRunDetail,
@@ -36,6 +37,7 @@ import {
   useProviderRuns,
 } from "../api/hooks";
 import type {
+  BigQuerySyncOverviewResponse,
   DataAvailabilityParams,
   DataAvailabilityResponse,
   DataAvailabilityRow,
@@ -58,7 +60,7 @@ import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { formatDateTime } from "../utils/format";
 
-type DataTab = "overview" | "coverage" | "work" | "runs" | "lifecycle";
+type DataTab = "overview" | "coverage" | "work" | "runs" | "lifecycle" | "warehouse";
 
 type MarketOption = {
   exchange: OperationsExchange;
@@ -223,6 +225,7 @@ export function DataPipelinePage() {
   const overviewQuery = useOperationsOverview(exchange);
   const rateQuery = useOperationsRateLimits();
   const schedulesQuery = usePipelineScheduleStatus(activeTab === "overview");
+  const bigQuerySyncQuery = useBigQuerySyncOverview(activeTab === "warehouse");
   const availabilityParams = useMemo<DataAvailabilityParams>(
     () => ({
       provider: "yfinance",
@@ -305,6 +308,7 @@ export function DataPipelinePage() {
     void queryClient.invalidateQueries({ queryKey: ["provider-runs"] });
     void queryClient.invalidateQueries({ queryKey: ["data-availability"] });
     void queryClient.invalidateQueries({ queryKey: ["pipeline-schedule-status"] });
+    void queryClient.invalidateQueries({ queryKey: ["data-operations-bigquery-sync"] });
   }
 
   return (
@@ -458,6 +462,16 @@ export function DataPipelinePage() {
           onRefresh={() => void lifecycleQuery.refetch()}
         />
       ) : null}
+
+      {activeTab === "warehouse" ? (
+        <WarehouseView
+          exchange={exchange}
+          overview={bigQuerySyncQuery.data ?? null}
+          isLoading={bigQuerySyncQuery.isLoading}
+          error={bigQuerySyncQuery.error}
+          onRefresh={() => void bigQuerySyncQuery.refetch()}
+        />
+      ) : null}
     </div>
   );
 }
@@ -500,6 +514,7 @@ function DataTabs({
     { id: "work" as const, label: "Work Queue", icon: ListChecks },
     { id: "runs" as const, label: "Runs", icon: History },
     { id: "lifecycle" as const, label: "Lifecycle", icon: GitBranch },
+    { id: "warehouse" as const, label: "Warehouse", icon: DatabaseZap },
   ];
   return (
     <div className="data-mode-tabs operations-tabs" role="tablist" aria-label="Data Console views">
@@ -1175,6 +1190,82 @@ function LifecycleTable({ rows }: { rows: OperationsLifecycleEventRow[] }) {
         <tbody>{rows.map((row) => <tr key={row.event_id}><td><strong>{row.symbol ?? "Unknown symbol"}</strong><small>{row.exchange}</small></td><td><span className={`status-pill ${statusClass(row.event_type)}`}>{lifecycleEventLabel(row.event_type)}</span></td><td>{formatDateTime(row.created_at)}</td><td>{row.snapshot_id ? row.snapshot_id.slice(0, 12) : "—"}</td><td><small className="operations-mono">{row.canonical_instrument_id}</small></td></tr>)}</tbody>
       </table>
     </div>
+  );
+}
+
+function WarehouseView({
+  exchange,
+  overview,
+  isLoading,
+  error,
+  onRefresh,
+}: {
+  exchange: OperationsExchange;
+  overview: BigQuerySyncOverviewResponse | null;
+  isLoading: boolean;
+  error: Error | null;
+  onRefresh: () => void;
+}) {
+  const runs = (overview?.runs ?? []).filter(
+    (run) => run.exchange === null || run.exchange === exchange,
+  );
+  const partitions = (overview?.partitions ?? []).filter(
+    (partition) => partition.exchange === null || partition.exchange === exchange,
+  );
+  const latest = runs[0];
+  const pending = partitions.filter((partition) =>
+    ["pending", "running"].includes(partition.status),
+  ).length;
+  const failed = partitions.filter((partition) => partition.status === "failed").length;
+  if (isLoading && !overview) return <LoadingState />;
+  return (
+    <>
+      <div className="metric-grid data-metric-grid">
+        <MetricCard
+          icon={DatabaseZap}
+          label="BigQuery Export"
+          value={overview?.enabled ? "Enabled" : "Disabled"}
+          detail={overview?.project_id ? `${overview.project_id}.${overview.dataset}` : "Safe default"}
+        />
+        <MetricCard
+          icon={CheckCircle2}
+          label="Last Sync"
+          value={latest ? humanize(latest.status) : "Never"}
+          detail={latest?.finished_at ? `${formatDateTime(latest.finished_at)} · ${latest.retry_count} retries` : overview?.location ?? "Not configured"}
+        />
+        <MetricCard
+          icon={Workflow}
+          label="Active Partitions"
+          value={formatNumber(pending)}
+          detail={`${formatNumber(failed)} failed partitions`}
+        />
+        <MetricCard
+          icon={TableProperties}
+          label="Count Difference"
+          value={formatNumber(latest?.count_difference)}
+          detail={`${formatNumber(latest?.inserted_rows)} inserted · ${formatNumber(latest?.updated_rows)} updated`}
+        />
+      </div>
+      {!overview?.enabled ? (
+        <section className="operations-alert warning">
+          <ShieldCheck size={21} />
+          <div><strong>BigQuery synchronization is disabled</strong><span>PostgreSQL remains the source of truth. Activate only after the deployment checklist and credentials are complete.</span></div>
+        </section>
+      ) : null}
+      {error ? <p className="form-error operations-form-error">Warehouse status could not load: {error.message}</p> : null}
+      <section className="data-card">
+        <div className="data-card-header"><div><h2>Synchronization Partitions</h2><p>Watermarks, reconciliation, retries, and BigQuery jobs for {exchange}</p></div><button className="icon-button" type="button" onClick={onRefresh}><RefreshCw size={16} />Refresh</button></div>
+        {!error && !partitions.length ? <EmptyState label="No BigQuery synchronization partitions have been recorded." /> : null}
+        {partitions.length ? (
+          <div className="operations-table-wrap">
+            <table className="operations-table">
+              <thead><tr><th>Entity</th><th>Status</th><th>Scope</th><th>Rows</th><th>Watermarks</th><th>MERGE</th><th>Job / error</th></tr></thead>
+              <tbody>{partitions.map((partition) => <tr key={partition.partition_id}><td><strong>{humanize(partition.entity)}</strong><small>{partition.exchange ?? "All exchanges"}</small></td><td><span className={`status-pill ${statusClass(partition.status)}`}>{humanize(partition.status)}</span><small>{partition.duration_seconds === null ? "—" : `${partition.duration_seconds.toFixed(1)}s`} · {partition.attempt_count} attempts</small></td><td>{partition.partition_start ? `${formatDate(partition.partition_start)}–${formatDate(partition.partition_end)}` : "Current state"}</td><td><strong>{formatNumber(partition.source_row_count)} → {formatNumber(partition.destination_row_count)}</strong><small>Difference {formatNumber(partition.count_difference)}</small></td><td><small>{partition.source_watermark ?? "—"}<br />{partition.destination_watermark ?? "—"}</small></td><td><strong>{formatNumber(partition.inserted_rows)} / {formatNumber(partition.updated_rows)}</strong><small>inserted / updated · {formatNumber(partition.rejected_rows)} rejected</small></td><td><small className="operations-mono">{partition.bigquery_job_id ?? partition.error_details ?? "—"}</small>{Object.keys(partition.schema_drift).length ? <small>Schema drift detected</small> : null}</td></tr>)}</tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+    </>
   );
 }
 

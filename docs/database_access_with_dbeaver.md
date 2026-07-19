@@ -33,38 +33,30 @@ DC=(docker compose \
 ss -lnt | grep '127.0.0.1:5433'
 ```
 
-Create one read-only login per person. Enter its password interactively so it
-does not appear in shell history:
+Apply migrations first; Phase 9.2A creates the curated `analytics` schema and
+views. Create one read-only login per person. The CLI prompts twice without
+echoing the password:
 
 ```bash
-"${DC[@]}" exec postgres \
-  psql \
-  -U "${PROD_POSTGRES_USER:-trade}" \
-  -d "${PROD_POSTGRES_DB:-trade_research}"
+"${DC[@]}" run --rm --no-deps api \
+  trade-research create-analyst-role analyst_name
 ```
 
-Run the following inside `psql`, replacing `analyst_name` with a unique role:
+For automation, pipe a single value directly from a secret manager; do not use
+a literal command-line argument or committed file:
 
-```sql
-CREATE ROLE analyst_name LOGIN;
-\password analyst_name
-
-GRANT CONNECT ON DATABASE trade_research TO analyst_name;
-GRANT USAGE ON SCHEMA public TO analyst_name;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst_name;
-GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO analyst_name;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT ON TABLES TO analyst_name;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT ON SEQUENCES TO analyst_name;
-
-ALTER ROLE analyst_name SET default_transaction_read_only = on;
+```bash
+secret-manager read trade/analysts/analyst_name \
+  | "${DC[@]}" run -T --rm --no-deps api \
+      trade-research create-analyst-role analyst_name --password-stdin
 ```
 
-The default-privilege grants apply to objects subsequently created by the role
-that executes those statements. Re-run the explicit `GRANT SELECT ON ALL
-TABLES` after migrations if a migration owner differs from that role.
+The command creates or rotates the individual login, sets
+`default_transaction_read_only = on`, revokes public-schema creation and
+grants `SELECT` only on curated analytics views. Analysts do not receive direct
+access to application tables or credentials. The migration also removes the
+legacy `PUBLIC` create privilege from the `public` schema; the application
+owner retains its owner privileges.
 
 ## DBeaver with its built-in SSH tunnel
 
@@ -131,29 +123,36 @@ Useful starting queries are:
 
 ```sql
 SELECT exchange, source, COUNT(*) AS rows, MAX(date) AS latest_date
-FROM ohlcv_daily
+FROM analytics.ohlcv_daily
 GROUP BY exchange, source
 ORDER BY exchange, source;
 
 SELECT exchange, work_type, status, COUNT(*) AS items
-FROM pipeline_work_items
+FROM analytics.pipeline_work_state
 GROUP BY exchange, work_type, status
 ORDER BY exchange, work_type, status;
 
 SELECT provider, current_rpm, current_concurrency, circuit_state,
        recent_error_rate, cooldown_until, updated_at
-FROM adaptive_rate_state
+FROM analytics.provider_health
 ORDER BY provider;
 ```
 
+The available views are `analytics.ohlcv_daily`, `analytics.symbol_state`,
+`analytics.pipeline_work_state`, `analytics.ingestion_runs`,
+`analytics.provider_health`, and `analytics.universe_lifecycle`.
+
 ## Revocation
 
-Remove the person's SSH public key or disable their Linux account, then revoke
-the database login:
+Revoke the database login through the same one-off Compose invocation used for
+creation:
 
-```sql
-ALTER ROLE analyst_name NOLOGIN;
+```bash
+"${DC[@]}" run --rm --no-deps api \
+  trade-research revoke-analyst-role analyst_name
 ```
 
-After confirming there are no dependent grants or owned objects, the role can
-be dropped. Prefer `NOLOGIN` first because it is immediate and reversible.
+Also remove the person's SSH public key or disable their Linux account. Confirm
+revocation with `SELECT rolcanlogin FROM pg_roles WHERE rolname =
+'analyst_name';` as an administrator. Prefer `NOLOGIN` because it is immediate,
+auditable, and reversible; drop the role only after checking dependencies.

@@ -41,6 +41,17 @@ Dagster daily_research_pipeline_job
   -> per-stock full-history and rolling-window coverage
 ```
 
+Optional analytics paths are outbound-only. PostgreSQL remains authoritative:
+
+```text
+PostgreSQL -> analytics schema views -> SSH-tunneled DBeaver read-only roles
+PostgreSQL -> bounded Dagster export -> BigQuery staging/MERGE -> reconciliation
+```
+
+BigQuery is disabled by default. Durable synchronization state is retained in
+PostgreSQL and surfaced in Dagster metadata and the Data Console. See
+`docs/bigquery_sync_foundation.md`.
+
 Features and targets are intentionally separate. Feature rows describe what was
 known at date `T`; target rows describe outcomes after date `T`.
 

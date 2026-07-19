@@ -3,8 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from dagster import AssetIn, MetadataValue, asset
+from dagster import Array, AssetIn, Field, Int, MetadataValue, String, asset
 
+from trade_research.analytics.bigquery import (
+    DEFAULT_BIGQUERY_ENTITIES,
+    BigQuerySyncResult,
+    run_bigquery_sync,
+)
 from trade_research.config import get_settings
 from trade_research.pipelines import (
     PipelineRunResult,
@@ -26,6 +31,48 @@ from trade_research.pipelines import (
     run_yfinance_intraday_ohlcv_pipeline,
 )
 from trade_research.validation import resolve_latest_expected_trading_date
+
+
+@asset(
+    group_name="analytics_exports",
+    compute_kind="bigquery",
+    config_schema={
+        "exchange": Field(String, is_required=False),
+        "year": Field(Int, is_required=False),
+        "entities": Field(Array(String), default_value=list(DEFAULT_BIGQUERY_ENTITIES)),
+    },
+    description=(
+        "Feature-gated, bounded PostgreSQL export through BigQuery staging, "
+        "idempotent MERGE, and reconciliation."
+    ),
+)
+def bigquery_export_sync(context) -> BigQuerySyncResult:
+    config = context.op_config
+    result = run_bigquery_sync(
+        exchange=config.get("exchange"),
+        year=config.get("year"),
+        entities=config.get("entities", list(DEFAULT_BIGQUERY_ENTITIES)),
+        trigger="dagster",
+        run_id=context.run_id,
+    )
+    context.add_output_metadata(
+        {
+            "status": result.status,
+            "source_row_count": result.source_row_count,
+            "destination_row_count": result.destination_row_count,
+            "count_difference": result.count_difference,
+            "inserted_rows": result.inserted_rows,
+            "updated_rows": result.updated_rows,
+            "rejected_rows": result.rejected_rows,
+            "retry_count": result.retry_count,
+            "bigquery_job_id": result.bigquery_job_id or "",
+            "partition_statuses": MetadataValue.json(result.partition_statuses),
+            "error_details": result.error_details or "",
+        }
+    )
+    if result.status == "failed":
+        raise RuntimeError(result.error_details or "BigQuery synchronization failed.")
+    return result
 
 
 @asset(

@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
+  getBigQuerySyncOverview,
   getChatAudit,
   getChatHealth,
   getChatSources,
@@ -267,6 +268,15 @@ export function useOperationsRateLimits() {
   return useQuery({
     queryKey: ["data-operations-rate-limits", "yfinance"],
     queryFn: getOperationsRateLimits,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useBigQuerySyncOverview(enabled = true) {
+  return useQuery({
+    queryKey: ["data-operations-bigquery-sync"],
+    queryFn: getBigQuerySyncOverview,
+    enabled,
     refetchInterval: 60_000,
   });
 }

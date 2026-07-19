@@ -605,6 +605,69 @@ class OperationsLifecycleEventsResponse(BaseModel):
     rows: list[OperationsLifecycleEventRow] = Field(default_factory=list)
 
 
+class BigQuerySyncRunRow(BaseModel):
+    run_id: str
+    trigger: str
+    status: str
+    project_id: str
+    dataset: str
+    location: str
+    exchange: str | None = None
+    year: int | None = None
+    entities: list[str] = Field(default_factory=list)
+    started_at: datetime
+    finished_at: datetime | None = None
+    source_row_count: int = Field(ge=0)
+    destination_row_count: int = Field(ge=0)
+    count_difference: int
+    inserted_rows: int = Field(ge=0)
+    updated_rows: int = Field(ge=0)
+    rejected_rows: int = Field(ge=0)
+    retry_count: int = Field(ge=0)
+    duration_seconds: float | None = Field(default=None, ge=0)
+    source_watermark: str | None = None
+    destination_watermark: str | None = None
+    last_successful_sync_at: datetime | None = None
+    bigquery_job_id: str | None = None
+    schema_drift: dict[str, Any] = Field(default_factory=dict)
+    error_details: str | None = None
+
+
+class BigQuerySyncPartitionRow(BaseModel):
+    partition_id: str
+    run_id: str
+    entity: str
+    exchange: str | None = None
+    partition_start: date | None = None
+    partition_end: date | None = None
+    status: str
+    attempt_count: int = Field(ge=0)
+    source_row_count: int = Field(ge=0)
+    destination_row_count: int = Field(ge=0)
+    count_difference: int
+    inserted_rows: int = Field(ge=0)
+    updated_rows: int = Field(ge=0)
+    rejected_rows: int = Field(ge=0)
+    source_watermark: str | None = None
+    destination_watermark: str | None = None
+    bigquery_job_id: str | None = None
+    duration_seconds: float | None = Field(default=None, ge=0)
+    schema_drift: dict[str, Any] = Field(default_factory=dict)
+    error_details: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class BigQuerySyncOverviewResponse(BaseModel):
+    enabled: bool
+    project_id: str | None = None
+    dataset: str
+    location: str
+    runs: list[BigQuerySyncRunRow] = Field(default_factory=list)
+    partitions: list[BigQuerySyncPartitionRow] = Field(default_factory=list)
+
+
 class OperationsAdaptiveRateStateRow(BaseModel):
     provider: str
     current_rpm: int = Field(ge=0)

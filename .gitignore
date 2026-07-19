@@ -21,6 +21,8 @@ __pycache__/
 /artifacts/
 /output/
 /tmp/
+/secrets/
+*service-account*.json
 
 dagster_home/.logs_queue/
 dagster_home/.nux/
