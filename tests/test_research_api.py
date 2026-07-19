@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trade_research.api.app import app
+from trade_research.config import Settings
 
 
 class FakeCoverageStore:
@@ -1275,6 +1276,46 @@ def test_data_schedule_status_endpoint() -> None:
     assert schedules["fx_intraday_dukascopy_schedule"]["intended_status"] == "stopped"
     assert schedules["yfinance_fx_intraday_schedule"]["intended_status"] == "stopped"
     assert "private" in schedules["daily_research_schedule"]["notes"]
+    assert "yfinance_daily_work_planner_schedule" in schedules
+    assert "yfinance_daily_work_worker_schedule" in schedules
+    assert "nse_universe_refresh_schedule" in schedules
+    assert "tsx_universe_refresh_schedule" in schedules
+    assert "us_universe_refresh_schedule" in schedules
+    assert "nse_exchange_sessions_schedule" in schedules
+
+
+def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "trade_research.api.app.get_settings",
+        lambda: Settings(
+            _env_file=None,
+            yfinance_daily_enabled=True,
+            yfinance_nse_enabled=True,
+            yfinance_full_tsx_enabled=True,
+            yfinance_full_us_enabled=True,
+            yfinance_provider_history_evidence_enabled=True,
+            nse_daily_primary_source="yfinance",
+            materialized_exchange_sessions_enabled=True,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/data/schedules/status")
+
+    assert response.status_code == 200
+    schedules = {row["schedule_name"]: row for row in response.json()}
+    for schedule_name in (
+        "daily_research_schedule",
+        "yfinance_daily_work_planner_schedule",
+        "yfinance_daily_work_worker_schedule",
+        "nse_universe_refresh_schedule",
+        "tsx_universe_refresh_schedule",
+        "us_universe_refresh_schedule",
+        "nse_exchange_sessions_schedule",
+        "tsx_exchange_sessions_schedule",
+        "us_exchange_sessions_schedule",
+    ):
+        assert schedules[schedule_name]["intended_status"] == "running"
 
 
 def test_data_pipeline_run_detail_endpoint(monkeypatch) -> None:

@@ -1451,6 +1451,34 @@ items, and each run response exposes `work_item_exchanges`. Consequently, NSE,
 TSX, and US console views include the relevant shared worker runs without
 rewriting their durable run identity.
 
+#### Phase 9.2: Read-only Data Console UI
+
+The Data route is the operator-facing equity console for NSE, TSX, and US. It
+uses yfinance as the displayed daily provider and intentionally excludes Forex
+from equity health calculations. The console has five exchange-aware views:
+
+```text
+Overview  Coverage  Work Queue  Runs  Lifecycle
+```
+
+Overview combines the accepted universe, stored candle freshness, durable open
+work, suspicious rows, adaptive RPM/concurrency/circuit state, expected Dagster
+schedule intent, recent runs, and recent universe changes. Coverage presents
+calendar-aware expected, stored, and missing daily rows over the selected
+window. Work Queue and Lifecycle support server-side filters and pagination.
+Runs preserve `MULTI` as the durable worker identity while showing the actual
+claimed `work_item_exchanges` used by the selected exchange view.
+
+The console polls overview and rate state once per minute and also provides an
+explicit refresh action. Coverage and paginated detail endpoints load only when
+their view is selected. The UI is read-only: it cannot start a provider call,
+change a schedule, or retry work. Authenticated, audited, idempotent manual
+retry actions remain Phase 9.3.
+
+The schedule panel reports configuration-derived intended state for the daily
+planner, worker, universes, and calendars. It does not claim to be live Dagster
+runtime state; runtime schedule and missed-tick alerts remain Phase 9.4.
+
 ### Phase 10: Cleanup
 
 After at least two weeks of successful scheduled operation for all exchanges:

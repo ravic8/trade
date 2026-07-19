@@ -576,14 +576,106 @@ def provider_request_logs(
 
 @app.get("/api/data/schedules/status", response_model=list[PipelineScheduleStatusRow])
 def data_schedule_status() -> list[PipelineScheduleStatusRow]:
+    current = get_settings()
+    any_daily_exchange = current.yfinance_daily_enabled and any(
+        (
+            current.yfinance_nse_enabled,
+            current.yfinance_full_tsx_enabled,
+            current.yfinance_full_us_enabled,
+        )
+    )
+    calendar_status = (
+        "running" if current.materialized_exchange_sessions_enabled else "stopped"
+    )
     return [
         PipelineScheduleStatusRow(
             schedule_name="daily_research_schedule",
             job_name="daily_research_pipeline_job",
             cron_schedule="30 19 * * 1-5",
             execution_timezone="Asia/Kolkata",
-            intended_status="stopped",
-            notes="Read-only status; Dagster remains private.",
+            intended_status=(
+                "running"
+                if current.nse_daily_primary_source == "yfinance"
+                and current.yfinance_nse_enabled
+                else "stopped"
+            ),
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="yfinance_daily_work_planner_schedule",
+            job_name="yfinance_daily_work_planner_job",
+            cron_schedule="0 6 * * *",
+            execution_timezone="UTC",
+            intended_status="running" if any_daily_exchange else "stopped",
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="yfinance_daily_work_worker_schedule",
+            job_name="yfinance_daily_work_worker_job",
+            cron_schedule="*/5 * * * *",
+            execution_timezone="UTC",
+            intended_status="running" if any_daily_exchange else "stopped",
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="nse_universe_refresh_schedule",
+            job_name="nse_universe_refresh_job",
+            cron_schedule="0 8 * * 1-5",
+            execution_timezone="Asia/Kolkata",
+            intended_status=(
+                "running"
+                if current.yfinance_daily_enabled and current.yfinance_nse_enabled
+                else "stopped"
+            ),
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="tsx_universe_refresh_schedule",
+            job_name="tsx_universe_refresh_job",
+            cron_schedule="0 8 * * 1-5",
+            execution_timezone="America/Toronto",
+            intended_status=(
+                "running"
+                if current.yfinance_daily_enabled and current.yfinance_full_tsx_enabled
+                else "stopped"
+            ),
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="us_universe_refresh_schedule",
+            job_name="us_universe_refresh_job",
+            cron_schedule="0 8 * * 1-5",
+            execution_timezone="America/New_York",
+            intended_status=(
+                "running"
+                if current.yfinance_daily_enabled and current.yfinance_full_us_enabled
+                else "stopped"
+            ),
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="nse_exchange_sessions_schedule",
+            job_name="nse_exchange_sessions_job",
+            cron_schedule="0 6 1 * *",
+            execution_timezone="Asia/Kolkata",
+            intended_status=calendar_status,
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="tsx_exchange_sessions_schedule",
+            job_name="tsx_exchange_sessions_job",
+            cron_schedule="0 6 1 * *",
+            execution_timezone="America/Toronto",
+            intended_status=calendar_status,
+            notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="us_exchange_sessions_schedule",
+            job_name="us_exchange_sessions_job",
+            cron_schedule="0 6 1 * *",
+            execution_timezone="America/New_York",
+            intended_status=calendar_status,
+            notes="Configured intent only; actual Dagster controls remain private.",
         ),
         PipelineScheduleStatusRow(
             schedule_name="north_america_daily_yfinance_schedule",
