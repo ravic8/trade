@@ -29,7 +29,11 @@ def analyst_role_statements(role_name: str, database_name: str) -> Sequence[str]
         f"GRANT USAGE ON SCHEMA analytics TO {role}",
         f"GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO {role}",
         f"ALTER DEFAULT PRIVILEGES IN SCHEMA analytics GRANT SELECT ON TABLES TO {role}",
+        f"ALTER ROLE {role} CONNECTION LIMIT 2",
         f"ALTER ROLE {role} SET default_transaction_read_only = on",
+        f"ALTER ROLE {role} SET statement_timeout = '5min'",
+        f"ALTER ROLE {role} SET idle_in_transaction_session_timeout = '1min'",
+        f"ALTER ROLE {role} SET lock_timeout = '5s'",
         f"ALTER ROLE {role} SET search_path = analytics",
     )
 
@@ -79,6 +83,13 @@ def revoke_analyst_role(database_url: str, role_name: str) -> None:
         raise ValueError("Analyst roles can only be managed on PostgreSQL.")
     with engine.begin() as connection:
         connection.execute(text(f"ALTER ROLE {role} NOLOGIN"))
+        connection.execute(
+            text(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE usename = :role_name AND pid <> pg_backend_pid()"
+            ),
+            {"role_name": role},
+        )
     engine.dispose()
 
 

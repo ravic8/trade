@@ -41,16 +41,26 @@ Dagster daily_research_pipeline_job
   -> per-stock full-history and rolling-window coverage
 ```
 
-Optional analytics paths are outbound-only. PostgreSQL remains authoritative:
+PostgreSQL remains authoritative. Analytics access is read-only and BigQuery
+synchronization is outbound-only:
 
 ```text
 PostgreSQL -> analytics schema views -> SSH-tunneled DBeaver read-only roles
+PostgreSQL -> analytics schema views -> internal CloudBeaver -> Cloudflare Access
 PostgreSQL -> bounded Dagster export -> BigQuery staging/MERGE -> reconciliation
 ```
 
 BigQuery is disabled by default. Durable synchronization state is retained in
 PostgreSQL and surfaced in Dagster metadata and the Data Console. See
 `docs/bigquery_sync_foundation.md`.
+
+Production CloudBeaver is an internal Compose service with no published port.
+The loopback-only Caddy entrypoint routes the dedicated analytics hostname to
+it over a dedicated internal Docker network, and Cloudflare Access provides the
+external identity gate. CloudBeaver is isolated from the application network
+and outbound internet. It uses individual local accounts and individual
+PostgreSQL analyst roles; database credentials are not stored in its
+version-controlled connection definition. See `docs/cloudbeaver_access.md`.
 
 Features and targets are intentionally separate. Feature rows describe what was
 known at date `T`; target rows describe outcomes after date `T`.

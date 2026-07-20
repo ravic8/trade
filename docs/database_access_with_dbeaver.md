@@ -11,6 +11,11 @@ the container to server loopback only:
 Do not open TCP 5432 or 5433 in the server firewall. Do not give analysts the
 application's `trade` database account.
 
+For browser-based access without installing the desktop client, use the
+CloudBeaver path in `docs/cloudbeaver_access.md`. CloudBeaver connects to
+PostgreSQL inside the production Compose network; this SSH guidance remains the
+supported path for the desktop DBeaver application.
+
 ## One-time server configuration
 
 Set the host port in `/opt/trade/.env`:
@@ -57,6 +62,11 @@ grants `SELECT` only on curated analytics views. Analysts do not receive direct
 access to application tables or credentials. The migration also removes the
 legacy `PUBLIC` create privilege from the `public` schema; the application
 owner retains its owner privileges.
+
+Each analyst role is additionally limited to two connections, a five-minute
+statement timeout, a one-minute idle transaction timeout, and a five-second
+lock timeout. These limits protect the operational database from accidental
+long-running browser or desktop sessions.
 
 ## DBeaver with its built-in SSH tunnel
 
@@ -152,7 +162,8 @@ creation:
   trade-research revoke-analyst-role analyst_name
 ```
 
-Also remove the person's SSH public key or disable their Linux account. Confirm
+The command also terminates existing sessions owned by the analyst role. Remove
+the person's SSH public key or disable their Linux account as well. Confirm
 revocation with `SELECT rolcanlogin FROM pg_roles WHERE rolname =
-'analyst_name';` as an administrator. Prefer `NOLOGIN` because it is immediate,
-auditable, and reversible; drop the role only after checking dependencies.
+'analyst_name';` as an administrator. Prefer `NOLOGIN` because it is auditable
+and reversible; drop the role only after checking dependencies.

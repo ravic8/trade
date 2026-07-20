@@ -36,6 +36,8 @@ mkdir_from_var() {
 require_command git
 require_command docker
 require_command curl
+require_command cmp
+require_command install
 require_file "$ENV_FILE"
 
 set -a
@@ -51,6 +53,9 @@ mkdir_from_var "${PROD_POSTGRES_DATA_DIR:-/opt/trade/postgres}"
 mkdir_from_var "${PROD_REDIS_DATA_DIR:-/opt/trade/redis}"
 mkdir_from_var "${PROD_QDRANT_DATA_DIR:-/opt/trade/qdrant}"
 mkdir_from_var "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}"
+cloudbeaver_workspace="${PROD_CLOUDBEAVER_WORKSPACE_DIR:-/opt/trade/cloudbeaver}"
+cloudbeaver_connections_dir="$cloudbeaver_workspace/GlobalConfiguration/.dbeaver"
+mkdir -p "$cloudbeaver_connections_dir"
 
 cd "$APP_DIR"
 
@@ -69,6 +74,23 @@ fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.yml")
 
+log "installing secret-free CloudBeaver connection policy"
+cloudbeaver_policy_changed=false
+install_cloudbeaver_policy() {
+  local source_file="$1"
+  local destination_file="$2"
+  if [[ ! -f "$destination_file" ]] || ! cmp -s "$source_file" "$destination_file"; then
+    install -m 0644 "$source_file" "$destination_file"
+    cloudbeaver_policy_changed=true
+  fi
+}
+install_cloudbeaver_policy \
+  "$APP_DIR/deploy/cloudbeaver/data-sources.json" \
+  "$cloudbeaver_connections_dir/data-sources.json"
+install_cloudbeaver_policy \
+  "$APP_DIR/deploy/cloudbeaver/data-sources-permissions.json" \
+  "$cloudbeaver_connections_dir/data-sources-permissions.json"
+
 # The private Dagster UI is an opt-in Compose profile. Preserve that choice
 # across deployments, but do not leave a running admin container on an image
 # built by an earlier release.
@@ -76,6 +98,10 @@ dagster_webserver_was_running=false
 if [[ -n "$("${compose[@]}" --profile admin ps --status running -q dagster-webserver)" ]]; then
   dagster_webserver_was_running=true
   log "running Dagster admin webserver detected; including it in this deployment"
+fi
+cloudbeaver_was_running=false
+if [[ -n "$("${compose[@]}" ps --status running -q cloudbeaver)" ]]; then
+  cloudbeaver_was_running=true
 fi
 
 log "validating compose config"
@@ -116,6 +142,11 @@ log "applying database migrations"
 
 log "starting production stack"
 "${compose[@]}" up -d --remove-orphans
+if [[ "$cloudbeaver_policy_changed" == true \
+  && "$cloudbeaver_was_running" == true ]]; then
+  log "restarting CloudBeaver to apply updated connection policy"
+  "${compose[@]}" restart cloudbeaver
+fi
 if [[ "$dagster_webserver_was_running" == true ]]; then
   log "recreating Dagster admin webserver with the current release image"
   "${compose[@]}" --profile admin up -d \
@@ -125,7 +156,10 @@ if [[ "$dagster_webserver_was_running" == true ]]; then
 fi
 
 health_url="${TRADE_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/api/health}"
+cloudbeaver_health_url="${TRADE_CLOUDBEAVER_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/}"
+cloudbeaver_host="${PROD_CLOUDBEAVER_HOST:-sql.example.com}"
 log "checking health at $health_url"
+log "checking CloudBeaver through Caddy at $cloudbeaver_health_url"
 if [[ "$dagster_webserver_was_running" == true ]]; then
   dagster_health_url="${TRADE_DAGSTER_HEALTH_URL:-http://127.0.0.1:${PROD_DAGSTER_WEB_PORT:-3000}}"
   log "checking Dagster admin health at $dagster_health_url"
@@ -133,10 +167,14 @@ fi
 
 for attempt in {1..30}; do
   api_health_ok=false
+  cloudbeaver_health_ok=false
   dagster_health_ok=true
 
   if curl -fsS "$health_url" >/dev/null; then
     api_health_ok=true
+  fi
+  if curl -fsS -H "Host: $cloudbeaver_host" "$cloudbeaver_health_url" >/dev/null; then
+    cloudbeaver_health_ok=true
   fi
   if [[ "$dagster_webserver_was_running" == true ]]; then
     dagster_health_ok=false
@@ -145,7 +183,9 @@ for attempt in {1..30}; do
     fi
   fi
 
-  if [[ "$api_health_ok" == true && "$dagster_health_ok" == true ]]; then
+  if [[ "$api_health_ok" == true \
+    && "$cloudbeaver_health_ok" == true \
+    && "$dagster_health_ok" == true ]]; then
     log "health check passed"
     "${compose[@]}" ps
     exit 0
@@ -156,7 +196,7 @@ done
 
 log "health check failed; recent service state follows"
 "${compose[@]}" ps >&2
-log_services=(api web)
+log_services=(api web cloudbeaver)
 if [[ "$dagster_webserver_was_running" == true ]]; then
   log_services+=(dagster-webserver)
 fi
