@@ -48,7 +48,7 @@ forecast values visually and semantically separate from realized values.
 
 ```text
 PostgreSQL/TimescaleDB ohlcv_daily (source of truth)
-  -> bounded Dagster Opportunity target asset
+  -> bounded instrument batches in the Dagster Opportunity target asset
   -> opportunity_targets_daily (idempotent natural key)
   -> GET /api/opportunities/daily
   -> React /opportunities
@@ -57,6 +57,14 @@ PostgreSQL/TimescaleDB ohlcv_daily (source of truth)
 The natural key is `(instrument_key, source, date, target_version)`. The
 pipeline groups previous closes by `(source, instrument_key)`, preventing a
 provider or instrument boundary from supplying `P`.
+
+The builder discovers instrument keys first and loads at most `batch_size`
+instruments at a time (50 by default). Every batch is independently and
+atomically upserted, and `target_runs.summary_json` records the completed batch
+count. A failed invocation is safe to restart with the same arguments because
+the natural-key upsert is idempotent. Incremental runs also load the exact last
+valid row before the dirty window for every instrument, so the first recomputed
+session retains the correct previous close without loading all history.
 
 The `analytics.opportunity_targets_daily` read-only view exposes the same
 dataset to DBeaver and CloudBeaver. BigQuery and a possible future ClickHouse
@@ -73,21 +81,32 @@ DC=(docker compose --env-file /opt/trade/.env -f /opt/trade/app/docker-compose.p
 
 "${DC[@]}" run --rm --no-deps api \
   trade-research build-opportunity-targets --exchange NSE --ohlcv-source yfinance \
-  --full-rebuild --keep-existing
+  --full-rebuild --keep-existing --batch-size 50
 
 "${DC[@]}" run --rm --no-deps api \
   trade-research build-opportunity-targets --exchange TSX --ohlcv-source yfinance \
-  --full-rebuild --keep-existing
+  --full-rebuild --keep-existing --batch-size 50
 
 "${DC[@]}" run --rm --no-deps api \
   trade-research build-opportunity-targets --exchange US --ohlcv-source yfinance \
-  --full-rebuild --keep-existing
+  --full-rebuild --keep-existing --batch-size 50
 ```
 
 Subsequent runs use `--incremental`, which recomputes a bounded dirty window so
 corrected OHLCV rows and previous-close relationships are updated
 idempotently. The v1 Opportunities contract uses the active cross-exchange
 `yfinance` daily feed for NSE, TSX, and US; PostgreSQL remains authoritative.
+
+For long production builds, run the command in `tmux`. If a process or host
+fails, repeat the same `--keep-existing` command; already committed batches are
+updated rather than duplicated. Use `--replace-exchange` only for an explicitly
+destructive clean rebuild because it deletes the selected exchange/source/version
+before the first batch and therefore restarts from empty after a failure.
+
+Each run writes per-batch Parquet artifacts below
+`processed/opportunities/<exchange>_daily_targets/<run_id>/` and an exchange
+manifest containing batch row counts and paths. The latest aggregate audit and
+summary remain at stable exchange-specific paths.
 
 ## Verification
 
@@ -102,6 +121,20 @@ SELECT
     count(*) FILTER (WHERE true_range <> true_upside + true_downside) AS bad_true_range,
     count(*) FILTER (WHERE quality_status = 'passed' AND previous_close IS NULL) AS bad_quality
 FROM public.opportunity_targets_daily;
+
+SELECT
+    run_id,
+    status,
+    rows,
+    symbols,
+    summary_json->>'completed_batches' AS completed_batches,
+    summary_json->>'batch_count' AS batch_count,
+    started_at,
+    finished_at
+FROM public.target_runs
+WHERE dataset_name = 'daily_opportunity_outcomes'
+ORDER BY started_at DESC
+LIMIT 20;
 ```
 
 Then verify the API and UI:

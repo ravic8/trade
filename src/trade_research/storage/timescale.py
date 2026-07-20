@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -4907,22 +4907,28 @@ class TimescaleStore:
         limit: int | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        instrument_keys: Sequence[str] | None = None,
     ) -> pd.DataFrame:
         query = (
             ohlcv_daily_table.select()
             .where(ohlcv_daily_table.c.exchange == exchange.upper())
-            .where(ohlcv_daily_table.c.source == source)
+            .where(ohlcv_daily_table.c.source == source.lower())
             .order_by(ohlcv_daily_table.c.instrument_key, ohlcv_daily_table.c.date)
         )
         if start_date is not None:
             query = query.where(ohlcv_daily_table.c.date >= start_date)
         if end_date is not None:
             query = query.where(ohlcv_daily_table.c.date <= end_date)
-        if limit:
+        if instrument_keys is not None:
+            selected_keys = tuple(dict.fromkeys(str(key) for key in instrument_keys if key))
+            if not selected_keys:
+                return pd.DataFrame()
+            query = query.where(ohlcv_daily_table.c.instrument_key.in_(selected_keys))
+        elif limit:
             keys_query = (
                 select(ohlcv_daily_table.c.instrument_key)
                 .where(ohlcv_daily_table.c.exchange == exchange.upper())
-                .where(ohlcv_daily_table.c.source == source)
+                .where(ohlcv_daily_table.c.source == source.lower())
                 .group_by(ohlcv_daily_table.c.instrument_key)
                 .order_by(ohlcv_daily_table.c.instrument_key)
                 .limit(limit)
@@ -4931,6 +4937,77 @@ class TimescaleStore:
                 keys = [row[0] for row in connection.execute(keys_query).all()]
             query = query.where(ohlcv_daily_table.c.instrument_key.in_(keys))
 
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return pd.DataFrame(rows)
+
+    def daily_ohlcv_instrument_keys(
+        self,
+        *,
+        exchange: str,
+        source: str,
+        start_date: date | None = None,
+        limit: int | None = None,
+    ) -> list[str]:
+        query = (
+            select(ohlcv_daily_table.c.instrument_key)
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.source == source.lower())
+            .distinct()
+            .order_by(ohlcv_daily_table.c.instrument_key)
+        )
+        if start_date is not None:
+            query = query.where(ohlcv_daily_table.c.date >= start_date)
+        if limit is not None:
+            query = query.limit(limit)
+        with self.engine.begin() as connection:
+            return [str(row[0]) for row in connection.execute(query).all()]
+
+    def preceding_valid_daily_ohlcv_frame(
+        self,
+        *,
+        exchange: str,
+        source: str,
+        instrument_keys: Sequence[str],
+        before_date: date,
+    ) -> pd.DataFrame:
+        selected_keys = tuple(dict.fromkeys(str(key) for key in instrument_keys if key))
+        if not selected_keys:
+            return pd.DataFrame()
+        valid = (
+            ohlcv_daily_table.c.open > 0,
+            ohlcv_daily_table.c.high > 0,
+            ohlcv_daily_table.c.low > 0,
+            ohlcv_daily_table.c.close > 0,
+            ohlcv_daily_table.c.volume >= 0,
+            ohlcv_daily_table.c.high >= ohlcv_daily_table.c.low,
+            ohlcv_daily_table.c.high >= ohlcv_daily_table.c.open,
+            ohlcv_daily_table.c.high >= ohlcv_daily_table.c.close,
+            ohlcv_daily_table.c.low <= ohlcv_daily_table.c.open,
+            ohlcv_daily_table.c.low <= ohlcv_daily_table.c.close,
+        )
+        ranked = (
+            select(
+                *ohlcv_daily_table.c,
+                func.row_number()
+                .over(
+                    partition_by=ohlcv_daily_table.c.instrument_key,
+                    order_by=ohlcv_daily_table.c.date.desc(),
+                )
+                .label("_opportunity_predecessor_rank"),
+            )
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.source == source.lower())
+            .where(ohlcv_daily_table.c.instrument_key.in_(selected_keys))
+            .where(ohlcv_daily_table.c.date < before_date)
+            .where(*valid)
+            .subquery()
+        )
+        query = (
+            select(*(ranked.c[column.name] for column in ohlcv_daily_table.columns))
+            .where(ranked.c._opportunity_predecessor_rank == 1)
+            .order_by(ranked.c.instrument_key, ranked.c.date)
+        )
         with self.engine.begin() as connection:
             rows = [dict(row) for row in connection.execute(query).mappings()]
         return pd.DataFrame(rows)
@@ -5154,6 +5231,34 @@ class TimescaleStore:
             connection.execute(target_runs_table.insert().values(row))
         return run_id
 
+    def update_target_run(
+        self,
+        run_id: str,
+        summary: Mapping[str, Any],
+        *,
+        status: str,
+        finished_at: datetime | None = None,
+    ) -> None:
+        finished = finished_at or datetime.now(UTC)
+        values = {
+            "status": status,
+            "finished_at": finished,
+            "rows": int(summary.get("row_count") or 0),
+            "symbols": int(summary.get("symbol_count") or 0),
+            "date_min": _nullable_date(summary.get("date_min")),
+            "date_max": _nullable_date(summary.get("date_max")),
+            "invalid_ohlcv_count": int(summary.get("invalid_ohlcv_count") or 0),
+            "summary_json": dict(summary),
+        }
+        with self.engine.begin() as connection:
+            updated = connection.execute(
+                target_runs_table.update()
+                .where(target_runs_table.c.run_id == run_id)
+                .values(**values)
+            )
+        if int(updated.rowcount or 0) != 1:
+            raise ValueError(f"Unknown target run: {run_id}")
+
     def insert_target_audits(
         self,
         audit: pd.DataFrame,
@@ -5268,6 +5373,22 @@ class TimescaleStore:
             for chunk in _chunks(rows, size=1_000):
                 connection.execute(opportunity_targets_daily_table.insert().values(chunk))
         return int(deleted.rowcount or 0), len(rows)
+
+    def delete_daily_opportunity_targets(
+        self,
+        *,
+        target_version: str,
+        exchange: str,
+        source: str,
+    ) -> int:
+        with self.engine.begin() as connection:
+            deleted = connection.execute(
+                opportunity_targets_daily_table.delete()
+                .where(opportunity_targets_daily_table.c.target_version == target_version)
+                .where(opportunity_targets_daily_table.c.exchange == exchange.upper())
+                .where(opportunity_targets_daily_table.c.source == source.lower())
+            )
+        return int(deleted.rowcount or 0)
 
     def daily_opportunity_target_frame(
         self,

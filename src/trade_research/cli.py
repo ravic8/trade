@@ -1705,8 +1705,16 @@ def build_opportunity_targets(
     ] = 90,
     limit: Annotated[
         int | None,
-        typer.Option(help="Optional symbol limit for a smoke test."),
+        typer.Option(min=1, help="Optional symbol limit for a smoke test."),
     ] = None,
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            max=500,
+            help="Maximum instruments loaded and committed in one bounded batch.",
+        ),
+    ] = 50,
 ) -> None:
     """Build the completed-session variables displayed on Opportunities."""
     try:
@@ -1718,6 +1726,7 @@ def build_opportunity_targets(
             replace_exchange=replace_exchange,
             recompute_lookback_days=recompute_lookback_days,
             limit=limit,
+            batch_size=batch_size,
         )
     except ValueError as exc:
         raise typer.Exit(str(exc)) from exc
