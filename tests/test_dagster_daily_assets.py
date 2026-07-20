@@ -47,6 +47,19 @@ def test_bigquery_asset_passes_dagster_scope_and_emits_disabled_status(monkeypat
     }
 
 
+def test_bigquery_canary_asset_uses_fixed_canary_runner(monkeypatch) -> None:
+    monkeypatch.setattr(
+        daily_assets,
+        "run_bigquery_tsx_canary",
+        lambda: daily_assets.BigQuerySyncResult(run_id="tsx-canary", status="completed"),
+    )
+
+    result = daily_assets.bigquery_tsx_ohlcv_canary(dagster.build_op_context())
+
+    assert result.run_id == "tsx-canary"
+    assert result.status == "completed"
+
+
 def test_daily_feature_asset_calls_pipeline_after_validation(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

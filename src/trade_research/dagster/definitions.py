@@ -2,6 +2,7 @@ from dagster import DefaultScheduleStatus, Definitions, ScheduleDefinition, defi
 
 from trade_research.dagster.daily_assets import (
     bigquery_export_sync,
+    bigquery_tsx_ohlcv_canary,
     daily_features_v1,
     daily_pipeline_health,
     daily_targets_v1,
@@ -29,6 +30,11 @@ from trade_research.dagster.daily_assets import (
 bigquery_export_sync_job = define_asset_job(
     name="bigquery_export_sync_job",
     selection=[bigquery_export_sync],
+)
+
+bigquery_tsx_ohlcv_canary_job = define_asset_job(
+    name="bigquery_tsx_ohlcv_canary_job",
+    selection=[bigquery_tsx_ohlcv_canary],
 )
 
 nse_exchange_sessions_job = define_asset_job(
@@ -227,6 +233,7 @@ us_exchange_sessions_schedule = ScheduleDefinition(
 defs = Definitions(
     assets=[
         bigquery_export_sync,
+        bigquery_tsx_ohlcv_canary,
         upstox_daily_ohlcv,
         nse_daily_ohlcv,
         nse_exchange_sessions,
@@ -252,6 +259,7 @@ defs = Definitions(
     ],
     jobs=[
         bigquery_export_sync_job,
+        bigquery_tsx_ohlcv_canary_job,
         daily_research_pipeline_job,
         factor_research_job,
         north_america_daily_yfinance_job,

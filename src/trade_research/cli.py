@@ -12,6 +12,10 @@ from rich.table import Table
 from sqlalchemy.exc import SQLAlchemyError
 
 from trade_research.analytics import create_or_update_analyst_role, revoke_analyst_role
+from trade_research.analytics.bigquery import (
+    GoogleBigQueryGateway,
+    evaluate_bigquery_tsx_canary_readiness,
+)
 from trade_research.config import get_settings
 from trade_research.data import (
     UpstoxInstrumentMasterProvider,
@@ -280,6 +284,44 @@ def init_db() -> None:
     settings = get_settings()
     TimescaleStore(settings.database_url).initialize()
     console.print("Initialized TimescaleDB schema")
+
+
+@app.command("verify-bigquery-environment")
+def verify_bigquery_environment() -> None:
+    """Verify identity, project, both datasets, and locations without writing data."""
+    settings = get_settings()
+    if not settings.bigquery_enabled:
+        raise typer.BadParameter("BIGQUERY_ENABLED must be true for verification.")
+    verification = GoogleBigQueryGateway(settings).verify_environment()
+    table = Table(title="BigQuery Environment Verification (read-only)")
+    table.add_column("Field")
+    table.add_column("Verified value")
+    table.add_row("Authenticated identity", verification.authenticated_principal or "ADC")
+    table.add_row("Project", verification.project_id)
+    table.add_row(
+        "Core dataset",
+        f"{verification.core_dataset} ({verification.core_dataset_location})",
+    )
+    table.add_row(
+        "Reporting dataset",
+        f"{verification.reporting_dataset} ({verification.reporting_dataset_location})",
+    )
+    console.print(table)
+
+
+@app.command("bigquery-canary-readiness")
+def bigquery_canary_readiness() -> None:
+    """Evaluate the mandatory pair of TSX canary runs from durable state."""
+    settings = get_settings()
+    readiness = evaluate_bigquery_tsx_canary_readiness(
+        TimescaleStore(settings.database_url)
+    )
+    console.print(
+        f"TSX {readiness.year}: {readiness.reason} "
+        f"runs={','.join(readiness.successful_run_ids) or 'none'}"
+    )
+    if not readiness.ready_for_production:
+        raise typer.Exit(code=1)
 
 
 @app.command("create-analyst-role")

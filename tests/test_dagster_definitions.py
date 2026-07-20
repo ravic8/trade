@@ -64,3 +64,11 @@ def test_bigquery_export_job_and_schedule_are_registered_but_stopped() -> None:
         definitions.bigquery_daily_sync_schedule.default_status
         == dagster.DefaultScheduleStatus.STOPPED
     )
+    assert (
+        definitions.bigquery_tsx_ohlcv_canary_job.name
+        == "bigquery_tsx_ohlcv_canary_job"
+    )
+    assert all(
+        schedule.name != "bigquery_tsx_ohlcv_canary_schedule"
+        for schedule in definitions.defs.schedules
+    )

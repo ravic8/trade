@@ -9,6 +9,7 @@ from trade_research.analytics.bigquery import (
     DEFAULT_BIGQUERY_ENTITIES,
     BigQuerySyncResult,
     run_bigquery_sync,
+    run_bigquery_tsx_canary,
 )
 from trade_research.config import get_settings
 from trade_research.pipelines import (
@@ -64,6 +65,9 @@ def bigquery_export_sync(context) -> BigQuerySyncResult:
             "inserted_rows": result.inserted_rows,
             "updated_rows": result.updated_rows,
             "rejected_rows": result.rejected_rows,
+            "staging_row_count": result.staging_row_count,
+            "merged_row_count": result.merged_row_count,
+            "duplicate_business_key_count": result.duplicate_business_key_count,
             "retry_count": result.retry_count,
             "bigquery_job_id": result.bigquery_job_id or "",
             "partition_statuses": MetadataValue.json(result.partition_statuses),
@@ -72,6 +76,42 @@ def bigquery_export_sync(context) -> BigQuerySyncResult:
     )
     if result.status == "failed":
         raise RuntimeError(result.error_details or "BigQuery synchronization failed.")
+    return result
+
+
+@asset(
+    group_name="analytics_exports",
+    compute_kind="bigquery",
+    description=(
+        "Manually launched TSX latest-completed-year OHLCV canary. It remains "
+        "independently gated and has no schedule."
+    ),
+)
+def bigquery_tsx_ohlcv_canary(context) -> BigQuerySyncResult:
+    result = run_bigquery_tsx_canary()
+    context.add_output_metadata(
+        {
+            "status": result.status,
+            "source_row_count": result.source_row_count,
+            "destination_row_count": result.destination_row_count,
+            "count_difference": result.count_difference,
+            "staging_row_count": result.staging_row_count,
+            "merged_row_count": result.merged_row_count,
+            "inserted_rows": result.inserted_rows,
+            "updated_rows": result.updated_rows,
+            "rejected_rows": result.rejected_rows,
+            "duplicate_business_key_count": result.duplicate_business_key_count,
+            "retry_count": result.retry_count,
+            "bigquery_job_id": result.bigquery_job_id or "",
+            "partition_statuses": MetadataValue.json(result.partition_statuses),
+            "error_details": result.error_details or "",
+        }
+    )
+    if result.status in {"failed", "gated"}:
+        raise RuntimeError(
+            result.error_details
+            or "BigQuery TSX canary is gated or failed reconciliation."
+        )
     return result
 
 

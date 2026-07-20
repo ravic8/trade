@@ -313,5 +313,9 @@ def test_bigquery_sync_observability_endpoint(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["enabled"] is False
+    assert payload["canary_enabled"] is False
+    assert payload["production_sync_enabled"] is False
+    assert payload["core_dataset"] == "trade_chain8_analytics"
+    assert payload["reporting_dataset"] == "trade_chain8_reporting"
     assert payload["runs"][0]["bigquery_job_id"] == "bq-job-1"
     assert payload["partitions"][0]["count_difference"] == 0

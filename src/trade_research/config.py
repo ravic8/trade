@@ -53,14 +53,26 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     bigquery_enabled: bool = False
+    bigquery_canary_enabled: bool = False
+    bigquery_production_sync_enabled: bool = False
     bigquery_project_id: str | None = None
-    bigquery_dataset: str = Field(default="trade_analytics", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    bigquery_core_dataset: str = Field(
+        default="trade_chain8_analytics",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    bigquery_reporting_dataset: str = Field(
+        default="trade_chain8_reporting",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    # Backward-compatible alias for installations using the Phase 9.2A variable.
+    bigquery_dataset: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     bigquery_location: str = "US"
     bigquery_auth_method: str = Field(
         default="adc",
         pattern="^(adc|service_account_file)$",
     )
     bigquery_credentials_path: Path | None = None
+    bigquery_expected_service_account_email: str | None = None
     bigquery_backfill_chunk_size: int = Field(default=10_000, ge=100, le=100_000)
     bigquery_retry_attempts: int = Field(default=3, ge=1, le=10)
 
@@ -177,11 +189,28 @@ class Settings(BaseSettings):
     def validate_yfinance_foundation_settings(self) -> Self:
         if self.bigquery_enabled and not self.bigquery_project_id:
             raise ValueError("BIGQUERY_PROJECT_ID is required when BIGQUERY_ENABLED=true")
+        if self.bigquery_dataset:
+            self.bigquery_core_dataset = self.bigquery_dataset
+        if self.bigquery_core_dataset == self.bigquery_reporting_dataset:
+            raise ValueError("BigQuery core and reporting datasets must be different")
+        if (self.bigquery_canary_enabled or self.bigquery_production_sync_enabled) and not (
+            self.bigquery_enabled
+        ):
+            raise ValueError("BigQuery canary/production gates require BIGQUERY_ENABLED=true")
         if self.bigquery_enabled and self.bigquery_auth_method == "service_account_file" and not (
             self.bigquery_credentials_path
         ):
             raise ValueError(
                 "BIGQUERY_CREDENTIALS_PATH is required for service_account_file authentication"
+            )
+        if (
+            self.bigquery_enabled
+            and self.bigquery_auth_method == "service_account_file"
+            and not self.bigquery_expected_service_account_email
+        ):
+            raise ValueError(
+                "BIGQUERY_EXPECTED_SERVICE_ACCOUNT_EMAIL is required for "
+                "service_account_file authentication"
             )
         if not (
             self.yfinance_minimum_rpm <= self.yfinance_initial_rpm <= self.yfinance_maximum_rpm

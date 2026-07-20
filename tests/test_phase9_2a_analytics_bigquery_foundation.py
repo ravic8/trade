@@ -39,7 +39,7 @@ def test_phase9_2a_migration_adds_sync_state_and_declares_curated_views(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260719_0007"
+    assert revision == "20260720_0008"
 
     migration_path = Path(
         "migrations/versions/20260719_0007_phase9_2a_analytics_bigquery_foundation.py"
@@ -126,6 +126,8 @@ class FakeBigQueryGateway:
             job_id=f"fake-job-{self.merge_calls}",
             inserted_rows=inserted,
             updated_rows=updated,
+            staging_row_count=len(rows),
+            merged_row_count=len(rows),
         )
 
     def reconcile(
@@ -150,7 +152,22 @@ class FakeBigQueryGateway:
             if rows and spec.watermark_field
             else None
         )
-        return ReconciliationResult(row_count=len(rows), watermark=watermark)
+        minimum_date = (
+            min(row[spec.date_field] for row in rows)
+            if rows and spec.date_field
+            else None
+        )
+        maximum_date = (
+            max(row[spec.date_field] for row in rows)
+            if rows and spec.date_field
+            else None
+        )
+        return ReconciliationResult(
+            row_count=len(rows),
+            watermark=watermark,
+            minimum_date=minimum_date,
+            maximum_date=maximum_date,
+        )
 
 
 def test_bigquery_sync_is_bounded_reconciled_and_resumable(tmp_path: Path) -> None:
@@ -182,6 +199,7 @@ def test_bigquery_sync_is_bounded_reconciled_and_resumable(tmp_path: Path) -> No
         _env_file=None,
         database_url=database_url,
         bigquery_enabled=True,
+        bigquery_production_sync_enabled=True,
         bigquery_project_id="analytics-project",
         bigquery_backfill_chunk_size=100,
     )
@@ -245,6 +263,7 @@ def test_bigquery_sync_resume_preserves_partition_attempt_count(tmp_path: Path) 
         _env_file=None,
         database_url=database_url,
         bigquery_enabled=True,
+        bigquery_production_sync_enabled=True,
         bigquery_project_id="analytics-project",
         bigquery_retry_attempts=1,
     )
