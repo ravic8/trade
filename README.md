@@ -123,6 +123,8 @@ Step 2 feature-layer design docs:
   evaluation, and reporting plan.
 - [Research UI Implementation Plan](docs/research_ui_plan.md): read-only local
   research console plan for pipeline progress and factor research review.
+- [Deployment Speed and Build Caching](docs/deployment_speed.md): implemented
+  BuildKit cache design, production measurements, and the future GHCR path.
 
 ## Folder Structure
 

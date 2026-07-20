@@ -381,9 +381,15 @@ hostname route through the same Caddy entrypoint.
 
 The private Dagster webserver remains opt-in through the `admin` Compose
 profile. If it is already running when a deployment starts, the deploy script
-also rebuilds and recreates it with the current release image and verifies its
-loopback-only HTTP endpoint. A stopped or never-started admin webserver remains
-stopped, so routine deployments do not enable the administrative UI.
+recreates it from the shared API/Dagster image and verifies its loopback-only
+HTTP endpoint. A stopped or never-started admin webserver remains stopped, so
+routine deployments do not enable the administrative UI.
+
+Production image builds use stable dependency layers and BuildKit package
+caches. FastAPI and both Dagster processes share one Python image, so the
+deployment builds it once. Build, migration, and total durations are recorded
+in the deployment log. See `docs/deployment_speed.md` for the implemented
+local-cache design and the proposed immutable GHCR second phase.
 
 ## Persistent Server Paths
 

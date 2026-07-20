@@ -5,6 +5,7 @@ APP_DIR="${TRADE_APP_DIR:-/opt/trade/app}"
 ENV_FILE="${TRADE_ENV_FILE:-/opt/trade/.env}"
 BRANCH="${TRADE_DEPLOY_BRANCH:-main}"
 DEPLOY_REEXECUTED="${TRADE_DEPLOY_REEXECUTED:-false}"
+deploy_started_seconds=$SECONDS
 
 log() {
   printf '[trade-deploy] %s\n' "$*"
@@ -124,10 +125,11 @@ log "validating compose config"
 "${compose[@]}" config >/dev/null
 
 log "building production images"
-"${compose[@]}" build
-if [[ "$dagster_webserver_was_running" == true ]]; then
-  "${compose[@]}" --profile admin build dagster-webserver
-fi
+# API, Dagster daemon, and the optional Dagster webserver intentionally share
+# one image tag. Building api once refreshes all three services.
+build_started_seconds=$SECONDS
+"${compose[@]}" build api web
+log "production image build completed in $((SECONDS - build_started_seconds))s"
 
 log "starting PostgreSQL for schema migration"
 "${compose[@]}" up -d postgres
@@ -153,8 +155,10 @@ if [[ "$database_ready" != true ]]; then
 fi
 
 log "applying database migrations"
+migration_started_seconds=$SECONDS
 "${compose[@]}" run --rm --no-deps api \
   alembic -c /app/alembic.ini upgrade head
+log "database migrations completed in $((SECONDS - migration_started_seconds))s"
 
 log "starting production stack"
 "${compose[@]}" up -d --remove-orphans
@@ -203,6 +207,7 @@ for attempt in {1..30}; do
     && "$cloudbeaver_health_ok" == true \
     && "$dagster_health_ok" == true ]]; then
     log "health check passed"
+    log "deployment completed in $((SECONDS - deploy_started_seconds))s"
     "${compose[@]}" ps
     exit 0
   fi

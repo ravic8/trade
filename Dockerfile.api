@@ -1,22 +1,48 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1.7
 
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
+FROM python:3.11-slim AS dependencies
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /build
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends build-essential
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# Dependency installation is isolated from frequently changing application
+# source. The placeholder package lets Hatchling build the distribution and
+# console entrypoint; runtime imports resolve to /app/src in the final image.
+COPY pyproject.toml README.md ./
+RUN mkdir -p src/trade_research \
+    && touch src/trade_research/__init__.py
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install .
+
+FROM python:3.11-slim AS runtime
+
+ENV PATH="/opt/venv/bin:${PATH}" \
+    PYTHONPATH=/app/src \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl build-essential \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends curl
 
-COPY pyproject.toml README.md ./
+COPY --from=dependencies /opt/venv /opt/venv
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
 COPY scripts ./scripts
-COPY docs ./docs
-
-RUN pip install -e .
 
 EXPOSE 8000
 

@@ -2,6 +2,7 @@ name: trade-prod
 
 services:
   web:
+    image: ${PROD_WEB_IMAGE:-trade-research-web:local}
     build:
       context: .
       dockerfile: Dockerfile.web
@@ -47,6 +48,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: ${PROD_API_IMAGE:-trade-research-api:local}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -168,6 +170,7 @@ services:
     restart: unless-stopped
 
   dagster-daemon:
+    image: ${PROD_API_IMAGE:-trade-research-api:local}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -274,6 +277,7 @@ services:
     restart: unless-stopped
 
   dagster-webserver:
+    image: ${PROD_API_IMAGE:-trade-research-api:local}
     build:
       context: .
       dockerfile: Dockerfile.api
