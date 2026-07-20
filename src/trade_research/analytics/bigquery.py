@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import DateTime as SQLDateTime
-from sqlalchemy import Table, func, select
+from sqlalchemy import Table, func, null, select
 
 from trade_research.config import Settings, get_settings
 from trade_research.storage.timescale import (
@@ -582,17 +582,17 @@ class GoogleBigQueryGateway:
                 )
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         watermark = (
-            f"CAST(MAX(`{spec.watermark_field}`) AS STRING)"
+            f"(SELECT CAST(MAX(`{spec.watermark_field}`) AS STRING) FROM scoped)"
             if spec.watermark_field
             else "CAST(NULL AS STRING)"
         )
         minimum_date = (
-            f"CAST(MIN(`{spec.date_field}`) AS STRING)"
+            f"(SELECT CAST(MIN(`{spec.date_field}`) AS STRING) FROM scoped)"
             if spec.date_field
             else "CAST(NULL AS STRING)"
         )
         maximum_date = (
-            f"CAST(MAX(`{spec.date_field}`) AS STRING)"
+            f"(SELECT CAST(MAX(`{spec.date_field}`) AS STRING) FROM scoped)"
             if spec.date_field
             else "CAST(NULL AS STRING)"
         )
@@ -610,9 +610,9 @@ class GoogleBigQueryGateway:
             )
             SELECT
               (SELECT COUNT(*) FROM scoped) AS row_count,
-              (SELECT {watermark} FROM scoped) AS watermark,
-              (SELECT {minimum_date} FROM scoped) AS minimum_date,
-              (SELECT {maximum_date} FROM scoped) AS maximum_date,
+              {watermark} AS watermark,
+              {minimum_date} AS minimum_date,
+              {maximum_date} AS maximum_date,
               COALESCE((SELECT SUM(excess_rows) FROM duplicate_keys), 0)
                 AS duplicate_business_key_count
             """,
@@ -1116,10 +1116,10 @@ def _source_metrics(
         end_date=end_date,
     ).subquery()
     watermark = (
-        func.max(scoped.c[spec.watermark_field]) if spec.watermark_field else func.null()
+        func.max(scoped.c[spec.watermark_field]) if spec.watermark_field else null()
     )
-    minimum_date = func.min(scoped.c[spec.date_field]) if spec.date_field else func.null()
-    maximum_date = func.max(scoped.c[spec.date_field]) if spec.date_field else func.null()
+    minimum_date = func.min(scoped.c[spec.date_field]) if spec.date_field else null()
+    maximum_date = func.max(scoped.c[spec.date_field]) if spec.date_field else null()
     duplicate_groups = (
         select((func.count() - 1).label("excess_rows"))
         .select_from(scoped)
