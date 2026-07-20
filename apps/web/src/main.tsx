@@ -9,10 +9,10 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { FactorResearchPage } from "./pages/FactorResearchPage";
 import { JobsPage } from "./pages/JobsPage";
 import { MLResearchPage } from "./pages/MLResearchPage";
+import { OpportunitiesPage } from "./pages/OpportunitiesPage";
 import { ProviderSettingsPage } from "./pages/ProviderSettingsPage";
 import { ResearchPage } from "./pages/ResearchPage";
 import { ResearchProgressPage } from "./pages/ResearchProgressPage";
-import { ScreenersPage } from "./pages/ScreenersPage";
 import { SymbolPage } from "./pages/SymbolPage";
 import "./styles.css";
 
@@ -34,7 +34,8 @@ const router = createBrowserRouter([
       { path: "/data", element: <DataPipelinePage /> },
       { path: "/data/availability", element: <Navigate to="/data" replace /> },
       { path: "/data/observability", element: <Navigate to="/data" replace /> },
-      { path: "/screeners", element: <ScreenersPage /> },
+      { path: "/opportunities", element: <OpportunitiesPage /> },
+      { path: "/screeners", element: <Navigate to="/opportunities" replace /> },
       { path: "/symbols/:ticker", element: <SymbolPage /> },
       { path: "/research", element: <ResearchPage /> },
       { path: "/research/progress", element: <ResearchProgressPage /> },

@@ -13,6 +13,7 @@ import {
   getDataPipelineRuns,
   getDataUniverseMembers,
   getDataUniverses,
+  getDailyOpportunities,
   getFactorIC,
   getFactorSummary,
   getJobRuns,
@@ -45,6 +46,7 @@ import {
 } from "./client";
 import type {
   ChatQueryRequest,
+  DailyOpportunitiesParams,
   DataAvailabilityParams,
   DataCoveragePreviewRequest,
   DataInstrumentSearchParams,
@@ -65,6 +67,13 @@ export function useMarketStatus() {
 
 export function useScreenerResults() {
   return useQuery({ queryKey: ["screener-results"], queryFn: getScreenerResults });
+}
+
+export function useDailyOpportunities(params: DailyOpportunitiesParams) {
+  return useQuery({
+    queryKey: ["daily-opportunities", params],
+    queryFn: () => getDailyOpportunities(params),
+  });
 }
 
 export function useCandles(ticker: string) {

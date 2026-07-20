@@ -1,4 +1,11 @@
-import type { Candle, JobRun, MarketStatus, ResearchNote, ScreenerResult } from "./types";
+import type {
+  Candle,
+  DailyOpportunitiesResponse,
+  JobRun,
+  MarketStatus,
+  ResearchNote,
+  ScreenerResult,
+} from "./types";
 
 export const marketStatus: MarketStatus[] = [
   {
@@ -57,6 +64,16 @@ export const screenerResults: ScreenerResult[] = [
     matchedAt: "2026-05-20T16:02:00+05:30",
   },
 ];
+
+export const dailyOpportunities: DailyOpportunitiesResponse = {
+  exchange: "NSE",
+  source: "yfinance",
+  target_version: "daily_opportunity_outcomes_v1_0",
+  session_date: null,
+  total: 0,
+  summary: {},
+  rows: [],
+};
 
 export const candles: Candle[] = Array.from({ length: 70 }, (_, index) => {
   const base = 100 + Math.sin(index / 5) * 4 + index * 0.08;

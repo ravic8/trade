@@ -1,9 +1,9 @@
 import * as echarts from "echarts";
 import { useEffect, useRef } from "react";
 
-import type { ScreenerResult } from "../api/types";
+import type { OpportunityTargetRow } from "../api/types";
 
-export function FeatureChart({ results }: { results: ScreenerResult[] }) {
+export function FeatureChart({ results }: { results: OpportunityTargetRow[] }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -17,21 +17,21 @@ export function FeatureChart({ results }: { results: ScreenerResult[] }) {
       grid: { top: 24, right: 16, bottom: 54, left: 36 },
       xAxis: {
         type: "category",
-        data: results.map((item) => item.ticker),
+        data: results.map((item) => item.symbol),
         axisLabel: { color: "#54656f" },
       },
       yAxis: { type: "value", axisLabel: { color: "#54656f" } },
       series: [
         {
-          name: "5D Up 1%",
+          name: "Upside",
           type: "bar",
-          data: results.map((item) => item.d5Up0100),
+          data: results.map((item) => Number(((item.upside ?? 0) * 100).toFixed(2))),
           itemStyle: { color: "#168a62" },
         },
         {
-          name: "5D Down 1%",
+          name: "Downside",
           type: "bar",
-          data: results.map((item) => item.d5Dn0100),
+          data: results.map((item) => Number(((item.downside ?? 0) * 100).toFixed(2))),
           itemStyle: { color: "#c2413a" },
         },
       ],

@@ -97,7 +97,7 @@ Core components:
 - **Dagster**: asset job and stopped-by-default schedule for the Upstox daily
   research pipeline. The local Python environment must include Dagster for this
   runtime to be active.
-- **FastAPI + React**: application shell for dashboard, screeners, Lens chat,
+- **FastAPI + React**: application shell for dashboard, Opportunities, Lens chat,
   research progress, and factor IC views. Some non-research endpoints and
   frontend calls intentionally fall back to mock data when live API/DB data is
   unavailable.
@@ -179,7 +179,7 @@ Partially implemented:
 - Lens chat. The API, policy, tool gateway, provenance objects, rate limit, and
   optional Gemini answer rewriting exist, but planning is deterministic rather
   than an LLM planner and feedback is accepted without persistence.
-- React UI. The dashboard, screeners, research chat, progress, factors, jobs,
+- React UI. The dashboard, Opportunities, research chat, progress, factors, jobs,
   and symbol routes exist, but several pages use mock fallback data when API or
   database data is unavailable.
 - Qdrant retrieval. Vector storage, embedding, and search helpers exist, but no

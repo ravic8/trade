@@ -24,6 +24,7 @@ from trade_research.pipelines import (
     run_factor_research_pipeline,
     run_ml_dataset_v1_pipeline,
     run_nse_daily_ohlcv_primary_pipeline,
+    run_opportunity_target_pipeline,
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
     run_yfinance_daily_ohlcv_pipeline,
@@ -272,6 +273,63 @@ def yfinance_canada_daily_ohlcv(context) -> PipelineRunResult:
         export_db_snapshot=True,
         trigger="dagster",
     )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="opportunity_analytics",
+    compute_kind="python",
+    ins={"daily_ohlcv": AssetIn("nse_daily_ohlcv")},
+    description=(
+        "Compute completed-session NSE Opportunity variables from OHLC and previous close."
+    ),
+)
+def nse_opportunity_targets_v1(
+    context,
+    daily_ohlcv: PipelineRunResult,
+) -> PipelineRunResult:
+    _assert_upstream_not_failed(daily_ohlcv)
+    result = run_opportunity_target_pipeline(
+        exchange="NSE",
+        ohlcv_source="yfinance",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="opportunity_analytics",
+    compute_kind="python",
+    ins={"daily_ohlcv": AssetIn("yfinance_canada_daily_ohlcv")},
+    description=(
+        "Compute completed-session TSX Opportunity variables from OHLC and previous close."
+    ),
+)
+def tsx_opportunity_targets_v1(
+    context,
+    daily_ohlcv: PipelineRunResult,
+) -> PipelineRunResult:
+    _assert_upstream_not_failed(daily_ohlcv)
+    result = run_opportunity_target_pipeline(exchange="TSX", ohlcv_source="yfinance")
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="opportunity_analytics",
+    compute_kind="python",
+    ins={"daily_ohlcv": AssetIn("yfinance_us_daily_ohlcv")},
+    description=(
+        "Compute completed-session US Opportunity variables from OHLC and previous close."
+    ),
+)
+def us_opportunity_targets_v1(
+    context,
+    daily_ohlcv: PipelineRunResult,
+) -> PipelineRunResult:
+    _assert_upstream_not_failed(daily_ohlcv)
+    result = run_opportunity_target_pipeline(exchange="US", ohlcv_source="yfinance")
     context.add_output_metadata(_result_metadata(result))
     return result
 

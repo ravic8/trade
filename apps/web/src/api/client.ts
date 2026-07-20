@@ -1,4 +1,10 @@
-import { candles, jobRuns, marketStatus, researchNotes, screenerResults } from "./mockData";
+import {
+  candles,
+  jobRuns,
+  marketStatus,
+  researchNotes,
+  screenerResults,
+} from "./mockData";
 import type {
   BigQuerySyncOverviewResponse,
   Candle,
@@ -19,6 +25,8 @@ import type {
   DataPipelineRunSummary,
   DataUniverseMemberRow,
   DataUniverseRow,
+  DailyOpportunitiesParams,
+  DailyOpportunitiesResponse,
   PipelineScheduleStatusRow,
   FactorICResponse,
   FactorSummaryResponse,
@@ -103,6 +111,19 @@ export function getMarketStatus(): Promise<MarketStatus[]> {
 
 export function getScreenerResults(): Promise<ScreenerResult[]> {
   return fetchJson("/api/screeners/intraday-range/latest", screenerResults);
+}
+
+export function getDailyOpportunities(
+  params: DailyOpportunitiesParams,
+): Promise<DailyOpportunitiesResponse> {
+  const query = new URLSearchParams({ exchange: params.exchange });
+  if (params.sessionDate) query.set("session_date", params.sessionDate);
+  if (params.symbol) query.set("symbol", params.symbol);
+  if (params.sortBy) query.set("sort_by", params.sortBy);
+  if (params.direction) query.set("direction", params.direction);
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.offset) query.set("offset", String(params.offset));
+  return strictFetchJson(`/api/opportunities/daily?${query.toString()}`);
 }
 
 export function getCandles(ticker: string): Promise<Candle[]> {

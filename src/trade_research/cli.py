@@ -44,6 +44,7 @@ from trade_research.pipelines import (
     run_lightgbm_predictions_v1_pipeline,
     run_ml_dataset_v1_pipeline,
     run_nse_yfinance_cutover_readiness,
+    run_opportunity_target_pipeline,
     run_prediction_backtest_v1_pipeline,
     run_processed_dataset_validation_pipeline,
     run_upstox_daily_ohlcv_pipeline,
@@ -61,6 +62,7 @@ from trade_research.pipelines import (
 from trade_research.storage import ParquetStore, TimescaleStore
 from trade_research.targets import (
     DAILY_FORWARD_TARGET_VERSION_V1_0,
+    DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
 )
 from trade_research.universe import (
     NSEUniverseProvider,
@@ -1666,6 +1668,64 @@ def build_daily_targets(
         console.print(
             f"[yellow]Excluded invalid OHLCV rows: {result.metrics['invalid_ohlcv_count']}[/yellow]"
         )
+    console.print(json.dumps(result.metrics, indent=2))
+
+
+@app.command("build-opportunity-targets")
+def build_opportunity_targets(
+    exchange: Annotated[
+        str,
+        typer.Option(help="Equity exchange: NSE, TSX, or US."),
+    ],
+    ohlcv_source: Annotated[
+        str,
+        typer.Option(help="Timescale OHLCV provider: upstox or yfinance."),
+    ] = "yfinance",
+    target_version: Annotated[
+        str,
+        typer.Option(help="Opportunity target definition version."),
+    ] = DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+    incremental: Annotated[
+        bool,
+        typer.Option(
+            "--incremental/--full-rebuild",
+            help="Recompute a bounded dirty window or all available history.",
+        ),
+    ] = True,
+    replace_exchange: Annotated[
+        bool,
+        typer.Option(
+            "--replace-exchange/--keep-existing",
+            help="Replace this exchange/source/version during a full rebuild.",
+        ),
+    ] = False,
+    recompute_lookback_days: Annotated[
+        int,
+        typer.Option(min=7, help="Calendar-day dirty window for incremental runs."),
+    ] = 90,
+    limit: Annotated[
+        int | None,
+        typer.Option(help="Optional symbol limit for a smoke test."),
+    ] = None,
+) -> None:
+    """Build the completed-session variables displayed on Opportunities."""
+    try:
+        result = run_opportunity_target_pipeline(
+            exchange=exchange,
+            ohlcv_source=ohlcv_source,
+            target_version=target_version,
+            incremental=incremental,
+            replace_exchange=replace_exchange,
+            recompute_lookback_days=recompute_lookback_days,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise typer.Exit(str(exc)) from exc
+
+    console.print(
+        f"Stored {result.rows} {exchange.upper()} Opportunity target rows "
+        f"(run_id={result.metrics['timescale_run_id']})."
+    )
     console.print(json.dumps(result.metrics, indent=2))
 
 
