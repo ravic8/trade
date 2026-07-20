@@ -47,12 +47,14 @@ synchronization is outbound-only:
 ```text
 PostgreSQL -> analytics schema views -> SSH-tunneled DBeaver read-only roles
 PostgreSQL -> analytics schema views -> internal CloudBeaver -> Cloudflare Access
-PostgreSQL -> bounded Dagster export -> BigQuery staging/MERGE -> reconciliation
+PostgreSQL -> bounded Dagster export -> BigQuery core staging/MERGE -> reconciliation
+           -> separately administered reporting authorized views -> Looker Studio
 ```
 
-BigQuery is disabled by default. Durable synchronization state is retained in
-PostgreSQL and surfaced in Dagster metadata and the Data Console. See
-`docs/bigquery_sync_foundation.md`.
+BigQuery has independent master, TSX-canary, and production-sync gates, all
+disabled by default. Both pre-existing US datasets are API-verified before a
+write. Durable synchronization state is retained in PostgreSQL and surfaced in
+Dagster metadata and the Data Console. See `docs/bigquery_sync_foundation.md`.
 
 Production CloudBeaver is an internal Compose service with no published port.
 The loopback-only Caddy entrypoint routes the dedicated analytics hostname to

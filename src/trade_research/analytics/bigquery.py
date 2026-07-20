@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -7,6 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from sqlalchemy import DateTime as SQLDateTime
 from sqlalchemy import Table, func, select
 
 from trade_research.config import Settings, get_settings
@@ -170,6 +173,7 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
         name="ingestion_runs",
         source_table=ingestion_runs_table,
         natural_keys=("run_id",),
+        date_field="started_at",
         watermark_field="started_at",
         cluster_fields=("exchange", "source", "status"),
         fields=tuple(
@@ -221,6 +225,7 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
         name="universe_lifecycle",
         source_table=symbol_lifecycle_events_table,
         natural_keys=("event_id",),
+        date_field="created_at",
         watermark_field="created_at",
         cluster_fields=("exchange", "event_type", "canonical_instrument_id"),
         fields=tuple(
@@ -246,17 +251,43 @@ class MergeResult:
     inserted_rows: int
     updated_rows: int
     rejected_rows: int = 0
+    staging_row_count: int = 0
+    merged_row_count: int = 0
 
 
 @dataclass(frozen=True)
 class ReconciliationResult:
     row_count: int
     watermark: str | None
+    duplicate_business_key_count: int = 0
+    minimum_date: date | None = None
+    maximum_date: date | None = None
     schema_drift: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class SourceMetrics:
+    row_count: int
+    watermark: str | None
+    duplicate_business_key_count: int
+    minimum_date: date | None
+    maximum_date: date | None
+
+
+@dataclass(frozen=True)
+class BigQueryEnvironmentVerification:
+    authenticated_principal: str | None
+    project_id: str
+    core_dataset: str
+    core_dataset_location: str
+    reporting_dataset: str
+    reporting_dataset_location: str
+
+
 class BigQueryGateway(Protocol):
-    def ensure_foundation(self, specs: Iterable[EntitySpec]) -> None: ...
+    def ensure_foundation(
+        self, specs: Iterable[EntitySpec]
+    ) -> BigQueryEnvironmentVerification | None: ...
 
     def merge_rows(
         self,
@@ -286,10 +317,21 @@ class BigQuerySyncResult:
     inserted_rows: int = 0
     updated_rows: int = 0
     rejected_rows: int = 0
+    staging_row_count: int = 0
+    merged_row_count: int = 0
+    duplicate_business_key_count: int = 0
     retry_count: int = 0
     bigquery_job_id: str | None = None
     error_details: str | None = None
     partition_statuses: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BigQueryCanaryReadiness:
+    ready_for_production: bool
+    year: int
+    successful_run_ids: tuple[str, ...]
+    reason: str
 
 
 class GoogleBigQueryGateway:
@@ -299,12 +341,19 @@ class GoogleBigQueryGateway:
         from google.cloud import bigquery
 
         credentials = None
+        authenticated_principal = None
         if settings.bigquery_auth_method == "service_account_file":
             from google.oauth2 import service_account
 
+            _validate_credentials_file(settings.bigquery_credentials_path)
             credentials = service_account.Credentials.from_service_account_file(
                 str(settings.bigquery_credentials_path)
             )
+            authenticated_principal = credentials.service_account_email
+            if authenticated_principal != settings.bigquery_expected_service_account_email:
+                raise RuntimeError(
+                    "BigQuery credentials do not belong to the configured exporter identity."
+                )
         self._bigquery = bigquery
         self._client = bigquery.Client(
             project=settings.bigquery_project_id,
@@ -312,23 +361,62 @@ class GoogleBigQueryGateway:
             location=settings.bigquery_location,
         )
         self.project_id = str(settings.bigquery_project_id)
-        self.dataset = settings.bigquery_dataset
+        self.core_dataset = settings.bigquery_core_dataset
+        self.reporting_dataset = settings.bigquery_reporting_dataset
         self.location = settings.bigquery_location
+        self.authenticated_principal = authenticated_principal
 
     @property
     def dataset_id(self) -> str:
-        return f"{self.project_id}.{self.dataset}"
+        return f"{self.project_id}.{self.core_dataset}"
 
-    def ensure_foundation(self, specs: Iterable[EntitySpec]) -> None:
+    @property
+    def reporting_dataset_id(self) -> str:
+        return f"{self.project_id}.{self.reporting_dataset}"
+
+    def verify_environment(self) -> BigQueryEnvironmentVerification:
         from google.api_core.exceptions import NotFound
 
-        try:
-            self._client.get_dataset(self.dataset_id)
-        except NotFound as exc:
-            raise RuntimeError(
-                f"BigQuery dataset {self.dataset_id} does not exist; create it in "
-                f"{self.location} before enabling synchronization."
-            ) from exc
+        datasets = []
+        for purpose, dataset_id in (
+            ("core", self.dataset_id),
+            ("reporting", self.reporting_dataset_id),
+        ):
+            try:
+                dataset = self._client.get_dataset(
+                    dataset_id,
+                    dataset_view=self._bigquery.enums.DatasetView.METADATA,
+                )
+            except NotFound as exc:
+                raise RuntimeError(
+                    f"Configured BigQuery {purpose} dataset does not exist."
+                ) from exc
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Unable to verify the configured BigQuery {purpose} dataset via the API."
+                ) from exc
+            actual_location = str(dataset.location)
+            if actual_location.upper() != self.location.upper():
+                raise RuntimeError(
+                    f"BigQuery {purpose} dataset location is {actual_location}; "
+                    f"expected {self.location}."
+                )
+            datasets.append(actual_location)
+        return BigQueryEnvironmentVerification(
+            authenticated_principal=self.authenticated_principal,
+            project_id=self.project_id,
+            core_dataset=self.core_dataset,
+            core_dataset_location=datasets[0],
+            reporting_dataset=self.reporting_dataset,
+            reporting_dataset_location=datasets[1],
+        )
+
+    def ensure_foundation(
+        self, specs: Iterable[EntitySpec]
+    ) -> BigQueryEnvironmentVerification:
+        # This must remain the first operation: no table or staging write is allowed
+        # until both pre-existing datasets have been verified through BigQuery's API.
+        verification = self.verify_environment()
         for spec in specs:
             table = self._bigquery.Table(
                 f"{self.dataset_id}.{spec.name}",
@@ -341,11 +429,12 @@ class GoogleBigQueryGateway:
                 table.time_partitioning = self._bigquery.TimePartitioning(
                     type_=self._bigquery.TimePartitioningType.MONTH,
                     field=spec.partition_field,
-                    require_partition_filter=spec.require_partition_filter,
                 )
+                table.require_partition_filter = spec.require_partition_filter
             if spec.cluster_fields:
                 table.clustering_fields = list(spec.cluster_fields)
             self._client.create_table(table, exists_ok=True)
+        return verification
 
     def merge_rows(
         self,
@@ -380,6 +469,32 @@ class GoogleBigQueryGateway:
             )
             load_job.result()
             key_match = " AND ".join(f"T.`{key}` = S.`{key}`" for key in spec.natural_keys)
+            merge_parameters: list[Any] = []
+            if spec.partition_field:
+                partition_values = [
+                    parsed
+                    for row in rows
+                    if row.get(spec.partition_field) is not None
+                    and (parsed := _as_date(row[spec.partition_field])) is not None
+                ]
+                if partition_values:
+                    key_match += (
+                        f" AND T.`{spec.partition_field}` BETWEEN "
+                        "@merge_start_date AND @merge_end_date"
+                    )
+                    merge_parameters.extend(
+                        [
+                            self._bigquery.ScalarQueryParameter(
+                                "merge_start_date", "DATE", min(partition_values)
+                            ),
+                            self._bigquery.ScalarQueryParameter(
+                                "merge_end_date", "DATE", max(partition_values)
+                            ),
+                        ]
+                    )
+            merge_job_config = self._bigquery.QueryJobConfig(
+                query_parameters=merge_parameters
+            )
             classification = self._client.query(
                 f"""
                 SELECT COUNTIF(T.`{spec.natural_keys[0]}` IS NULL) AS inserted_rows,
@@ -387,6 +502,7 @@ class GoogleBigQueryGateway:
                 FROM `{staging_id}` AS S
                 LEFT JOIN `{target_id}` AS T ON {key_match}
                 """,
+                job_config=merge_job_config,
                 location=self.location,
             ).result()
             counts = next(iter(classification))
@@ -403,6 +519,7 @@ class GoogleBigQueryGateway:
                 WHEN MATCHED THEN UPDATE SET {update_sql}
                 WHEN NOT MATCHED THEN INSERT ({insert_columns}) VALUES ({insert_values})
                 """,
+                job_config=merge_job_config,
                 location=self.location,
             )
             merge_job.result()
@@ -410,6 +527,10 @@ class GoogleBigQueryGateway:
                 job_id=str(merge_job.job_id),
                 inserted_rows=int(counts["inserted_rows"]),
                 updated_rows=int(counts["updated_rows"]),
+                staging_row_count=len(rows),
+                merged_row_count=(
+                    int(counts["inserted_rows"]) + int(counts["updated_rows"])
+                ),
             )
         finally:
             self._client.delete_table(staging_id, not_found_ok=True)
@@ -428,23 +549,73 @@ class GoogleBigQueryGateway:
             clauses.append(f"`{spec.exchange_field}` = @exchange")
             parameters.append(self._bigquery.ScalarQueryParameter("exchange", "STRING", exchange))
         if spec.date_field and start_date and end_date:
-            clauses.append(f"`{spec.date_field}` BETWEEN @start_date AND @end_date")
-            parameters.extend(
-                [
-                    self._bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-                    self._bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
-                ]
-            )
+            if _bigquery_field_type(spec, spec.date_field) == "TIMESTAMP":
+                clauses.append(
+                    f"`{spec.date_field}` >= @start_timestamp "
+                    f"AND `{spec.date_field}` < @end_timestamp"
+                )
+                parameters.extend(
+                    [
+                        self._bigquery.ScalarQueryParameter(
+                            "start_timestamp",
+                            "TIMESTAMP",
+                            datetime.combine(start_date, datetime.min.time(), tzinfo=UTC),
+                        ),
+                        self._bigquery.ScalarQueryParameter(
+                            "end_timestamp",
+                            "TIMESTAMP",
+                            datetime.combine(
+                                end_date + timedelta(days=1),
+                                datetime.min.time(),
+                                tzinfo=UTC,
+                            ),
+                        ),
+                    ]
+                )
+            else:
+                clauses.append(f"`{spec.date_field}` BETWEEN @start_date AND @end_date")
+                parameters.extend(
+                    [
+                        self._bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                        self._bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+                    ]
+                )
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         watermark = (
             f"CAST(MAX(`{spec.watermark_field}`) AS STRING)"
             if spec.watermark_field
             else "CAST(NULL AS STRING)"
         )
+        minimum_date = (
+            f"CAST(MIN(`{spec.date_field}`) AS STRING)"
+            if spec.date_field
+            else "CAST(NULL AS STRING)"
+        )
+        maximum_date = (
+            f"CAST(MAX(`{spec.date_field}`) AS STRING)"
+            if spec.date_field
+            else "CAST(NULL AS STRING)"
+        )
+        natural_keys = ", ".join(f"`{key}`" for key in spec.natural_keys)
         job_config = self._bigquery.QueryJobConfig(query_parameters=parameters)
         result = self._client.query(
-            f"SELECT COUNT(*) AS row_count, {watermark} AS watermark "
-            f"FROM `{self.dataset_id}.{spec.name}`{where}",
+            f"""
+            WITH scoped AS (
+              SELECT * FROM `{self.dataset_id}.{spec.name}`{where}
+            ), duplicate_keys AS (
+              SELECT COUNT(*) - 1 AS excess_rows
+              FROM scoped
+              GROUP BY {natural_keys}
+              HAVING COUNT(*) > 1
+            )
+            SELECT
+              (SELECT COUNT(*) FROM scoped) AS row_count,
+              (SELECT {watermark} FROM scoped) AS watermark,
+              (SELECT {minimum_date} FROM scoped) AS minimum_date,
+              (SELECT {maximum_date} FROM scoped) AS maximum_date,
+              COALESCE((SELECT SUM(excess_rows) FROM duplicate_keys), 0)
+                AS duplicate_business_key_count
+            """,
             job_config=job_config,
             location=self.location,
         ).result()
@@ -456,6 +627,9 @@ class GoogleBigQueryGateway:
         return ReconciliationResult(
             row_count=int(row["row_count"]),
             watermark=row["watermark"],
+            duplicate_business_key_count=int(row["duplicate_business_key_count"]),
+            minimum_date=_as_date(row["minimum_date"]),
+            maximum_date=_as_date(row["maximum_date"]),
             schema_drift=drift,
         )
 
@@ -471,11 +645,18 @@ def run_bigquery_sync(
     trigger: str = "dagster",
     run_id: str | None = None,
     today: date | None = None,
+    mode: str = "production",
 ) -> BigQuerySyncResult:
     settings = settings or get_settings()
     selected_run_id = run_id or str(uuid4())
     if not settings.bigquery_enabled:
         return BigQuerySyncResult(run_id=selected_run_id, status="disabled")
+    if mode not in {"canary", "production"}:
+        raise ValueError("mode must be canary or production")
+    if mode == "canary" and not settings.bigquery_canary_enabled:
+        return BigQuerySyncResult(run_id=selected_run_id, status="gated")
+    if mode == "production" and not settings.bigquery_production_sync_enabled:
+        return BigQuerySyncResult(run_id=selected_run_id, status="gated")
     selected_specs = _selected_specs(entities)
     canonical_exchange = exchange.upper() if exchange else None
     if canonical_exchange and canonical_exchange not in {"NSE", "TSX", "US"}:
@@ -507,7 +688,16 @@ def run_bigquery_sync(
     bigquery_job_id: str | None = None
     schema_drift: dict[str, Any] = {}
     try:
-        gateway.ensure_foundation(selected_specs)
+        # Establish the complete Phase 9.2B table contract while extraction remains
+        # limited to the explicitly selected canary or production entities.
+        verification = gateway.ensure_foundation(ENTITY_SPECS.values())
+        if verification is not None:
+            run_row.update(
+                authenticated_principal=verification.authenticated_principal,
+                reporting_dataset=verification.reporting_dataset,
+                updated_at=datetime.now(UTC),
+            )
+            store.upsert_bigquery_sync_run(run_row)
         for spec in selected_specs:
             existing = existing_partitions.get(spec.name)
             if existing and existing["status"] == "completed":
@@ -571,6 +761,7 @@ def run_bigquery_sync(
                 )
                 store.upsert_bigquery_sync_partition(partition)
                 statuses[spec.name] = "failed"
+                _add_partition_totals(totals, partition)
                 raise
         finished = datetime.now(UTC)
         run_row.update(
@@ -591,7 +782,16 @@ def run_bigquery_sync(
             status="completed",
             partition_statuses=statuses,
             bigquery_job_id=bigquery_job_id,
-            **{key: totals[key] for key in _result_total_keys()},
+            source_row_count=totals["source_row_count"],
+            destination_row_count=totals["destination_row_count"],
+            count_difference=totals["count_difference"],
+            inserted_rows=totals["inserted_rows"],
+            updated_rows=totals["updated_rows"],
+            rejected_rows=totals["rejected_rows"],
+            staging_row_count=totals["staging_row_count"],
+            merged_row_count=totals["merged_row_count"],
+            duplicate_business_key_count=totals["duplicate_business_key_count"],
+            retry_count=totals["retry_count"],
         )
     except Exception as exc:
         failed_at = datetime.now(UTC)
@@ -614,8 +814,116 @@ def run_bigquery_sync(
             error_details=str(exc),
             partition_statuses=statuses,
             bigquery_job_id=bigquery_job_id,
-            **{key: totals[key] for key in _result_total_keys()},
+            source_row_count=totals["source_row_count"],
+            destination_row_count=totals["destination_row_count"],
+            count_difference=totals["count_difference"],
+            inserted_rows=totals["inserted_rows"],
+            updated_rows=totals["updated_rows"],
+            rejected_rows=totals["rejected_rows"],
+            staging_row_count=totals["staging_row_count"],
+            merged_row_count=totals["merged_row_count"],
+            duplicate_business_key_count=totals["duplicate_business_key_count"],
+            retry_count=totals["retry_count"],
         )
+
+
+def run_bigquery_tsx_canary(
+    *,
+    settings: Settings | None = None,
+    store: TimescaleStore | None = None,
+    gateway: BigQueryGateway | None = None,
+    today: date | None = None,
+) -> BigQuerySyncResult:
+    """Run the fixed, bounded TSX latest-completed-year OHLCV canary."""
+    current_date = today or datetime.now(UTC).date()
+    return run_bigquery_sync(
+        settings=settings,
+        store=store,
+        gateway=gateway,
+        exchange="TSX",
+        year=current_date.year - 1,
+        entities=("ohlcv_daily",),
+        trigger="dagster_tsx_canary",
+        today=current_date,
+        mode="canary",
+    )
+
+
+def evaluate_bigquery_tsx_canary_readiness(
+    store: TimescaleStore,
+    *,
+    today: date | None = None,
+) -> BigQueryCanaryReadiness:
+    """Require two reconciled, equivalent canary runs before production promotion."""
+    year = (today or datetime.now(UTC).date()).year - 1
+    candidates = [
+        run
+        for run in store.bigquery_sync_runs(limit=100)
+        if run.get("trigger") == "dagster_tsx_canary"
+        and run.get("exchange") == "TSX"
+        and int(run.get("year") or 0) == year
+        and run.get("entities") == ["ohlcv_daily"]
+        and run.get("status") == "completed"
+    ][:2]
+    if len(candidates) < 2:
+        return BigQueryCanaryReadiness(
+            ready_for_production=False,
+            year=year,
+            successful_run_ids=tuple(str(run["run_id"]) for run in candidates),
+            reason="Two completed TSX canary runs are required.",
+        )
+    partition_sets = [
+        store.bigquery_sync_partitions(run_id=str(run["run_id"]), limit=10)
+        for run in candidates
+    ]
+    if any(not rows for rows in partition_sets):
+        return BigQueryCanaryReadiness(
+            ready_for_production=False,
+            year=year,
+            successful_run_ids=tuple(str(run["run_id"]) for run in candidates),
+            reason="A completed TSX canary run is missing partition evidence.",
+        )
+    partitions = [rows[0] for rows in partition_sets]
+    required_zero_fields = (
+        "count_difference",
+        "rejected_rows",
+        "duplicate_business_key_count",
+    )
+    comparable_fields = (
+        "source_row_count",
+        "destination_row_count",
+        "source_watermark",
+        "destination_watermark",
+        "source_min_date",
+        "source_max_date",
+        "destination_min_date",
+        "destination_max_date",
+    )
+    reconciled = all(
+        partition.get("status") == "completed"
+        and not partition.get("schema_drift")
+        and all(int(partition.get(field) or 0) == 0 for field in required_zero_fields)
+        and partition.get("source_row_count") == partition.get("destination_row_count")
+        and partition.get("source_watermark") == partition.get("destination_watermark")
+        and partition.get("source_min_date") == partition.get("destination_min_date")
+        and partition.get("source_max_date") == partition.get("destination_max_date")
+        for partition in partitions
+    )
+    identical = all(
+        partitions[0].get(field) == partitions[1].get(field)
+        for field in comparable_fields
+    )
+    ready = reconciled and identical
+    return BigQueryCanaryReadiness(
+        ready_for_production=ready,
+        year=year,
+        successful_run_ids=tuple(str(run["run_id"]) for run in candidates),
+        reason=(
+            "Two reconciled, equivalent TSX canary runs passed."
+            if ready
+            else "The two latest TSX canary runs are not reconciled and equivalent."
+        ),
+    )
 
 
 def _sync_entity(
@@ -634,10 +942,21 @@ def _sync_entity(
     partition["attempt_count"] = int(partition["attempt_count"]) + 1
     partition["updated_at"] = datetime.now(UTC)
     store.upsert_bigquery_sync_partition(partition)
-    source_count, source_watermark = _source_metrics(
+    source = _source_metrics(
         store, spec, exchange=exchange, start_date=start_date, end_date=end_date
     )
-    inserted = updated = rejected = retries = 0
+    partition.update(
+        source_row_count=source.row_count,
+        source_watermark=source.watermark,
+        source_min_date=source.minimum_date,
+        source_max_date=source.maximum_date,
+        duplicate_business_key_count=source.duplicate_business_key_count,
+        updated_at=datetime.now(UTC),
+    )
+    store.upsert_bigquery_sync_partition(partition)
+    if source.duplicate_business_key_count:
+        raise RuntimeError("Source contains duplicate BigQuery business keys.")
+    inserted = updated = rejected = retries = staging = merged = 0
     last_job_id: str | None = None
     for chunk_index, rows in enumerate(
         _extract_batches(
@@ -659,6 +978,8 @@ def _sync_entity(
                 inserted += merge.inserted_rows
                 updated += merge.updated_rows
                 rejected += merge.rejected_rows
+                staging += merge.staging_row_count
+                merged += merge.merged_row_count
                 last_job_id = merge.job_id
                 break
             except Exception:
@@ -672,17 +993,38 @@ def _sync_entity(
         start_date=start_date,
         end_date=end_date,
     )
-    difference = source_count - destination.row_count
+    difference = source.row_count - destination.row_count
+    duplicate_count = max(
+        source.duplicate_business_key_count,
+        destination.duplicate_business_key_count,
+    )
+    reconciliation_failed = bool(
+        difference
+        or destination.schema_drift
+        or duplicate_count
+        or rejected
+        or _normalized_watermark(source.watermark)
+        != _normalized_watermark(destination.watermark)
+        or source.minimum_date != destination.minimum_date
+        or source.maximum_date != destination.maximum_date
+    )
     finished = datetime.now(UTC)
     partition.update(
-        status="completed" if difference == 0 and not destination.schema_drift else "failed",
-        source_row_count=source_count,
+        status="failed" if reconciliation_failed else "completed",
+        source_row_count=source.row_count,
         destination_row_count=destination.row_count,
         count_difference=difference,
         inserted_rows=inserted,
         updated_rows=updated,
         rejected_rows=rejected,
-        source_watermark=source_watermark,
+        staging_row_count=staging,
+        merged_row_count=merged,
+        duplicate_business_key_count=duplicate_count,
+        source_min_date=source.minimum_date,
+        source_max_date=source.maximum_date,
+        destination_min_date=destination.minimum_date,
+        destination_max_date=destination.maximum_date,
+        source_watermark=source.watermark,
         destination_watermark=destination.watermark,
         bigquery_job_id=last_job_id,
         duration_seconds=(
@@ -691,7 +1033,7 @@ def _sync_entity(
         schema_drift=destination.schema_drift,
         error_details=(
             "Reconciliation failed: source/destination counts or schemas differ."
-            if difference != 0 or destination.schema_drift
+            if reconciliation_failed
             else None
         ),
         updated_at=finished,
@@ -720,9 +1062,21 @@ def _source_query(
     if exchange and spec.exchange_field:
         query = query.where(spec.source_table.c[spec.exchange_field] == exchange)
     if spec.date_field:
-        query = query.where(spec.source_table.c[spec.date_field] >= start_date).where(
-            spec.source_table.c[spec.date_field] <= end_date
-        )
+        source_column = spec.source_table.c[spec.date_field]
+        if isinstance(source_column.type, SQLDateTime):
+            query = query.where(
+                source_column
+                >= datetime.combine(start_date, datetime.min.time(), tzinfo=UTC)
+            ).where(
+                source_column
+                < datetime.combine(
+                    end_date + timedelta(days=1),
+                    datetime.min.time(),
+                    tzinfo=UTC,
+                )
+            )
+        else:
+            query = query.where(source_column >= start_date).where(source_column <= end_date)
     return query
 
 
@@ -754,7 +1108,7 @@ def _source_metrics(
     exchange: str | None,
     start_date: date,
     end_date: date,
-) -> tuple[int, str | None]:
+) -> SourceMetrics:
     scoped = _source_query(
         spec,
         exchange=exchange,
@@ -764,14 +1118,35 @@ def _source_metrics(
     watermark = (
         func.max(scoped.c[spec.watermark_field]) if spec.watermark_field else func.null()
     )
+    minimum_date = func.min(scoped.c[spec.date_field]) if spec.date_field else func.null()
+    maximum_date = func.max(scoped.c[spec.date_field]) if spec.date_field else func.null()
+    duplicate_groups = (
+        select((func.count() - 1).label("excess_rows"))
+        .select_from(scoped)
+        .group_by(*(scoped.c[key] for key in spec.natural_keys))
+        .having(func.count() > 1)
+        .subquery()
+    )
+    duplicate_count = select(
+        func.coalesce(func.sum(duplicate_groups.c.excess_rows), 0)
+    ).scalar_subquery()
     with store.engine.begin() as connection:
         row = connection.execute(
             select(
                 func.count().label("row_count"),
                 watermark.label("watermark"),
+                minimum_date.label("minimum_date"),
+                maximum_date.label("maximum_date"),
+                duplicate_count.label("duplicate_business_key_count"),
             ).select_from(scoped)
         ).mappings().one()
-    return int(row["row_count"]), str(row["watermark"]) if row["watermark"] is not None else None
+    return SourceMetrics(
+        row_count=int(row["row_count"]),
+        watermark=str(row["watermark"]) if row["watermark"] is not None else None,
+        duplicate_business_key_count=int(row["duplicate_business_key_count"]),
+        minimum_date=_as_date(row["minimum_date"]),
+        maximum_date=_as_date(row["maximum_date"]),
+    )
 
 
 def _selected_specs(entities: Sequence[str]) -> list[EntitySpec]:
@@ -806,7 +1181,9 @@ def _new_run_row(
         "trigger": trigger,
         "status": "running",
         "project_id": str(settings.bigquery_project_id),
-        "dataset": settings.bigquery_dataset,
+        "dataset": settings.bigquery_core_dataset,
+        "reporting_dataset": settings.bigquery_reporting_dataset,
+        "authenticated_principal": None,
         "location": settings.bigquery_location,
         "exchange": exchange,
         "year": year,
@@ -856,6 +1233,13 @@ def _new_partition_row(
         "inserted_rows": 0,
         "updated_rows": 0,
         "rejected_rows": 0,
+        "staging_row_count": 0,
+        "merged_row_count": 0,
+        "duplicate_business_key_count": 0,
+        "source_min_date": None,
+        "source_max_date": None,
+        "destination_min_date": None,
+        "destination_max_date": None,
         "source_watermark": None,
         "destination_watermark": None,
         "bigquery_job_id": None,
@@ -876,6 +1260,9 @@ def _empty_totals() -> dict[str, int]:
         "inserted_rows": 0,
         "updated_rows": 0,
         "rejected_rows": 0,
+        "staging_row_count": 0,
+        "merged_row_count": 0,
+        "duplicate_business_key_count": 0,
         "retry_count": 0,
     }
 
@@ -935,3 +1322,47 @@ def _canonical_bq_type(value: str) -> str:
         "FLOAT64": "FLOAT",
         "BOOL": "BOOLEAN",
     }.get(normalized, normalized)
+
+
+def _validate_credentials_file(path: Any) -> None:
+    """Validate the mounted key without reading or exposing its contents."""
+    if path is None:
+        raise RuntimeError("BigQuery credential file is not configured.")
+    try:
+        metadata = os.stat(path)
+    except OSError as exc:
+        raise RuntimeError("BigQuery credential file is missing or unreadable.") from exc
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size <= 0 or not os.access(path, os.R_OK):
+        raise RuntimeError("BigQuery credential file is missing or unreadable.")
+    if metadata.st_mode & 0o077:
+        raise RuntimeError("BigQuery credential file permissions must be 0600.")
+
+
+def _as_date(value: Any) -> date | None:
+    if value is None or isinstance(value, date):
+        return value.date() if isinstance(value, datetime) else value
+    normalized = str(value).replace("Z", "+00:00")
+    try:
+        return date.fromisoformat(normalized)
+    except ValueError:
+        return datetime.fromisoformat(normalized).date()
+
+
+def _bigquery_field_type(spec: EntitySpec, field_name: str) -> str:
+    return next(field.field_type for field in spec.fields if field.name == field_name)
+
+
+def _normalized_watermark(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            return date.fromisoformat(normalized).isoformat()
+        except ValueError:
+            return normalized
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC)
+    return parsed.isoformat()

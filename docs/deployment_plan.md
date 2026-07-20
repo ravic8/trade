@@ -213,11 +213,13 @@ Runtime application secrets should live on the Ubuntu server, not in GitHub:
 /opt/trade/.env
 ```
 
-Optional BigQuery activation uses outbound credentials under
-`/opt/trade/secrets/gcp`, never the repository or image. The required project,
-dataset, IAM, rollout, and reconciliation steps are documented in
-`docs/bigquery_sync_foundation.md`. Keep `PROD_BIGQUERY_ENABLED=false` until
-that checklist is complete.
+Optional BigQuery activation uses the single outbound credential file
+`/opt/trade/secrets/gcp/service-account.json`, never the repository, build
+context, image, or environment. It is mounted read-only only into Dagster
+execution services. The required project, two-dataset IAM model, API preflight,
+two-pass TSX canary, rollout, and reconciliation steps are documented in
+`docs/bigquery_sync_foundation.md`. Keep the canary and production-sync gates
+false until their checklist stages are complete.
 
 Examples:
 

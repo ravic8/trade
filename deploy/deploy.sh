@@ -47,6 +47,22 @@ set +a
 
 require_file "$APP_DIR/docker-compose.prod.yml"
 
+if [[ "${PROD_BIGQUERY_ENABLED:-false}" == "true" ]]; then
+  bigquery_credential_file="${PROD_BIGQUERY_CREDENTIALS_FILE:-}"
+  if [[ -z "$bigquery_credential_file" || ! -f "$bigquery_credential_file" \
+    || ! -s "$bigquery_credential_file" || ! -r "$bigquery_credential_file" ]]; then
+    printf '[trade-deploy] BigQuery credential file is missing or unreadable\n' >&2
+    exit 1
+  fi
+  credential_mode="$(stat -c '%a' "$bigquery_credential_file")"
+  credential_owner="$(stat -c '%U:%G' "$bigquery_credential_file")"
+  expected_owner="${PROD_BIGQUERY_CREDENTIALS_OWNER:-inglorious:inglorious}"
+  if [[ "$credential_mode" != "600" || "$credential_owner" != "$expected_owner" ]]; then
+    printf '[trade-deploy] BigQuery credential ownership or permissions are unsafe\n' >&2
+    exit 1
+  fi
+fi
+
 mkdir_from_var "${PROD_TRADE_DATA_DIR:-/opt/trade/data}"
 mkdir_from_var "${PROD_TRADE_ARTIFACTS_DIR:-/opt/trade/artifacts}"
 mkdir_from_var "${PROD_POSTGRES_DATA_DIR:-/opt/trade/postgres}"

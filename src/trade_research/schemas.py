@@ -611,6 +611,8 @@ class BigQuerySyncRunRow(BaseModel):
     status: str
     project_id: str
     dataset: str
+    reporting_dataset: str | None = None
+    authenticated_principal: str | None = None
     location: str
     exchange: str | None = None
     year: int | None = None
@@ -623,6 +625,9 @@ class BigQuerySyncRunRow(BaseModel):
     inserted_rows: int = Field(ge=0)
     updated_rows: int = Field(ge=0)
     rejected_rows: int = Field(ge=0)
+    staging_row_count: int = Field(default=0, ge=0)
+    merged_row_count: int = Field(default=0, ge=0)
+    duplicate_business_key_count: int = Field(default=0, ge=0)
     retry_count: int = Field(ge=0)
     duration_seconds: float | None = Field(default=None, ge=0)
     source_watermark: str | None = None
@@ -648,6 +653,13 @@ class BigQuerySyncPartitionRow(BaseModel):
     inserted_rows: int = Field(ge=0)
     updated_rows: int = Field(ge=0)
     rejected_rows: int = Field(ge=0)
+    staging_row_count: int = Field(default=0, ge=0)
+    merged_row_count: int = Field(default=0, ge=0)
+    duplicate_business_key_count: int = Field(default=0, ge=0)
+    source_min_date: date | None = None
+    source_max_date: date | None = None
+    destination_min_date: date | None = None
+    destination_max_date: date | None = None
     source_watermark: str | None = None
     destination_watermark: str | None = None
     bigquery_job_id: str | None = None
@@ -661,8 +673,11 @@ class BigQuerySyncPartitionRow(BaseModel):
 
 class BigQuerySyncOverviewResponse(BaseModel):
     enabled: bool
+    canary_enabled: bool
+    production_sync_enabled: bool
     project_id: str | None = None
-    dataset: str
+    core_dataset: str
+    reporting_dataset: str
     location: str
     runs: list[BigQuerySyncRunRow] = Field(default_factory=list)
     partitions: list[BigQuerySyncPartitionRow] = Field(default_factory=list)

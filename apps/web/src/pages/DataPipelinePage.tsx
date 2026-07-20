@@ -1224,8 +1224,8 @@ function WarehouseView({
         <MetricCard
           icon={DatabaseZap}
           label="BigQuery Export"
-          value={overview?.enabled ? "Enabled" : "Disabled"}
-          detail={overview?.project_id ? `${overview.project_id}.${overview.dataset}` : "Safe default"}
+          value={overview?.production_sync_enabled ? "Production" : overview?.canary_enabled ? "Canary only" : overview?.enabled ? "Preflight only" : "Disabled"}
+          detail={overview?.project_id ? `${overview.project_id}.${overview.core_dataset}` : "Safe default"}
         />
         <MetricCard
           icon={CheckCircle2}
@@ -1259,8 +1259,8 @@ function WarehouseView({
         {partitions.length ? (
           <div className="operations-table-wrap">
             <table className="operations-table">
-              <thead><tr><th>Entity</th><th>Status</th><th>Scope</th><th>Rows</th><th>Watermarks</th><th>MERGE</th><th>Job / error</th></tr></thead>
-              <tbody>{partitions.map((partition) => <tr key={partition.partition_id}><td><strong>{humanize(partition.entity)}</strong><small>{partition.exchange ?? "All exchanges"}</small></td><td><span className={`status-pill ${statusClass(partition.status)}`}>{humanize(partition.status)}</span><small>{partition.duration_seconds === null ? "—" : `${partition.duration_seconds.toFixed(1)}s`} · {partition.attempt_count} attempts</small></td><td>{partition.partition_start ? `${formatDate(partition.partition_start)}–${formatDate(partition.partition_end)}` : "Current state"}</td><td><strong>{formatNumber(partition.source_row_count)} → {formatNumber(partition.destination_row_count)}</strong><small>Difference {formatNumber(partition.count_difference)}</small></td><td><small>{partition.source_watermark ?? "—"}<br />{partition.destination_watermark ?? "—"}</small></td><td><strong>{formatNumber(partition.inserted_rows)} / {formatNumber(partition.updated_rows)}</strong><small>inserted / updated · {formatNumber(partition.rejected_rows)} rejected</small></td><td><small className="operations-mono">{partition.bigquery_job_id ?? partition.error_details ?? "—"}</small>{Object.keys(partition.schema_drift).length ? <small>Schema drift detected</small> : null}</td></tr>)}</tbody>
+              <thead><tr><th>Entity</th><th>Status</th><th>Scope</th><th>Rows</th><th>Watermarks / dates</th><th>Staging / MERGE</th><th>Job / error</th></tr></thead>
+              <tbody>{partitions.map((partition) => <tr key={partition.partition_id}><td><strong>{humanize(partition.entity)}</strong><small>{partition.exchange ?? "All exchanges"}</small></td><td><span className={`status-pill ${statusClass(partition.status)}`}>{humanize(partition.status)}</span><small>{partition.duration_seconds === null ? "—" : `${partition.duration_seconds.toFixed(1)}s`} · {partition.attempt_count} attempts</small></td><td>{partition.partition_start ? `${formatDate(partition.partition_start)}–${formatDate(partition.partition_end)}` : "Current state"}</td><td><strong>{formatNumber(partition.source_row_count)} → {formatNumber(partition.destination_row_count)}</strong><small>Difference {formatNumber(partition.count_difference)} · {formatNumber(partition.duplicate_business_key_count)} duplicates</small></td><td><small>{partition.source_watermark ?? "—"}<br />{partition.destination_watermark ?? "—"}<br />{partition.source_min_date ?? "—"}–{partition.source_max_date ?? "—"}</small></td><td><strong>{formatNumber(partition.staging_row_count)} / {formatNumber(partition.merged_row_count)}</strong><small>staged / merged · {formatNumber(partition.inserted_rows)} inserted · {formatNumber(partition.updated_rows)} updated · {formatNumber(partition.rejected_rows)} rejected</small></td><td><small className="operations-mono">{partition.bigquery_job_id ?? partition.error_details ?? "—"}</small>{Object.keys(partition.schema_drift).length ? <small>Schema drift detected</small> : null}</td></tr>)}</tbody>
             </table>
           </div>
         ) : null}

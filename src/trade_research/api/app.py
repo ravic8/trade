@@ -1075,8 +1075,11 @@ def data_operations_bigquery_sync(
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return BigQuerySyncOverviewResponse(
         enabled=current_settings.bigquery_enabled,
+        canary_enabled=current_settings.bigquery_canary_enabled,
+        production_sync_enabled=current_settings.bigquery_production_sync_enabled,
         project_id=current_settings.bigquery_project_id,
-        dataset=current_settings.bigquery_dataset,
+        core_dataset=current_settings.bigquery_core_dataset,
+        reporting_dataset=current_settings.bigquery_reporting_dataset,
         location=current_settings.bigquery_location,
         runs=[BigQuerySyncRunRow(**row) for row in runs],
         partitions=[BigQuerySyncPartitionRow(**row) for row in partitions],

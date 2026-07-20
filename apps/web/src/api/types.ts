@@ -499,6 +499,8 @@ export type BigQuerySyncRunRow = {
   status: string;
   project_id: string;
   dataset: string;
+  reporting_dataset: string | null;
+  authenticated_principal: string | null;
   location: string;
   exchange: string | null;
   year: number | null;
@@ -511,6 +513,9 @@ export type BigQuerySyncRunRow = {
   inserted_rows: number;
   updated_rows: number;
   rejected_rows: number;
+  staging_row_count: number;
+  merged_row_count: number;
+  duplicate_business_key_count: number;
   retry_count: number;
   duration_seconds: number | null;
   source_watermark: string | null;
@@ -536,6 +541,13 @@ export type BigQuerySyncPartitionRow = {
   inserted_rows: number;
   updated_rows: number;
   rejected_rows: number;
+  staging_row_count: number;
+  merged_row_count: number;
+  duplicate_business_key_count: number;
+  source_min_date: string | null;
+  source_max_date: string | null;
+  destination_min_date: string | null;
+  destination_max_date: string | null;
   source_watermark: string | null;
   destination_watermark: string | null;
   bigquery_job_id: string | null;
@@ -549,8 +561,11 @@ export type BigQuerySyncPartitionRow = {
 
 export type BigQuerySyncOverviewResponse = {
   enabled: boolean;
+  canary_enabled: boolean;
+  production_sync_enabled: boolean;
   project_id: string | null;
-  dataset: string;
+  core_dataset: string;
+  reporting_dataset: string;
   location: string;
   runs: BigQuerySyncRunRow[];
   partitions: BigQuerySyncPartitionRow[];
