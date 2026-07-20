@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import DateTime as SQLDateTime
-from sqlalchemy import Table, func, select
+from sqlalchemy import Table, func, null, select
 
 from trade_research.config import Settings, get_settings
 from trade_research.storage.timescale import (
@@ -1116,10 +1116,10 @@ def _source_metrics(
         end_date=end_date,
     ).subquery()
     watermark = (
-        func.max(scoped.c[spec.watermark_field]) if spec.watermark_field else func.null()
+        func.max(scoped.c[spec.watermark_field]) if spec.watermark_field else null()
     )
-    minimum_date = func.min(scoped.c[spec.date_field]) if spec.date_field else func.null()
-    maximum_date = func.max(scoped.c[spec.date_field]) if spec.date_field else func.null()
+    minimum_date = func.min(scoped.c[spec.date_field]) if spec.date_field else null()
+    maximum_date = func.max(scoped.c[spec.date_field]) if spec.date_field else null()
     duplicate_groups = (
         select((func.count() - 1).label("excess_rows"))
         .select_from(scoped)

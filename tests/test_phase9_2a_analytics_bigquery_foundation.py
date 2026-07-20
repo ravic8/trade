@@ -16,6 +16,7 @@ from trade_research.analytics.bigquery import (
     ENTITY_SPECS,
     MergeResult,
     ReconciliationResult,
+    _source_metrics,
     run_bigquery_sync,
 )
 from trade_research.config import Settings
@@ -73,6 +74,24 @@ def test_analyst_role_policy_is_analytics_only_and_read_only() -> None:
     assert "GRANT SELECT ON ALL TABLES IN SCHEMA public" not in policy
     with pytest.raises(ValueError, match="Role names"):
         analyst_role_statements("analyst; DROP ROLE trade", "trade_research")
+
+
+def test_source_metrics_use_sql_null_literals_for_entities_without_dates() -> None:
+    store = TimescaleStore("sqlite://")
+    metadata.create_all(store.engine)
+
+    metrics = _source_metrics(
+        store,
+        ENTITY_SPECS["symbols"],
+        exchange=None,
+        start_date=date(2026, 7, 13),
+        end_date=date(2026, 7, 20),
+    )
+
+    assert metrics.row_count == 0
+    assert metrics.watermark is None
+    assert metrics.minimum_date is None
+    assert metrics.maximum_date is None
 
 
 def test_bigquery_settings_are_disabled_and_validate_activation() -> None:
