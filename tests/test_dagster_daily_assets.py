@@ -124,6 +124,28 @@ def test_daily_target_asset_uses_timescale(monkeypatch) -> None:
     }
 
 
+def test_opportunity_assets_use_exchange_provider_boundaries(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_pipeline(*, exchange: str, ohlcv_source: str) -> object:
+        calls.append((exchange, ohlcv_source))
+        return _result(f"{exchange.lower()}_opportunity_targets")
+
+    monkeypatch.setattr(daily_assets, "run_opportunity_target_pipeline", fake_pipeline)
+    context = dagster.build_op_context()
+    upstream = _result("daily_ohlcv")
+
+    daily_assets.nse_opportunity_targets_v1(context, daily_ohlcv=upstream)
+    daily_assets.tsx_opportunity_targets_v1(context, daily_ohlcv=upstream)
+    daily_assets.us_opportunity_targets_v1(context, daily_ohlcv=upstream)
+
+    assert calls == [
+        ("NSE", "yfinance"),
+        ("TSX", "yfinance"),
+        ("US", "yfinance"),
+    ]
+
+
 def test_upstox_daily_asset_stores_to_timescale(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

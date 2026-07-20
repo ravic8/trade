@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -32,6 +32,9 @@ from sqlalchemy.dialects.postgresql import insert
 from trade_research.features.daily_technical import FEATURE_COLUMNS_V1_0
 from trade_research.schemas import Symbol
 from trade_research.targets.daily_forward import DAILY_FORWARD_TARGET_COLUMNS_V1_0
+from trade_research.targets.opportunity_outcomes import (
+    DAILY_OPPORTUNITY_TARGET_COLUMNS_V1_0,
+)
 
 if TYPE_CHECKING:
     from trade_research.data.daily_work import DailyWorkItem
@@ -427,6 +430,27 @@ targets_daily_table = Table(
     Column("top_quantile_forward_return_20d", Boolean),
 )
 
+opportunity_targets_daily_table = Table(
+    "opportunity_targets_daily",
+    metadata,
+    Column("instrument_key", String, primary_key=True),
+    Column("source", String, primary_key=True),
+    Column("date", Date, primary_key=True),
+    Column("target_version", String, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("exchange", String, nullable=False),
+    Column("computed_at", DateTime(timezone=True), nullable=False),
+    Column("quality_status", String, nullable=False),
+    Column("open", Float, nullable=False),
+    Column("high", Float, nullable=False),
+    Column("low", Float, nullable=False),
+    Column("close", Float, nullable=False),
+    Column("previous_close", Float),
+    Column("volume", BigInteger, nullable=False),
+    Column("open_interest", BigInteger),
+    *(Column(column, Float) for column in DAILY_OPPORTUNITY_TARGET_COLUMNS_V1_0),
+)
+
 target_runs_table = Table(
     "target_runs",
     metadata,
@@ -801,6 +825,16 @@ Index(
     exchange_sessions_table.c.session_date,
 )
 Index(
+    "idx_opportunity_targets_exchange_date",
+    opportunity_targets_daily_table.c.exchange,
+    opportunity_targets_daily_table.c.date,
+)
+Index(
+    "idx_opportunity_targets_symbol_date",
+    opportunity_targets_daily_table.c.symbol,
+    opportunity_targets_daily_table.c.date,
+)
+Index(
     "idx_universe_snapshots_exchange_fetched",
     universe_snapshots_table.c.exchange,
     universe_snapshots_table.c.fetched_at,
@@ -970,6 +1004,18 @@ class TimescaleStore:
             )
             connection.execute(
                 text(
+                    "CREATE INDEX IF NOT EXISTS idx_opportunity_targets_exchange_date "
+                    "ON opportunity_targets_daily (exchange, date DESC)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_opportunity_targets_symbol_date "
+                    "ON opportunity_targets_daily (symbol, date DESC)"
+                )
+            )
+            connection.execute(
+                text(
                     "CREATE INDEX IF NOT EXISTS idx_target_runs_version "
                     "ON target_runs (target_version, finished_at DESC)"
                 )
@@ -1029,6 +1075,13 @@ class TimescaleStore:
                 text(
                     "SELECT create_hypertable("
                     "'targets_daily', 'date', if_not_exists => TRUE, migrate_data => TRUE)"
+                )
+            )
+            connection.execute(
+                text(
+                    "SELECT create_hypertable("
+                    "'opportunity_targets_daily', 'date', "
+                    "if_not_exists => TRUE, migrate_data => TRUE)"
                 )
             )
 
@@ -4854,22 +4907,28 @@ class TimescaleStore:
         limit: int | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        instrument_keys: Sequence[str] | None = None,
     ) -> pd.DataFrame:
         query = (
             ohlcv_daily_table.select()
             .where(ohlcv_daily_table.c.exchange == exchange.upper())
-            .where(ohlcv_daily_table.c.source == source)
+            .where(ohlcv_daily_table.c.source == source.lower())
             .order_by(ohlcv_daily_table.c.instrument_key, ohlcv_daily_table.c.date)
         )
         if start_date is not None:
             query = query.where(ohlcv_daily_table.c.date >= start_date)
         if end_date is not None:
             query = query.where(ohlcv_daily_table.c.date <= end_date)
-        if limit:
+        if instrument_keys is not None:
+            selected_keys = tuple(dict.fromkeys(str(key) for key in instrument_keys if key))
+            if not selected_keys:
+                return pd.DataFrame()
+            query = query.where(ohlcv_daily_table.c.instrument_key.in_(selected_keys))
+        elif limit:
             keys_query = (
                 select(ohlcv_daily_table.c.instrument_key)
                 .where(ohlcv_daily_table.c.exchange == exchange.upper())
-                .where(ohlcv_daily_table.c.source == source)
+                .where(ohlcv_daily_table.c.source == source.lower())
                 .group_by(ohlcv_daily_table.c.instrument_key)
                 .order_by(ohlcv_daily_table.c.instrument_key)
                 .limit(limit)
@@ -4878,6 +4937,77 @@ class TimescaleStore:
                 keys = [row[0] for row in connection.execute(keys_query).all()]
             query = query.where(ohlcv_daily_table.c.instrument_key.in_(keys))
 
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return pd.DataFrame(rows)
+
+    def daily_ohlcv_instrument_keys(
+        self,
+        *,
+        exchange: str,
+        source: str,
+        start_date: date | None = None,
+        limit: int | None = None,
+    ) -> list[str]:
+        query = (
+            select(ohlcv_daily_table.c.instrument_key)
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.source == source.lower())
+            .distinct()
+            .order_by(ohlcv_daily_table.c.instrument_key)
+        )
+        if start_date is not None:
+            query = query.where(ohlcv_daily_table.c.date >= start_date)
+        if limit is not None:
+            query = query.limit(limit)
+        with self.engine.begin() as connection:
+            return [str(row[0]) for row in connection.execute(query).all()]
+
+    def preceding_valid_daily_ohlcv_frame(
+        self,
+        *,
+        exchange: str,
+        source: str,
+        instrument_keys: Sequence[str],
+        before_date: date,
+    ) -> pd.DataFrame:
+        selected_keys = tuple(dict.fromkeys(str(key) for key in instrument_keys if key))
+        if not selected_keys:
+            return pd.DataFrame()
+        valid = (
+            ohlcv_daily_table.c.open > 0,
+            ohlcv_daily_table.c.high > 0,
+            ohlcv_daily_table.c.low > 0,
+            ohlcv_daily_table.c.close > 0,
+            ohlcv_daily_table.c.volume >= 0,
+            ohlcv_daily_table.c.high >= ohlcv_daily_table.c.low,
+            ohlcv_daily_table.c.high >= ohlcv_daily_table.c.open,
+            ohlcv_daily_table.c.high >= ohlcv_daily_table.c.close,
+            ohlcv_daily_table.c.low <= ohlcv_daily_table.c.open,
+            ohlcv_daily_table.c.low <= ohlcv_daily_table.c.close,
+        )
+        ranked = (
+            select(
+                *ohlcv_daily_table.c,
+                func.row_number()
+                .over(
+                    partition_by=ohlcv_daily_table.c.instrument_key,
+                    order_by=ohlcv_daily_table.c.date.desc(),
+                )
+                .label("_opportunity_predecessor_rank"),
+            )
+            .where(ohlcv_daily_table.c.exchange == exchange.upper())
+            .where(ohlcv_daily_table.c.source == source.lower())
+            .where(ohlcv_daily_table.c.instrument_key.in_(selected_keys))
+            .where(ohlcv_daily_table.c.date < before_date)
+            .where(*valid)
+            .subquery()
+        )
+        query = (
+            select(*(ranked.c[column.name] for column in ohlcv_daily_table.columns))
+            .where(ranked.c._opportunity_predecessor_rank == 1)
+            .order_by(ranked.c.instrument_key, ranked.c.date)
+        )
         with self.engine.begin() as connection:
             rows = [dict(row) for row in connection.execute(query).mappings()]
         return pd.DataFrame(rows)
@@ -5101,6 +5231,34 @@ class TimescaleStore:
             connection.execute(target_runs_table.insert().values(row))
         return run_id
 
+    def update_target_run(
+        self,
+        run_id: str,
+        summary: Mapping[str, Any],
+        *,
+        status: str,
+        finished_at: datetime | None = None,
+    ) -> None:
+        finished = finished_at or datetime.now(UTC)
+        values = {
+            "status": status,
+            "finished_at": finished,
+            "rows": int(summary.get("row_count") or 0),
+            "symbols": int(summary.get("symbol_count") or 0),
+            "date_min": _nullable_date(summary.get("date_min")),
+            "date_max": _nullable_date(summary.get("date_max")),
+            "invalid_ohlcv_count": int(summary.get("invalid_ohlcv_count") or 0),
+            "summary_json": dict(summary),
+        }
+        with self.engine.begin() as connection:
+            updated = connection.execute(
+                target_runs_table.update()
+                .where(target_runs_table.c.run_id == run_id)
+                .values(**values)
+            )
+        if int(updated.rowcount or 0) != 1:
+            raise ValueError(f"Unknown target run: {run_id}")
+
     def insert_target_audits(
         self,
         audit: pd.DataFrame,
@@ -5155,6 +5313,220 @@ class TimescaleStore:
         with self.engine.begin() as connection:
             rows = [dict(row) for row in connection.execute(query).mappings()]
         return pd.DataFrame(rows)
+
+    def latest_daily_opportunity_target_date(
+        self,
+        target_version: str,
+        *,
+        exchange: str,
+        source: str,
+    ) -> date | None:
+        query = (
+            select(func.max(opportunity_targets_daily_table.c.date))
+            .where(opportunity_targets_daily_table.c.target_version == target_version)
+            .where(opportunity_targets_daily_table.c.exchange == exchange.upper())
+            .where(opportunity_targets_daily_table.c.source == source.lower())
+        )
+        with self.engine.begin() as connection:
+            return connection.execute(query).scalar_one_or_none()
+
+    def upsert_daily_opportunity_targets(self, frame: pd.DataFrame) -> int:
+        rows = self._daily_opportunity_target_rows(frame)
+        if not rows:
+            return 0
+
+        total = 0
+        with self.engine.begin() as connection:
+            for chunk in _chunks(rows, size=1_000):
+                statement = insert(opportunity_targets_daily_table).values(chunk)
+                update_columns = {
+                    column.name: getattr(statement.excluded, column.name)
+                    for column in opportunity_targets_daily_table.columns
+                    if column.name
+                    not in {"instrument_key", "source", "date", "target_version"}
+                }
+                connection.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=["instrument_key", "source", "date", "target_version"],
+                        set_=update_columns,
+                    )
+                )
+                total += len(chunk)
+        return total
+
+    def replace_daily_opportunity_targets(
+        self,
+        frame: pd.DataFrame,
+        *,
+        target_version: str,
+        exchange: str,
+        source: str,
+    ) -> tuple[int, int]:
+        rows = self._daily_opportunity_target_rows(frame)
+        with self.engine.begin() as connection:
+            deleted = connection.execute(
+                opportunity_targets_daily_table.delete()
+                .where(opportunity_targets_daily_table.c.target_version == target_version)
+                .where(opportunity_targets_daily_table.c.exchange == exchange.upper())
+                .where(opportunity_targets_daily_table.c.source == source.lower())
+            )
+            for chunk in _chunks(rows, size=1_000):
+                connection.execute(opportunity_targets_daily_table.insert().values(chunk))
+        return int(deleted.rowcount or 0), len(rows)
+
+    def delete_daily_opportunity_targets(
+        self,
+        *,
+        target_version: str,
+        exchange: str,
+        source: str,
+    ) -> int:
+        with self.engine.begin() as connection:
+            deleted = connection.execute(
+                opportunity_targets_daily_table.delete()
+                .where(opportunity_targets_daily_table.c.target_version == target_version)
+                .where(opportunity_targets_daily_table.c.exchange == exchange.upper())
+                .where(opportunity_targets_daily_table.c.source == source.lower())
+            )
+        return int(deleted.rowcount or 0)
+
+    def daily_opportunity_target_frame(
+        self,
+        *,
+        target_version: str,
+        exchange: str,
+        source: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int | None = None,
+    ) -> pd.DataFrame:
+        query = (
+            opportunity_targets_daily_table.select()
+            .where(opportunity_targets_daily_table.c.target_version == target_version)
+            .where(opportunity_targets_daily_table.c.exchange == exchange.upper())
+            .where(opportunity_targets_daily_table.c.source == source.lower())
+            .order_by(
+                opportunity_targets_daily_table.c.instrument_key,
+                opportunity_targets_daily_table.c.date,
+            )
+        )
+        if start_date is not None:
+            query = query.where(opportunity_targets_daily_table.c.date >= start_date)
+        if end_date is not None:
+            query = query.where(opportunity_targets_daily_table.c.date <= end_date)
+        if limit is not None:
+            query = query.limit(max(1, limit))
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        return pd.DataFrame(rows)
+
+    def opportunity_targets_page(
+        self,
+        *,
+        target_version: str,
+        exchange: str,
+        source: str,
+        session_date: date | None = None,
+        symbol: str | None = None,
+        sort_by: str = "true_range",
+        direction: str = "desc",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        exchange_code = exchange.upper()
+        source_name = source.lower()
+        resolved_date = session_date or self.latest_daily_opportunity_target_date(
+            target_version,
+            exchange=exchange_code,
+            source=source_name,
+        )
+        if resolved_date is None:
+            return {
+                "exchange": exchange_code,
+                "source": source_name,
+                "target_version": target_version,
+                "session_date": None,
+                "total": 0,
+                "summary": {},
+                "rows": [],
+            }
+
+        allowed_sort_columns = {
+            "symbol": opportunity_targets_daily_table.c.symbol,
+            "session_return": opportunity_targets_daily_table.c.session_return,
+            "gap": opportunity_targets_daily_table.c.gap,
+            "true_return": opportunity_targets_daily_table.c.true_return,
+            "upside": opportunity_targets_daily_table.c.upside,
+            "downside": opportunity_targets_daily_table.c.downside,
+            "giveback": opportunity_targets_daily_table.c.giveback,
+            "recovery": opportunity_targets_daily_table.c.recovery,
+            "session_range": opportunity_targets_daily_table.c.session_range,
+            "true_upside": opportunity_targets_daily_table.c.true_upside,
+            "true_downside": opportunity_targets_daily_table.c.true_downside,
+            "true_range": opportunity_targets_daily_table.c.true_range,
+            "volume": opportunity_targets_daily_table.c.volume,
+        }
+        if sort_by not in allowed_sort_columns:
+            raise ValueError(f"Unsupported opportunity sort column: {sort_by}")
+        if direction.lower() not in {"asc", "desc"}:
+            raise ValueError("direction must be asc or desc")
+
+        filters = [
+            opportunity_targets_daily_table.c.target_version == target_version,
+            opportunity_targets_daily_table.c.exchange == exchange_code,
+            opportunity_targets_daily_table.c.source == source_name,
+            opportunity_targets_daily_table.c.date == resolved_date,
+        ]
+        if symbol:
+            filters.append(opportunity_targets_daily_table.c.symbol.ilike(f"%{symbol.strip()}%"))
+
+        sort_column = allowed_sort_columns[sort_by]
+        ordering = sort_column.asc().nulls_last()
+        if direction.lower() == "desc":
+            ordering = sort_column.desc().nulls_last()
+        row_query = (
+            opportunity_targets_daily_table.select()
+            .where(*filters)
+            .order_by(ordering, opportunity_targets_daily_table.c.symbol)
+            .limit(min(max(limit, 1), 500))
+            .offset(max(offset, 0))
+        )
+        summary_query = select(
+            func.count().label("row_count"),
+            func.avg(opportunity_targets_daily_table.c.session_return).label(
+                "average_return"
+            ),
+            func.avg(opportunity_targets_daily_table.c.gap).label("average_gap"),
+            func.avg(opportunity_targets_daily_table.c.upside).label("average_upside"),
+            func.avg(opportunity_targets_daily_table.c.downside).label("average_downside"),
+            func.avg(opportunity_targets_daily_table.c.true_range).label(
+                "average_true_range"
+            ),
+            func.sum(
+                case(
+                    (opportunity_targets_daily_table.c.session_return > 0, 1),
+                    else_=0,
+                )
+            ).label("positive_sessions"),
+        ).where(*filters)
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(row_query).mappings()]
+            summary = dict(connection.execute(summary_query).mappings().one())
+
+        total = int(summary.pop("row_count") or 0)
+        summary["positive_sessions"] = int(summary.get("positive_sessions") or 0)
+        summary["positive_session_ratio"] = (
+            summary["positive_sessions"] / total if total else None
+        )
+        return {
+            "exchange": exchange_code,
+            "source": source_name,
+            "target_version": target_version,
+            "session_date": resolved_date,
+            "total": total,
+            "summary": summary,
+            "rows": rows,
+        }
 
     def insert_data_quality_audits(
         self,
@@ -6110,6 +6482,50 @@ class TimescaleStore:
                     row[column] = _nullable_bool(record.get(column))
                 else:
                     row[column] = _nullable_float(record.get(column))
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _daily_opportunity_target_rows(frame: pd.DataFrame) -> list[dict[str, Any]]:
+        if frame.empty:
+            return []
+
+        rows = []
+        for record in frame.to_dict(orient="records"):
+            instrument_key = _clean_string(record.get("instrument_key"))
+            target_date = _nullable_date(record.get("date"))
+            target_version = _clean_string(record.get("target_version"))
+            source = _clean_string(record.get("source"))
+            symbol = _clean_string(record.get("symbol"))
+            if (
+                not instrument_key
+                or target_date is None
+                or not target_version
+                or not source
+                or not symbol
+            ):
+                continue
+
+            row = {
+                "instrument_key": instrument_key,
+                "source": source.lower(),
+                "date": target_date,
+                "target_version": target_version,
+                "symbol": symbol.upper(),
+                "exchange": (_clean_string(record.get("exchange")) or "NSE").upper(),
+                "computed_at": _nullable_datetime(record.get("computed_at"))
+                or datetime.now(UTC),
+                "quality_status": _clean_string(record.get("quality_status")) or "unknown",
+                "open": float(record["open"]),
+                "high": float(record["high"]),
+                "low": float(record["low"]),
+                "close": float(record["close"]),
+                "previous_close": _nullable_float(record.get("previous_close")),
+                "volume": int(record["volume"]),
+                "open_interest": _nullable_int(record.get("open_interest")),
+            }
+            for column in DAILY_OPPORTUNITY_TARGET_COLUMNS_V1_0:
+                row[column] = _nullable_float(record.get(column))
             rows.append(row)
         return rows
 

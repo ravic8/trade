@@ -12,7 +12,7 @@ export function MarketStatusTable({ data }: { data: MarketStatus[] }) {
             <th>Quality</th>
             <th>Stale</th>
             <th>OHLCV</th>
-            <th>Screener</th>
+            <th>Opportunity refresh</th>
           </tr>
         </thead>
         <tbody>

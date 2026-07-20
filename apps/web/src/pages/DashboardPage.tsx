@@ -1,6 +1,6 @@
 import { AlertTriangle, Database, SearchCheck, ShieldCheck } from "lucide-react";
 
-import { useMarketStatus, useScreenerResults } from "../api/hooks";
+import { useDailyOpportunities, useMarketStatus } from "../api/hooks";
 import { EmptyState, LoadingState } from "../components/DataState";
 import { FeatureChart } from "../components/FeatureChart";
 import { MarketStatusTable } from "../components/MarketStatusTable";
@@ -9,9 +9,9 @@ import { PageHeader } from "../components/PageHeader";
 
 export function DashboardPage() {
   const statusQuery = useMarketStatus();
-  const screenerQuery = useScreenerResults();
+  const opportunityQuery = useDailyOpportunities({ exchange: "NSE", limit: 20 });
   const status = statusQuery.data ?? [];
-  const results = screenerQuery.data ?? [];
+  const results = opportunityQuery.data?.rows ?? [];
   const totalUniverse = status.reduce((sum, item) => sum + item.universeSize, 0);
   const staleSymbols = status.reduce((sum, item) => sum + item.staleSymbols, 0);
 
@@ -20,7 +20,7 @@ export function DashboardPage() {
       <PageHeader
         eyebrow="Operations"
         title="Market Research Console"
-        subtitle="Data freshness, screener activity, and agent-ready research signals."
+        subtitle="Data freshness, completed-session Opportunity analytics, and research readiness."
       />
       <div className="metric-grid">
         <MetricCard
@@ -31,9 +31,9 @@ export function DashboardPage() {
         />
         <MetricCard
           icon={SearchCheck}
-          label="Signals"
-          value={results.length.toString()}
-          detail="Latest intraday-range matches"
+          label="Opportunities"
+          value={(opportunityQuery.data?.total ?? 0).toLocaleString()}
+          detail="Latest completed NSE session"
         />
         <MetricCard
           icon={ShieldCheck}
@@ -58,14 +58,16 @@ export function DashboardPage() {
 
       <section className="panel">
         <div className="panel-header">
-          <h2>Signal Shape</h2>
+          <h2>Opportunity Shape</h2>
         </div>
-        {screenerQuery.isLoading ? (
+        {opportunityQuery.isLoading ? (
           <LoadingState />
+        ) : opportunityQuery.isError ? (
+          <EmptyState label="Opportunity analytics are unavailable." />
         ) : results.length ? (
           <FeatureChart results={results} />
         ) : (
-          <EmptyState label="No signals available." />
+          <EmptyState label="No completed-session Opportunity data available." />
         )}
       </section>
     </>

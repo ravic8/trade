@@ -5,7 +5,7 @@ import {
   BrainCircuit,
   Database,
   DatabaseZap,
-  FlaskConical,
+  Crosshair,
   GitBranch,
   Settings,
   Search,
@@ -15,7 +15,7 @@ import { NavLink, Outlet } from "react-router-dom";
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity },
   { to: "/data", label: "Data", icon: DatabaseZap },
-  { to: "/screeners", label: "Screeners", icon: FlaskConical },
+  { to: "/opportunities", label: "Opportunities", icon: Crosshair },
   { to: "/research", label: "Research", icon: Search },
   { to: "/research/progress", label: "Progress", icon: GitBranch },
   { to: "/research/factors", label: "Factors", icon: BarChart3 },

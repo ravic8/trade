@@ -573,6 +573,10 @@
 }
 
 @media (max-width: 1100px) {
+  .opportunity-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .data-two-column,
   .data-filter-row {
     grid-template-columns: 1fr;
@@ -585,6 +589,10 @@
 }
 
 @media (max-width: 720px) {
+  .opportunity-filters {
+    grid-template-columns: 1fr;
+  }
+
   .data-hub {
     gap: 16px;
   }
@@ -871,6 +879,96 @@ a {
   border-radius: 6px;
   background: #ffffff;
   padding: 0 8px;
+}
+
+.opportunity-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid #c9ddd4;
+  border-radius: 12px;
+  background: #f2f9f6;
+  color: #174c3a;
+  padding: 14px 16px;
+}
+
+.opportunity-notice svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.opportunity-notice strong,
+.opportunity-notice span {
+  display: block;
+}
+
+.opportunity-notice span {
+  margin-top: 3px;
+  color: #4d6b60;
+  font-size: 0.88rem;
+}
+
+.opportunity-filter-panel {
+  padding: 16px;
+}
+
+.opportunity-filters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 12px;
+}
+
+.opportunity-filters label {
+  display: grid;
+  gap: 6px;
+  color: #52636c;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.opportunity-filters input,
+.opportunity-filters select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #cfd9de;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #21313a;
+  padding: 0 10px;
+}
+
+.opportunity-table-wrap table {
+  min-width: 2050px;
+}
+
+.opportunity-table-wrap th:first-child,
+.opportunity-table-wrap td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #ffffff;
+}
+
+.opportunity-table-wrap th:first-child {
+  z-index: 2;
+  background: #f8fafb;
+}
+
+.positive-value {
+  color: #08734f;
+  font-weight: 700;
+}
+
+.negative-value {
+  color: #b43630;
+  font-weight: 700;
+}
+
+.opportunity-version {
+  color: #687982;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
 }
 
 .segmented-control {

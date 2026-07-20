@@ -35,6 +35,7 @@ Dagster daily_research_pipeline_job
   -> cleaned/validated OHLCV
   -> daily_v1_ohlcv_technical_v1_0 features from TimescaleDB
   -> daily_v1_forward_returns_v1_0 targets from TimescaleDB
+  -> daily_opportunity_outcomes_v1_0 completed-session Opportunity targets
   -> processed dataset validation
   -> daily_v1_factor_research outputs
   -> daily pipeline health report
@@ -67,6 +68,11 @@ version-controlled connection definition. See `docs/cloudbeaver_access.md`.
 Features and targets are intentionally separate. Feature rows describe what was
 known at date `T`; target rows describe outcomes after date `T`.
 
+The Opportunities UI is backed by `opportunity_targets_daily` in PostgreSQL.
+It displays realized OHLC/previous-close variables and does not read BigQuery
+or a future ClickHouse replica. Predictive candidates must remain a separate,
+leakage-safe layer. See `docs/opportunity_analytics.md`.
+
 The frozen first ML dataset and walk-forward evaluation contract is documented
 in `docs/ml_dataset_v1_strategy.md`. It defines `ml_dataset_v1` as a separate
 post-validation layer depending on `processed_dataset_validation`, with a
@@ -81,7 +87,7 @@ Implementation status:
   coverage reporting, Timescale storage helpers, and the Dagster daily research
   asset job.
 - Partially implemented: Lens chat, React UI, and Qdrant retrieval helpers.
-- Mock-backed in places: screener results, research notes, and several
+- Mock-backed in places: research notes and several
   dashboard fallback paths when database/API data is unavailable.
 - Planned: `ml_dataset_v1`, research signals, backtesting, experiment tracking,
   model training, paper trading, and live execution.

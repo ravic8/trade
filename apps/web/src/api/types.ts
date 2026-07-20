@@ -20,6 +20,64 @@ export type ScreenerResult = {
   matchedAt: string;
 };
 
+export type OpportunityTargetRow = {
+  instrument_key: string;
+  source: string;
+  date: string;
+  target_version: string;
+  symbol: string;
+  exchange: string;
+  quality_status: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  previous_close: number | null;
+  volume: number;
+  open_interest: number | null;
+  session_return: number | null;
+  gap: number | null;
+  true_return: number | null;
+  upside: number | null;
+  downside: number | null;
+  giveback: number | null;
+  recovery: number | null;
+  session_range: number | null;
+  true_upside: number | null;
+  true_downside: number | null;
+  true_range: number | null;
+};
+
+export type OpportunityTargetSummary = {
+  average_return?: number | null;
+  average_gap?: number | null;
+  average_upside?: number | null;
+  average_downside?: number | null;
+  average_true_range?: number | null;
+  positive_sessions?: number;
+  positive_session_ratio?: number | null;
+};
+
+export type DailyOpportunitiesResponse = {
+  exchange: "NSE" | "TSX" | "US";
+  source: "upstox" | "yfinance";
+  target_version: string;
+  session_date: string | null;
+  total: number;
+  summary: OpportunityTargetSummary;
+  rows: OpportunityTargetRow[];
+};
+
+export type DailyOpportunitiesParams = {
+  exchange: "NSE" | "TSX" | "US";
+  sessionDate?: string;
+  symbol?: string;
+  sortBy?: string;
+  direction?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+};
+
 export type Candle = {
   time: string;
   open: number;

@@ -26,6 +26,7 @@ from trade_research.pipelines.nse_cutover import (
     run_nse_daily_ohlcv_primary_pipeline,
     run_nse_yfinance_cutover_readiness,
 )
+from trade_research.pipelines.opportunity_targets import run_opportunity_target_pipeline
 from trade_research.pipelines.processed_validation import (
     run_processed_dataset_validation_pipeline,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "run_ml_dataset_v1_pipeline",
     "run_nse_daily_ohlcv_primary_pipeline",
     "run_nse_yfinance_cutover_readiness",
+    "run_opportunity_target_pipeline",
     "run_prediction_backtest_v1_pipeline",
     "run_processed_dataset_validation_pipeline",
     "run_yfinance_provider_history_evidence_bootstrap",

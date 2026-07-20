@@ -81,6 +81,7 @@ from trade_research.schemas import (
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
+from trade_research.targets import DAILY_OPPORTUNITY_TARGET_VERSION_V1_0
 from trade_research.universe import yfinance_intraday_universe, yfinance_universe
 
 app = FastAPI(title="Trade Research API", version="0.1.0")
@@ -1375,6 +1376,43 @@ def latest_intraday_range() -> list[dict]:
     return [
         ScreenerResult(**_to_screener_result(row)).model_dump(mode="json") | row for row in rows
     ]
+
+
+@app.get("/api/opportunities/daily")
+def daily_opportunities(
+    exchange: Annotated[str, Query()] = "NSE",
+    session_date: Annotated[date | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
+    symbol: Annotated[str | None, Query(max_length=64)] = None,
+    sort_by: Annotated[str, Query()] = "true_range",
+    direction: Annotated[str, Query()] = "desc",
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict:
+    """Return realized completed-session Opportunity variables.
+
+    These values use the session's high, low, and close and are therefore
+    analytics outcomes, not pre-session predictions or trading signals.
+    """
+    exchange_code = _operations_exchange(exchange)
+    assert exchange_code is not None
+    resolved_source = source.strip().lower() if source else "yfinance"
+    if resolved_source not in {"upstox", "yfinance"}:
+        raise HTTPException(status_code=400, detail="source must be upstox or yfinance")
+    try:
+        return _store().opportunity_targets_page(
+            target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+            exchange=exchange_code,
+            source=resolved_source,
+            session_date=session_date,
+            symbol=symbol,
+            sort_by=sort_by,
+            direction=direction,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/symbols/{ticker}/candles")
