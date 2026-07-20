@@ -28,6 +28,7 @@ class RecordingClient:
     def __init__(self, *, reporting_location: str = "US") -> None:
         self.reporting_location = reporting_location
         self.operations: list[str] = []
+        self.query_sql = ""
 
     def get_dataset(self, dataset_id, *, dataset_view):
         assert dataset_view == bigquery.enums.DatasetView.METADATA
@@ -38,6 +39,33 @@ class RecordingClient:
     def create_table(self, table, *, exists_ok):
         assert exists_ok is True
         self.operations.append(f"create:{table.table_id}")
+
+    def query(self, sql, *, job_config, location):
+        assert job_config is not None
+        assert location == "US"
+        self.query_sql = sql
+        return SimpleNamespace(
+            result=lambda: iter(
+                [
+                    {
+                        "row_count": 10,
+                        "watermark": "2026-07-20 00:00:00+00",
+                        "minimum_date": None,
+                        "maximum_date": None,
+                        "duplicate_business_key_count": 0,
+                    }
+                ]
+            )
+        )
+
+    def get_table(self, _table_id):
+        spec = ENTITY_SPECS["symbols"]
+        return SimpleNamespace(
+            schema=[
+                bigquery.SchemaField(field.name, field.field_type, mode=field.mode)
+                for field in spec.fields
+            ]
+        )
 
 
 def _gateway(client: RecordingClient) -> GoogleBigQueryGateway:
@@ -65,6 +93,25 @@ def test_preflight_checks_both_datasets_before_any_table_write() -> None:
     assert client.operations[2] == "create:ohlcv_daily"
     assert verification.core_dataset_location == "US"
     assert verification.reporting_dataset_location == "US"
+
+
+def test_reconciliation_null_bounds_are_not_multirow_scalar_subqueries() -> None:
+    client = RecordingClient()
+
+    result = _gateway(client).reconcile(
+        ENTITY_SPECS["symbols"],
+        exchange=None,
+        start_date=date(2026, 7, 13),
+        end_date=date(2026, 7, 20),
+    )
+
+    normalized_sql = " ".join(client.query_sql.split())
+    assert "(SELECT CAST(NULL AS STRING) FROM scoped)" not in normalized_sql
+    assert "CAST(NULL AS STRING) AS minimum_date" in normalized_sql
+    assert "CAST(NULL AS STRING) AS maximum_date" in normalized_sql
+    assert result.row_count == 10
+    assert result.minimum_date is None
+    assert result.maximum_date is None
 
 
 def test_phase9_2b_migration_adds_canary_reconciliation_evidence(
