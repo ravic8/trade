@@ -141,6 +141,45 @@ and schedules remain disabled.
    2016-2026, US 2016-2026. Keep the daily schedule stopped until every
    backfill reconciles.
 
+   After an exchange finishes, verify all calendar years from durable
+   PostgreSQL evidence with the read-only command:
+
+   ```bash
+   docker compose --env-file /opt/trade/.env \
+     -f /opt/trade/app/docker-compose.prod.yml \
+     run --rm --no-deps api \
+     trade-research verify-bigquery-backfill US \
+       --start-year 2016 \
+       --end-year 2026
+   ```
+
+   The command exits zero only when every requested year has a completed run
+   and partition, positive and matching source/destination counts, matching
+   date bounds and watermarks, zero count difference, rejected rows and
+   duplicate business keys, no schema drift or recorded errors, and a
+   BigQuery job ID. It reads `bigquery_sync_runs` and
+   `bigquery_sync_partitions`; it neither calls BigQuery nor writes data.
+   Use `--json` for automation or evidence capture. Treat any non-zero exit as
+   a stop condition for schedule activation.
+
+   To prove a selected partition is idempotent, materialize that exact
+   exchange/year a second time and require equivalent evidence from its two
+   latest runs:
+
+   ```bash
+   docker compose --env-file /opt/trade/.env \
+     -f /opt/trade/app/docker-compose.prod.yml \
+     run --rm --no-deps api \
+     trade-research verify-bigquery-backfill US \
+       --start-year 2026 \
+       --end-year 2026 \
+       --require-idempotent-rerun
+   ```
+
+   Inserted and updated classifications may differ on the rerun. Counts,
+   bounds, watermarks, rejection evidence and duplicate-key evidence must be
+   identical.
+
 10. After backfills pass, manually test one daily incremental run. Only then
     enable `bigquery_daily_sync_schedule`.
 

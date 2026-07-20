@@ -1,6 +1,7 @@
 import getpass
 import json
 import sys
+from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -14,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from trade_research.analytics import create_or_update_analyst_role, revoke_analyst_role
 from trade_research.analytics.bigquery import (
     GoogleBigQueryGateway,
+    evaluate_bigquery_backfill_reconciliation,
     evaluate_bigquery_tsx_canary_readiness,
 )
 from trade_research.config import get_settings
@@ -321,6 +323,108 @@ def bigquery_canary_readiness() -> None:
         f"runs={','.join(readiness.successful_run_ids) or 'none'}"
     )
     if not readiness.ready_for_production:
+        raise typer.Exit(code=1)
+
+
+@app.command("verify-bigquery-backfill")
+def verify_bigquery_backfill(
+    exchange: Annotated[
+        str,
+        typer.Argument(help="Canonical equity exchange: NSE, TSX, or US."),
+    ],
+    start_year: Annotated[
+        int,
+        typer.Option("--start-year", help="First calendar year to verify."),
+    ],
+    end_year: Annotated[
+        int,
+        typer.Option("--end-year", help="Last calendar year to verify."),
+    ],
+    entity: Annotated[
+        str,
+        typer.Option(help="Exchange/year-partitioned BigQuery entity to verify."),
+    ] = "ohlcv_daily",
+    require_idempotent_rerun: Annotated[
+        bool,
+        typer.Option(
+            help=(
+                "Require the two latest runs for every year to be reconciled "
+                "with identical evidence."
+            )
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON instead of a table."),
+    ] = False,
+) -> None:
+    """Verify completed backfills from durable PostgreSQL state without writing data."""
+    settings = get_settings()
+    try:
+        verification = evaluate_bigquery_backfill_reconciliation(
+            TimescaleStore(settings.database_url),
+            exchange=exchange,
+            start_year=start_year,
+            end_year=end_year,
+            entity=entity,
+            require_idempotent_rerun=require_idempotent_rerun,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if json_output:
+        payload = asdict(verification)
+        payload["reconciled"] = verification.reconciled
+        payload["read_only"] = True
+        console.print_json(json.dumps(payload, default=str))
+    else:
+        table = Table(
+            title=(
+                f"BigQuery Backfill Verification (read-only): "
+                f"{verification.exchange} {verification.entity}"
+            )
+        )
+        table.add_column("Year")
+        table.add_column("Result")
+        table.add_column("Rows")
+        table.add_column("Source dates")
+        table.add_column("Run / BigQuery job")
+        table.add_column("Issues")
+        for year in verification.years:
+            row_counts = (
+                f"{year.source_row_count:,} → {year.destination_row_count:,}"
+                if year.source_row_count is not None
+                and year.destination_row_count is not None
+                else "—"
+            )
+            source_dates = (
+                f"{year.source_min_date} → {year.source_max_date}"
+                if year.source_min_date and year.source_max_date
+                else "—"
+            )
+            run_and_job = year.run_id or "—"
+            if year.bigquery_job_id:
+                run_and_job += f"\n{year.bigquery_job_id}"
+            if year.compared_run_id:
+                run_and_job += f"\ncompared: {year.compared_run_id}"
+            table.add_row(
+                str(year.year),
+                "[green]reconciled[/green]"
+                if year.reconciled
+                else "[red]review required[/red]",
+                row_counts,
+                source_dates,
+                run_and_job,
+                " ".join(year.issues) or "—",
+            )
+        console.print(table)
+        passed = sum(year.reconciled for year in verification.years)
+        console.print(
+            f"{passed}/{len(verification.years)} years reconciled; "
+            f"overall={'PASS' if verification.reconciled else 'FAIL'}"
+        )
+
+    if not verification.reconciled:
         raise typer.Exit(code=1)
 
 
