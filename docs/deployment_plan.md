@@ -2,7 +2,8 @@
 
 This document captures the deployment direction for the Trade Research app.
 The repo is still local-first for development, but production packaging,
-admin token management, CI, and first-pass server scripts are now in place.
+admin token management, browser analytics access, CI, and first-pass server
+scripts are now in place.
 
 ## Current Deployment Status
 
@@ -41,6 +42,11 @@ Admin access is controlled by `ADMIN_EMAILS` / `PROD_ADMIN_EMAILS` and trusted
 identity headers such as `cf-access-authenticated-user-email`. The Upstox token
 is encrypted before it is stored, and the raw token is never returned by the API.
 
+Production CloudBeaver access is also implemented. It runs only on the Compose
+network, is routed through the existing loopback Caddy entrypoint, and requires
+both Cloudflare Access and a CloudBeaver login. See
+`docs/cloudbeaver_access.md` for activation and operator verification.
+
 ## Goals
 
 - Deploy the app on the Ubuntu desktop/server owned by the project maintainer.
@@ -59,12 +65,13 @@ is encrypted before it is stored, and the raw token is never returned by the API
 
 ```text
 External users
-  -> https://trade.example.com
+  -> https://trade.example.com (application)
+  -> https://sql.example.com (browser analytics)
   -> Cloudflare Access
   -> Cloudflare Tunnel
   -> Caddy on Ubuntu
-  -> React app and /api reverse proxy
-  -> FastAPI
+  -> React app and /api reverse proxy, or CloudBeaver
+  -> FastAPI or curated PostgreSQL analytics views
   -> TimescaleDB, Redis, Qdrant, data/, artifacts/
 
 Maintainer/admin
@@ -98,6 +105,7 @@ Production services:
 ```text
 caddy             public HTTP entrypoint behind Cloudflare Tunnel
 web               built React static files
+cloudbeaver       internal browser SQL client for curated analytics views
 api               FastAPI application
 postgres          TimescaleDB/PostgreSQL
 redis             internal cache/queue dependency
@@ -143,13 +151,14 @@ Postgres/Timescale 5432
 Redis 6379
 Qdrant 6333/6334
 Dagster webserver 3000
-CloudBeaver or other database admin tools
+CloudBeaver container port 8978
 ```
 
-The public surface should be only:
+The only browser surfaces should be:
 
 ```text
 https://trade.example.com
+https://sql.example.com (Cloudflare Access exact-email allowlist)
 ```
 
 All application API traffic should go through the reverse proxy:
@@ -166,6 +175,10 @@ Use Cloudflare Access for the public app:
 - Allow the engineer contributor email.
 - Allow the external research user email.
 - Block everyone else.
+
+Use a separate Cloudflare Access application for the CloudBeaver hostname with
+an exact-email allowlist and MFA. CloudBeaver also maintains individual local
+users, while PostgreSQL maintains an individual read-only role per analyst.
 
 Use Tailscale for private admin access:
 
@@ -352,7 +365,8 @@ deploy/deploy.sh
 ```
 
 It loads `/opt/trade/.env`, creates the configured persistent directories,
-and synchronizes the configured deployment branch. When that synchronization
+installs the secret-free CloudBeaver shared-connection policy, and synchronizes
+the configured deployment branch. When that synchronization
 changes the checked-out revision during a manual invocation, the script
 re-executes itself once from the synchronized revision before making deployment
 changes. It then validates compose config and builds images, starts PostgreSQL,
@@ -360,7 +374,8 @@ waits for database readiness, and applies Alembic migrations from a one-off
 container using the newly built API image. Application containers are replaced
 only after migration succeeds. A migration failure leaves the prior application
 release running and fails the deployment. Finally, it checks
-`http://localhost:${PROD_WEB_PORT:-8080}/api/health`.
+`http://localhost:${PROD_WEB_PORT:-8080}/api/health` and the CloudBeaver
+hostname route through the same Caddy entrypoint.
 
 The private Dagster webserver remains opt-in through the `admin` Compose
 profile. If it is already running when a deployment starts, the deploy script
@@ -380,6 +395,7 @@ Use stable server-owned paths outside the git checkout:
 /opt/trade/postgres
 /opt/trade/qdrant
 /opt/trade/dagster_home
+/opt/trade/cloudbeaver
 /opt/trade/backups
 ```
 
@@ -397,6 +413,7 @@ Timescale/Postgres dump
 data/
 artifacts/
 dagster_home/
+CloudBeaver workspace
 encrypted provider credentials
 ```
 
@@ -414,8 +431,9 @@ deploy/backup.sh
 ```
 
 It writes a timestamped backup directory containing a Postgres custom-format
-dump plus archives for `data/`, `artifacts/`, `qdrant/`, and `dagster_home/`
-when those directories exist.
+dump plus archives for `data/`, `artifacts/`, `qdrant/`, `dagster_home/`, and
+the CloudBeaver workspace when those directories exist. CloudBeaver is stopped
+briefly for a consistent workspace archive and restarted if it was running.
 
 ## Implementation Phases
 
@@ -470,6 +488,17 @@ when those directories exist.
 - Implemented: first-pass backup script.
 - Schedule backups.
 - Test restore on a non-production path before relying on backups.
+
+### Phase 9: Browser Analytics Access
+
+- Implemented: production CloudBeaver service with no published host port.
+- Implemented: dedicated Caddy hostname routed through Cloudflare Tunnel and
+  protected by a separate Cloudflare Access application.
+- Implemented: secret-free shared PostgreSQL connection definition and
+  individual read-only PostgreSQL analyst roles.
+- Implemented: deployment, verification, revocation, and backup instructions.
+- Remaining operator step: configure the real hostname and Access policy, then
+  complete the first-run CloudBeaver administrator setup.
 
 ## Open Decisions
 

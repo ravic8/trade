@@ -65,6 +65,10 @@ def test_analyst_role_policy_is_analytics_only_and_read_only() -> None:
     assert "GRANT USAGE ON SCHEMA analytics" in policy
     assert "GRANT SELECT ON ALL TABLES IN SCHEMA analytics" in policy
     assert "default_transaction_read_only = on" in policy
+    assert "CONNECTION LIMIT 2" in policy
+    assert "statement_timeout = '5min'" in policy
+    assert "idle_in_transaction_session_timeout = '1min'" in policy
+    assert "lock_timeout = '5s'" in policy
     assert "REVOKE CREATE ON SCHEMA public" in policy
     assert "GRANT SELECT ON ALL TABLES IN SCHEMA public" not in policy
     with pytest.raises(ValueError, match="Role names"):

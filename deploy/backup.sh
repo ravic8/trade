@@ -62,9 +62,29 @@ tar_if_exists "${PROD_TRADE_ARTIFACTS_DIR:-/opt/trade/artifacts}" "artifacts.tgz
 tar_if_exists "${PROD_QDRANT_DATA_DIR:-/opt/trade/qdrant}" "qdrant.tgz"
 tar_if_exists "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}" "dagster_home.tgz"
 
+cloudbeaver_was_running=false
+if [[ -n "$("${compose[@]}" ps --status running -q cloudbeaver)" ]]; then
+  cloudbeaver_was_running=true
+  log "stopping CloudBeaver for a consistent workspace backup"
+  "${compose[@]}" stop cloudbeaver
+fi
+
+restart_cloudbeaver() {
+  if [[ "$cloudbeaver_was_running" == true ]]; then
+    log "restarting CloudBeaver after workspace backup"
+    "${compose[@]}" up -d --no-deps cloudbeaver
+  fi
+}
+trap restart_cloudbeaver EXIT
+tar_if_exists "${PROD_CLOUDBEAVER_WORKSPACE_DIR:-/opt/trade/cloudbeaver}" "cloudbeaver.tgz"
+restart_cloudbeaver
+cloudbeaver_was_running=false
+trap - EXIT
+
 cat > "$BACKUP_DIR/README.txt" <<'EOF'
-This backup contains the Postgres database dump plus selected persistent
-runtime directories. Provider credentials are stored encrypted in Postgres.
+This backup contains the Postgres database dump, the CloudBeaver workspace,
+and selected persistent runtime directories. CloudBeaver is stopped briefly
+while its workspace is archived. Provider credentials are stored encrypted in Postgres.
 Restore of those credentials requires the matching PROD_APP_SECRET_KEY from the
 server environment, which is intentionally not copied into this backup.
 EOF

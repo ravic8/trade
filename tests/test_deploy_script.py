@@ -30,6 +30,9 @@ if [[ "$*" == *"ps --status running -q dagster-webserver"* ]] && \
    [[ "$FAKE_DAGSTER_RUNNING" == "true" ]]; then
   printf '%s\n' 'fake-dagster-container-id'
 fi
+if [[ "$*" == *"ps --status running -q cloudbeaver"* ]]; then
+  printf '%s\n' 'fake-cloudbeaver-container-id'
+fi
 exit 0
 """,
     )
@@ -51,6 +54,7 @@ exit 0
                 f"PROD_REDIS_DATA_DIR={tmp_path / 'redis'}",
                 f"PROD_QDRANT_DATA_DIR={tmp_path / 'qdrant'}",
                 f"PROD_DAGSTER_HOME_DIR={tmp_path / 'dagster-home'}",
+                f"PROD_CLOUDBEAVER_WORKSPACE_DIR={tmp_path / 'cloudbeaver'}",
                 "PROD_WEB_PORT=8081",
                 "PROD_DAGSTER_WEB_PORT=3300",
             ]
@@ -89,8 +93,10 @@ exit 0
 
     assert (admin_build in docker_calls) is dagster_running
     assert (admin_recreate in docker_calls) is dagster_running
+    assert "restart cloudbeaver" in docker_calls
     assert ("http://127.0.0.1:3300" in curl_calls) is dagster_running
     assert "http://localhost:8081/api/health" in curl_calls
+    assert "-H Host: sql.example.com http://localhost:8081/" in curl_calls
 
     docker_call_lines = docker_calls.splitlines()
     build_index = _call_index(docker_call_lines, " build")
@@ -147,6 +153,7 @@ exit 0
                 f"PROD_REDIS_DATA_DIR={tmp_path / 'redis'}",
                 f"PROD_QDRANT_DATA_DIR={tmp_path / 'qdrant'}",
                 f"PROD_DAGSTER_HOME_DIR={tmp_path / 'dagster-home'}",
+                f"PROD_CLOUDBEAVER_WORKSPACE_DIR={tmp_path / 'cloudbeaver'}",
             ]
         )
         + "\n",
@@ -219,6 +226,7 @@ exit 0
                 f"PROD_REDIS_DATA_DIR={tmp_path / 'redis'}",
                 f"PROD_QDRANT_DATA_DIR={tmp_path / 'qdrant'}",
                 f"PROD_DAGSTER_HOME_DIR={tmp_path / 'dagster-home'}",
+                f"PROD_CLOUDBEAVER_WORKSPACE_DIR={tmp_path / 'cloudbeaver'}",
             ]
         )
         + "\n",

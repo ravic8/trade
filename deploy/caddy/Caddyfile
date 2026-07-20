@@ -1,6 +1,14 @@
 :80 {
 	encode zstd gzip
 
+	@cloudbeaver host {$CLOUDBEAVER_HOST:sql.example.com}
+	handle @cloudbeaver {
+		reverse_proxy cloudbeaver:8978 {
+			header_up -Cf-Access-Authenticated-User-Email
+			header_up -Cf-Access-Jwt-Assertion
+		}
+	}
+
 	handle /api/* {
 		reverse_proxy api:8000
 	}

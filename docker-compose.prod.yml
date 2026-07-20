@@ -7,9 +7,43 @@ services:
       dockerfile: Dockerfile.web
     ports:
       - "127.0.0.1:${PROD_WEB_PORT:-8080}:80"
+    environment:
+      CLOUDBEAVER_HOST: ${PROD_CLOUDBEAVER_HOST:-sql.example.com}
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - default
+      - analytics_access
+    restart: unless-stopped
+
+  cloudbeaver:
+    image: ${PROD_CLOUDBEAVER_IMAGE:-dbeaver/cloudbeaver:26.1.2}
+    environment:
+      CLOUDBEAVER_APP_ANONYMOUS_ACCESS_ENABLED: "false"
+      CLOUDBEAVER_APP_GRANT_CONNECTIONS_ACCESS_TO_ANONYMOUS_TEAM: "false"
+      CLOUDBEAVER_APP_SUPPORTS_CUSTOM_CONNECTIONS: "false"
+      CLOUDBEAVER_APP_PUBLIC_CREDENTIALS_SAVE_ENABLED: "false"
+      CLOUDBEAVER_APP_ADMIN_CREDENTIALS_SAVE_ENABLED: "false"
+      CLOUDBEAVER_APP_FORWARD_PROXY: "true"
+      CLOUDBEAVER_APP_READ_ONLY_CONNECTION_INFO: "true"
+      CLOUDBEAVER_DEVEL_MODE: "false"
+      CLOUDBEAVER_EXPIRE_SESSION_AFTER_PERIOD: ${PROD_CLOUDBEAVER_SESSION_IDLE_MS:-1800000}
+    expose:
+      - "8978"
+    volumes:
+      - ${PROD_CLOUDBEAVER_WORKSPACE_DIR:-./data/cloudbeaver}:/opt/cloudbeaver/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - analytics_access
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8978/"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     restart: unless-stopped
 
   api:
@@ -358,6 +392,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - analytics_access
     restart: unless-stopped
 
   redis:
@@ -372,3 +409,7 @@ services:
     volumes:
       - ${PROD_QDRANT_DATA_DIR:-./data/qdrant}:/qdrant/storage
     restart: unless-stopped
+
+networks:
+  analytics_access:
+    internal: true
