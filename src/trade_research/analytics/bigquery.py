@@ -582,17 +582,17 @@ class GoogleBigQueryGateway:
                 )
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         watermark = (
-            f"CAST(MAX(`{spec.watermark_field}`) AS STRING)"
+            f"(SELECT CAST(MAX(`{spec.watermark_field}`) AS STRING) FROM scoped)"
             if spec.watermark_field
             else "CAST(NULL AS STRING)"
         )
         minimum_date = (
-            f"CAST(MIN(`{spec.date_field}`) AS STRING)"
+            f"(SELECT CAST(MIN(`{spec.date_field}`) AS STRING) FROM scoped)"
             if spec.date_field
             else "CAST(NULL AS STRING)"
         )
         maximum_date = (
-            f"CAST(MAX(`{spec.date_field}`) AS STRING)"
+            f"(SELECT CAST(MAX(`{spec.date_field}`) AS STRING) FROM scoped)"
             if spec.date_field
             else "CAST(NULL AS STRING)"
         )
@@ -610,9 +610,9 @@ class GoogleBigQueryGateway:
             )
             SELECT
               (SELECT COUNT(*) FROM scoped) AS row_count,
-              (SELECT {watermark} FROM scoped) AS watermark,
-              (SELECT {minimum_date} FROM scoped) AS minimum_date,
-              (SELECT {maximum_date} FROM scoped) AS maximum_date,
+              {watermark} AS watermark,
+              {minimum_date} AS minimum_date,
+              {maximum_date} AS maximum_date,
               COALESCE((SELECT SUM(excess_rows) FROM duplicate_keys), 0)
                 AS duplicate_business_key_count
             """,
