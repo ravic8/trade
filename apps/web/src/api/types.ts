@@ -63,6 +63,12 @@ export type DailyOpportunitiesResponse = {
   source: "upstox" | "yfinance";
   target_version: string;
   session_date: string | null;
+  latest_available_date: string | null;
+  latest_complete_date: string | null;
+  session_instruments: number;
+  expected_instruments: number;
+  coverage_ratio: number | null;
+  coverage_status: "complete" | "partial" | "unavailable";
   total: number;
   summary: OpportunityTargetSummary;
   rows: OpportunityTargetRow[];

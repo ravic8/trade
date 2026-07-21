@@ -131,6 +131,7 @@ class Settings(BaseSettings):
         default=5, ge=1, le=1_000
     )
     yfinance_nse_enabled: bool = False
+    opportunity_minimum_session_coverage: float = Field(default=0.95, gt=0, le=1)
     nse_daily_primary_source: str = Field(default="upstox", pattern="^(upstox|yfinance)$")
     nse_provider_comparison_sessions: int = Field(default=20, ge=5, le=250)
     nse_provider_comparison_minimum_symbols: int = Field(default=100, ge=1)

@@ -826,6 +826,15 @@ Dagster registers `yfinance_daily_work_planner_schedule` and
 them during Phase 5 deployment; universe cutover and staged schedule activation
 begin in Phase 6. Forex schedules remain stopped.
 
+After NSE cutover, Dagster also registers
+`yfinance_nse_completed_session_work_planner_schedule` at `12:15 UTC` on
+weekdays. It complements the generic `06:00 UTC` planner by planning the same
+NSE session after close plus `YFINANCE_PROVIDER_GRACE_MINUTES`. Worker execution
+re-resolves that completed-session boundary, clamps over-wide work windows, and
+drops any newer provider rows before PostgreSQL writes. This makes the boundary
+safe for universe-created `new_symbol_backfill` work as well as scheduled
+`daily_incremental` work.
+
 Exit criteria:
 
 - Executor restarts do not lose or duplicate work.

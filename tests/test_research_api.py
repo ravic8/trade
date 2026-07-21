@@ -1446,7 +1446,9 @@ def test_data_schedule_status_endpoint() -> None:
     assert schedules["yfinance_fx_intraday_schedule"]["intended_status"] == "stopped"
     assert "private" in schedules["daily_research_schedule"]["notes"]
     assert "yfinance_daily_work_planner_schedule" in schedules
+    assert "yfinance_nse_completed_session_work_planner_schedule" in schedules
     assert "yfinance_daily_work_worker_schedule" in schedules
+    assert "nse_completed_session_opportunity_targets_schedule" in schedules
     assert "nse_universe_refresh_schedule" in schedules
     assert "tsx_universe_refresh_schedule" in schedules
     assert "us_universe_refresh_schedule" in schedules
@@ -1476,7 +1478,9 @@ def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) ->
     for schedule_name in (
         "daily_research_schedule",
         "yfinance_daily_work_planner_schedule",
+        "yfinance_nse_completed_session_work_planner_schedule",
         "yfinance_daily_work_worker_schedule",
+        "nse_completed_session_opportunity_targets_schedule",
         "nse_universe_refresh_schedule",
         "tsx_universe_refresh_schedule",
         "us_universe_refresh_schedule",

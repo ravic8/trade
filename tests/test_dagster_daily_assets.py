@@ -280,6 +280,35 @@ def test_phase5_queue_assets_call_durable_pipelines(monkeypatch) -> None:
     assert calls == [("planner", "dagster"), ("worker", "dagster")]
 
 
+def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_planner(*, exchanges, trigger):
+        calls.append(("planner", (exchanges, trigger)))
+        return _result("yfinance_daily_work_planner")
+
+    def fake_targets(*, exchange, ohlcv_source):
+        calls.append(("targets", (exchange, ohlcv_source)))
+        return _result("nse_opportunity_targets")
+
+    monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_planner", fake_planner)
+    monkeypatch.setattr(
+        daily_assets,
+        "run_completed_session_opportunity_target_pipeline",
+        fake_targets,
+    )
+
+    daily_assets.yfinance_nse_completed_session_work_plan(dagster.build_op_context())
+    daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
+
+    assert calls == [
+        ("planner", (("NSE",), "dagster")),
+        ("targets", ("NSE", "yfinance")),
+    ]
+
+
 @pytest.mark.parametrize(
     ("asset_name", "exchange"),
     [

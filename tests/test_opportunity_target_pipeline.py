@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 from sqlalchemy import select
 from typer.testing import CliRunner
@@ -167,6 +168,96 @@ def test_opportunity_pipeline_records_failed_batch_progress(tmp_path, monkeypatc
     assert run["status"] == "failed"
     assert run["summary_json"]["completed_batches"] == 1
     assert run["summary_json"]["error_type"] == "RuntimeError"
+
+
+def test_completed_session_opportunity_refresh_waits_for_source_coverage(
+    monkeypatch,
+) -> None:
+    class Store:
+        def initialize(self):
+            pass
+
+        def latest_provider_eligible_exchange_session(self, *_args, **_kwargs):
+            return {"session_date": date(2026, 7, 20)}
+
+        def active_yfinance_daily_instruments(self, _exchange):
+            return [{} for _ in range(100)]
+
+        def daily_ohlcv_frame(self, **_kwargs):
+            return pd.DataFrame({"instrument_key": [f"YF|S{index}" for index in range(94)]})
+
+    monkeypatch.setattr(opportunity_targets, "TimescaleStore", lambda _url: Store())
+    monkeypatch.setattr(
+        opportunity_targets,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_url="unused",
+            yfinance_provider_grace_minutes=120,
+            opportunity_minimum_session_coverage=0.95,
+        ),
+    )
+    monkeypatch.setattr(
+        opportunity_targets,
+        "run_opportunity_target_pipeline",
+        lambda **_kwargs: pytest.fail("partial source coverage must not build targets"),
+    )
+
+    result = opportunity_targets.run_completed_session_opportunity_target_pipeline(
+        exchange="NSE",
+        at=datetime(2026, 7, 20, 13, tzinfo=UTC),
+    )
+
+    assert result.status == "warn"
+    assert result.rows == 0
+    assert result.metrics["ready"] is False
+    assert result.metrics["coverage_ratio"] == 0.94
+
+
+def test_completed_session_opportunity_refresh_builds_once_when_ready(monkeypatch) -> None:
+    class Store:
+        def initialize(self):
+            pass
+
+        def latest_provider_eligible_exchange_session(self, *_args, **_kwargs):
+            return {"session_date": date(2026, 7, 20)}
+
+        def active_yfinance_daily_instruments(self, _exchange):
+            return [{} for _ in range(100)]
+
+        def daily_ohlcv_frame(self, **_kwargs):
+            return pd.DataFrame({"instrument_key": [f"YF|S{index}" for index in range(96)]})
+
+        def opportunity_target_session_coverage(self, *_args, **_kwargs):
+            return {"latest_complete_date": date(2026, 7, 17)}
+
+    captured: dict[str, object] = {}
+
+    def build(**kwargs):
+        captured.update(kwargs)
+        return PipelineRunResult(name="nse_opportunity_targets", status="pass", rows=96)
+
+    monkeypatch.setattr(opportunity_targets, "TimescaleStore", lambda _url: Store())
+    monkeypatch.setattr(
+        opportunity_targets,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_url="unused",
+            yfinance_provider_grace_minutes=120,
+            opportunity_minimum_session_coverage=0.95,
+        ),
+    )
+    monkeypatch.setattr(opportunity_targets, "run_opportunity_target_pipeline", build)
+
+    result = opportunity_targets.run_completed_session_opportunity_target_pipeline(
+        exchange="NSE",
+        at=datetime(2026, 7, 20, 13, tzinfo=UTC),
+    )
+
+    assert result.status == "pass"
+    assert result.metrics["ready"] is True
+    assert result.metrics["already_current"] is False
+    assert captured["incremental"] is True
+    assert captured["recompute_lookback_days"] == 14
 
 
 def test_opportunity_cli_forwards_bounded_batch_size(monkeypatch) -> None:

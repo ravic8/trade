@@ -64,6 +64,20 @@ export function OpportunitiesPage() {
         </div>
       </section>
 
+      {payload?.latest_available_date &&
+      payload.session_date !== payload.latest_available_date ? (
+        <section className="opportunity-notice opportunity-coverage-notice" aria-label="Coverage notice">
+          <Waves size={18} />
+          <div>
+            <strong>Showing the latest complete session</strong>
+            <span>
+              {payload.latest_available_date} is still partial, so rankings remain on {payload.session_date}.
+              {` Coverage: ${payload.session_instruments.toLocaleString()} of approximately ${payload.expected_instruments.toLocaleString()} instruments.`}
+            </span>
+          </div>
+        </section>
+      ) : null}
+
       <section className="panel opportunity-filter-panel">
         <div className="opportunity-filters">
           <label>
@@ -103,7 +117,7 @@ export function OpportunitiesPage() {
           icon={Activity}
           label="Rows"
           value={(payload?.total ?? 0).toLocaleString()}
-          detail={payload?.session_date ? `${exchange} · ${payload.session_date}` : "No computed session"}
+          detail={payload?.session_date ? `${exchange} · ${payload.session_date} · ${formatPercent(payload.coverage_ratio, 1)} coverage` : "No computed session"}
         />
         <MetricCard
           icon={TrendingUp}

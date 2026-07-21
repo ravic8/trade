@@ -97,6 +97,30 @@ corrected OHLCV rows and previous-close relationships are updated
 idempotently. The v1 Opportunities contract uses the active cross-exchange
 `yfinance` daily feed for NSE, TSX, and US; PostgreSQL remains authoritative.
 
+## NSE completed-session automation
+
+NSE full-universe incremental ingestion uses the durable yfinance planner and
+worker. The generic planner remains the next-day fallback. A second NSE-only
+planner runs at `12:15 UTC` on weekdays, after the exchange close and the
+default 120-minute provider grace period. The worker independently clamps both
+the requested window and returned rows to the latest provider-eligible
+materialized exchange session, so an early new-symbol job cannot persist an
+in-progress daily candle.
+
+`nse_completed_session_opportunity_targets_schedule` checks hourly from
+`13:15` through `18:15 UTC`. It computes the incremental targets only after the
+latest completed session reaches `OPPORTUNITY_MINIMUM_SESSION_COVERAGE` (95%
+by default), and becomes a cheap no-op once that session is current. Both new
+schedules are registered stopped by default and must be enabled explicitly in
+private Dagster after deployment.
+
+When no date is supplied, the API selects the newest target session whose row
+count reaches the same rolling coverage gate. If a newer partial date exists,
+the response includes `latest_available_date`, `latest_complete_date`,
+`coverage_ratio`, and instrument counts; the UI explains that it is retaining
+the latest complete session. An explicitly requested partial date is still
+returned and is labelled `partial`.
+
 For long production builds, run the command in `tmux`. If a process or host
 fails, repeat the same `--keep-existing` command; already committed batches are
 updated rather than duplicated. Use `--replace-exchange` only for an explicitly
@@ -135,6 +159,13 @@ FROM public.target_runs
 WHERE dataset_name = 'daily_opportunity_outcomes'
 ORDER BY started_at DESC
 LIMIT 20;
+
+SELECT date, count(*) AS instruments
+FROM public.opportunity_targets_daily
+WHERE exchange = 'NSE' AND source = 'yfinance'
+GROUP BY date
+ORDER BY date DESC
+LIMIT 10;
 ```
 
 Then verify the API and UI:
@@ -142,5 +173,9 @@ Then verify the API and UI:
 ```bash
 curl -fsS 'http://127.0.0.1:8081/api/opportunities/daily?exchange=NSE&limit=5'
 ```
+
+Confirm `coverage_status` is `complete`. A different
+`latest_available_date` and `session_date` is expected while the newest source
+session is still below the configured coverage gate.
 
 Open `/opportunities`. The legacy `/screeners` path redirects there.

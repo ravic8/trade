@@ -295,6 +295,99 @@ def run_opportunity_target_pipeline(
     )
 
 
+def run_completed_session_opportunity_target_pipeline(
+    *,
+    exchange: str,
+    ohlcv_source: str = "yfinance",
+    target_version: str = DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+    at: datetime | None = None,
+    recompute_lookback_days: int = 14,
+    batch_size: int = 50,
+) -> PipelineRunResult:
+    """Refresh targets only after source coverage reaches the configured gate."""
+    exchange_code = exchange.upper()
+    source_code = ohlcv_source.lower()
+    settings = get_settings()
+    db = TimescaleStore(settings.database_url)
+    db.initialize()
+    observed_at = (at or datetime.now(UTC)).astimezone(UTC)
+    eligible = db.latest_provider_eligible_exchange_session(
+        exchange_code,
+        at=observed_at,
+        provider_grace_minutes=settings.yfinance_provider_grace_minutes,
+    )
+    if eligible is None:
+        return PipelineRunResult(
+            name=f"{exchange_code.lower()}_opportunity_targets_refresh",
+            status="warn",
+            metrics={"ready": False, "reason": "no_completed_exchange_session"},
+            warnings=[f"No provider-eligible completed {exchange_code} session is available."],
+        )
+    session_date = eligible["session_date"]
+    expected_instruments = len(db.active_yfinance_daily_instruments(exchange_code))
+    source_frame = db.daily_ohlcv_frame(
+        exchange=exchange_code,
+        source=source_code,
+        start_date=session_date,
+        end_date=session_date,
+    )
+    source_instruments = (
+        int(source_frame["instrument_key"].nunique())
+        if not source_frame.empty and "instrument_key" in source_frame.columns
+        else 0
+    )
+    coverage_ratio = (
+        min(source_instruments / expected_instruments, 1.0) if expected_instruments else 0.0
+    )
+    readiness = {
+        "ready_session_date": session_date.isoformat(),
+        "source_instruments": source_instruments,
+        "expected_instruments": expected_instruments,
+        "coverage_ratio": coverage_ratio,
+        "minimum_coverage": settings.opportunity_minimum_session_coverage,
+    }
+    if coverage_ratio < settings.opportunity_minimum_session_coverage:
+        return PipelineRunResult(
+            name=f"{exchange_code.lower()}_opportunity_targets_refresh",
+            status="warn",
+            metrics={**readiness, "ready": False, "reason": "source_coverage_partial"},
+            warnings=[
+                f"{exchange_code} {session_date} source coverage is "
+                f"{coverage_ratio:.1%}; waiting for "
+                f"{settings.opportunity_minimum_session_coverage:.1%}."
+            ],
+        )
+    target_coverage = db.opportunity_target_session_coverage(
+        target_version,
+        exchange=exchange_code,
+        source=source_code,
+        minimum_coverage=settings.opportunity_minimum_session_coverage,
+    )
+    if target_coverage["latest_complete_date"] == session_date:
+        return PipelineRunResult(
+            name=f"{exchange_code.lower()}_opportunity_targets_refresh",
+            status="pass",
+            metrics={**readiness, "ready": True, "already_current": True},
+        )
+    result = run_opportunity_target_pipeline(
+        exchange=exchange_code,
+        ohlcv_source=source_code,
+        target_version=target_version,
+        incremental=True,
+        recompute_lookback_days=recompute_lookback_days,
+        batch_size=batch_size,
+    )
+    return PipelineRunResult(
+        name=result.name,
+        status=result.status,
+        rows=result.rows,
+        artifacts=result.artifacts,
+        metrics={**result.metrics, **readiness, "ready": True, "already_current": False},
+        warnings=result.warnings,
+        blocking_issues=result.blocking_issues,
+    )
+
+
 class _OpportunityAuditAccumulator:
     def __init__(self, *, target_version: str) -> None:
         self.target_version = target_version

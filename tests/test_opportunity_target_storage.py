@@ -93,3 +93,37 @@ def test_opportunity_page_supports_symbol_filter_and_explicit_date(tmp_path) -> 
 
     assert page["total"] == 1
     assert page["rows"][0]["symbol"] == "AAA"
+
+
+def test_opportunity_page_defaults_to_latest_session_with_sufficient_coverage(tmp_path) -> None:
+    store = TimescaleStore(f"sqlite:///{tmp_path / 'opportunities.sqlite'}")
+    metadata.create_all(store.engine)
+    targets = _targets()
+    partial = targets.iloc[[1]].copy()
+    partial["date"] = date(2026, 1, 6)
+    store.upsert_daily_opportunity_targets(pd.concat([targets, partial], ignore_index=True))
+
+    page = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        minimum_session_coverage=0.95,
+    )
+
+    assert page["session_date"] == date(2026, 1, 5)
+    assert page["latest_available_date"] == date(2026, 1, 6)
+    assert page["latest_complete_date"] == date(2026, 1, 5)
+    assert page["session_instruments"] == 2
+    assert page["expected_instruments"] == 2
+    assert page["coverage_ratio"] == 1.0
+    assert page["coverage_status"] == "complete"
+
+    explicit_partial = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        session_date=date(2026, 1, 6),
+    )
+    assert explicit_partial["session_date"] == date(2026, 1, 6)
+    assert explicit_partial["coverage_ratio"] == 0.5
+    assert explicit_partial["coverage_status"] == "partial"
