@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install package
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
@@ -59,3 +60,8 @@ jobs:
 
       - name: Validate compose config
         run: docker compose --env-file .env.prod.example -f docker-compose.prod.yml config
+
+      - name: Validate Docker build definitions
+        run: >-
+          docker compose --env-file .env.prod.example -f docker-compose.prod.yml
+          build --check api web

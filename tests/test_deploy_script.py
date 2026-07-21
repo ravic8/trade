@@ -91,7 +91,7 @@ exit 0
         "--profile admin up -d --no-deps --force-recreate dagster-webserver"
     )
 
-    assert (admin_build in docker_calls) is dagster_running
+    assert admin_build not in docker_calls
     assert (admin_recreate in docker_calls) is dagster_running
     assert "restart cloudbeaver" in docker_calls
     assert ("http://127.0.0.1:3300" in curl_calls) is dagster_running
@@ -99,7 +99,7 @@ exit 0
     assert "-H Host: sql.example.com http://localhost:8081/" in curl_calls
 
     docker_call_lines = docker_calls.splitlines()
-    build_index = _call_index(docker_call_lines, " build")
+    build_index = _call_index(docker_call_lines, "build api web")
     postgres_start_index = _call_index(docker_call_lines, "up -d postgres")
     postgres_ready_index = _call_index(
         docker_call_lines,
@@ -256,7 +256,7 @@ exit 0
         "restarting deployment with synchronized script at new-revision"
     ) == 1
     docker_calls = docker_log.read_text(encoding="utf-8")
-    assert docker_calls.count(" build\n") == 1
+    assert docker_calls.count("build api web\n") == 1
     assert docker_calls.count("up -d --remove-orphans") == 1
 
 
@@ -276,11 +276,41 @@ def test_api_image_contains_alembic_runtime_files() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     dockerfile = (repository_root / "Dockerfile.api").read_text(encoding="utf-8")
 
+    install = dockerfile.index("python -m pip install .")
+    source_copy = dockerfile.index("COPY src ./src")
     config_copy = dockerfile.index("COPY alembic.ini ./")
     migrations_copy = dockerfile.index("COPY migrations ./migrations")
-    install = dockerfile.index("RUN pip install -e .")
-    assert config_copy < install
-    assert migrations_copy < install
+    assert install < source_copy
+    assert config_copy < source_copy
+    assert migrations_copy < source_copy
+    assert "--mount=type=cache,target=/root/.cache/pip" in dockerfile
+    assert "FROM python:3.11-slim AS dependencies" in dockerfile
+
+
+def test_web_image_uses_an_npm_build_cache() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    dockerfile = (repository_root / "Dockerfile.web").read_text(encoding="utf-8")
+
+    assert "--mount=type=cache,target=/root/.npm" in dockerfile
+    assert dockerfile.index("COPY apps/web/package*.json ./") < dockerfile.index(
+        "COPY apps/web/ ./"
+    )
+
+
+def test_deploy_reports_build_migration_and_total_timings() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    script = (repository_root / "deploy/deploy.sh").read_text(encoding="utf-8")
+
+    assert "production image build completed in" in script
+    assert "database migrations completed in" in script
+    assert "deployment completed in" in script
+
+
+def test_prod_compose_reuses_one_api_image_for_dagster_services() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    compose = (repository_root / "docker-compose.prod.yml").read_text(encoding="utf-8")
+
+    assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 3
 
 
 def _call_index(calls: list[str], fragment: str) -> int:
