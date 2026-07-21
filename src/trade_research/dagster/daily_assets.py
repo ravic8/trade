@@ -189,10 +189,13 @@ def us_universe_snapshot(context) -> PipelineRunResult:
 @asset(
     group_name="yfinance_daily_queue",
     compute_kind="python",
-    description="Plan prioritized incremental and missing ten-year Yahoo daily work.",
+    description="Plan prioritized incremental Yahoo daily work for enabled exchanges.",
 )
 def yfinance_daily_work_plan(context) -> PipelineRunResult:
-    result = run_yfinance_daily_work_planner(trigger="dagster")
+    result = run_yfinance_daily_work_planner(
+        include_initial_backfill=False,
+        trigger="dagster",
+    )
     context.add_output_metadata(_result_metadata(result))
     return result
 
@@ -203,7 +206,11 @@ def yfinance_daily_work_plan(context) -> PipelineRunResult:
     description="Plan NSE Yahoo work after the provider grace period for the completed session.",
 )
 def yfinance_nse_completed_session_work_plan(context) -> PipelineRunResult:
-    result = run_yfinance_daily_work_planner(exchanges=("NSE",), trigger="dagster")
+    result = run_yfinance_daily_work_planner(
+        exchanges=("NSE",),
+        include_initial_backfill=False,
+        trigger="dagster",
+    )
     context.add_output_metadata(_result_metadata(result))
     return result
 

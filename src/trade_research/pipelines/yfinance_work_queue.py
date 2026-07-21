@@ -744,6 +744,11 @@ def _execute_claimed_exchange_work(
     )
     frame = pd.concat(execution.frames, ignore_index=True) if execution.frames else pd.DataFrame()
     frame = _completed_session_rows(frame, completed_session)
+    ticker_outcomes = _require_daily_incremental_target_session(
+        ticker_outcomes=execution.ticker_outcomes,
+        work_items=executable_work,
+        frame=frame,
+    )
     written = (
         _retry_database_write(
             lambda: db.upsert_daily_ohlcv(frame, exchange=exchange, source="yfinance")
@@ -763,10 +768,10 @@ def _execute_claimed_exchange_work(
         settings=settings,
         exchange=exchange,
         work_items=executable_work,
-        ticker_outcomes=execution.ticker_outcomes,
+        ticker_outcomes=ticker_outcomes,
         run_id=run_id,
     )
-    return [*execution.ticker_outcomes, *deferred_outcomes], written, adjustments
+    return [*ticker_outcomes, *deferred_outcomes], written, adjustments
 
 
 def _completed_session_rows(frame: pd.DataFrame, completed_session: date) -> pd.DataFrame:
@@ -778,6 +783,63 @@ def _completed_session_rows(frame: pd.DataFrame, completed_session: date) -> pd.
         raise ValueError("Yahoo daily frame does not contain a Date column.")
     row_dates = pd.to_datetime(frame[date_column], errors="coerce").dt.date
     return frame.loc[row_dates.notna() & (row_dates <= completed_session)].reset_index(drop=True)
+
+
+def _require_daily_incremental_target_session(
+    *,
+    ticker_outcomes: list[dict[str, Any]],
+    work_items: list[dict[str, Any]],
+    frame: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    """Do not acknowledge incremental work unless its target session was returned."""
+    work_by_id = {str(item["work_item_id"]): item for item in work_items}
+    latest_by_instrument: dict[str, date] = {}
+    if not frame.empty:
+        key_column = "InstrumentKey" if "InstrumentKey" in frame.columns else "instrument_key"
+        date_column = "Date" if "Date" in frame.columns else "date"
+        if key_column not in frame.columns:
+            raise ValueError("Yahoo daily frame does not contain an InstrumentKey column.")
+        normalized = pd.DataFrame(
+            {
+                "instrument_key": frame[key_column].astype("string"),
+                "date": pd.to_datetime(frame[date_column], errors="coerce").dt.date,
+            }
+        ).dropna(subset=["instrument_key", "date"])
+        latest_by_instrument = normalized.groupby("instrument_key")["date"].max().to_dict()
+
+    resolved: list[dict[str, Any]] = []
+    for outcome in ticker_outcomes:
+        outcome_copy = dict(outcome)
+        work_item_id = outcome_copy.get("work_item_id")
+        item = work_by_id.get(str(work_item_id)) if work_item_id is not None else None
+        if (
+            item is None
+            or item.get("work_type") != "daily_incremental"
+            or outcome_copy.get("status") != "success"
+        ):
+            resolved.append(outcome_copy)
+            continue
+
+        instrument_key = str(
+            item.get("provider_instrument_key") or f"YF|{item['provider_symbol']}"
+        )
+        expected = item["window_end"]
+        observed = latest_by_instrument.get(instrument_key)
+        if observed is not None and observed >= expected:
+            resolved.append(outcome_copy)
+            continue
+
+        observed_label = observed.isoformat() if observed is not None else "missing"
+        outcome_copy.update(
+            status="incomplete_session",
+            retryable=True,
+            error_message=(
+                f"Yahoo latest daily candle is {observed_label}; "
+                f"expected completed session {expected.isoformat()}."
+            ),
+        )
+        resolved.append(outcome_copy)
+    return resolved
 
 
 def _record_successful_provider_history_evidence(

@@ -514,8 +514,16 @@ def test_worker_clamps_fetch_and_persisted_rows_to_completed_session(monkeypatch
             frames=[
                 pd.DataFrame(
                     [
-                        {"Date": date(2026, 7, 17), "Close": 100.0},
-                        {"Date": date(2026, 7, 20), "Close": 101.0},
+                        {
+                            "InstrumentKey": "YF|RELIANCE.NS",
+                            "Date": date(2026, 7, 17),
+                            "Close": 100.0,
+                        },
+                        {
+                            "InstrumentKey": "YF|RELIANCE.NS",
+                            "Date": date(2026, 7, 20),
+                            "Close": 101.0,
+                        },
                     ]
                 )
             ],
@@ -552,6 +560,78 @@ def test_worker_clamps_fetch_and_persisted_rows_to_completed_session(monkeypatch
     assert written == adjustments == 1
     assert written_frames[0]["Date"].tolist() == [date(2026, 7, 17)]
     assert outcomes[0]["status"] == "success"
+
+
+def test_worker_retries_incremental_item_missing_its_target_session(monkeypatch) -> None:
+    class Store:
+        def latest_provider_eligible_exchange_session(self, *_args, **_kwargs):
+            return {"session_date": date(2026, 7, 20)}
+
+        def upsert_daily_ohlcv(self, frame, **_kwargs):
+            return len(frame)
+
+        def upsert_daily_price_adjustments(self, frame, **_kwargs):
+            return len(frame)
+
+    def execute(**_kwargs):
+        return YahooExecutionSummary(
+            frames=[
+                pd.DataFrame(
+                    [
+                        {
+                            "InstrumentKey": "YF|RELIANCE.NS",
+                            "Date": date(2026, 7, 17),
+                            "Close": 100.0,
+                        }
+                    ]
+                )
+            ],
+            ticker_outcomes=[
+                {
+                    "work_item_id": "nse-work",
+                    "status": "success",
+                    "retryable": False,
+                }
+            ],
+        )
+
+    monkeypatch.setattr(
+        yfinance_work_queue,
+        "_execute_yfinance_daily_batches_with_controls",
+        execute,
+    )
+    monkeypatch.setattr(yfinance_work_queue, "build_provider_rate_limiter", lambda _s: None)
+    work = {
+        "work_item_id": "nse-work",
+        "work_type": "daily_incremental",
+        "provider_symbol": "RELIANCE.NS",
+        "provider_instrument_key": "YF|RELIANCE.NS",
+        "window_start": date(2026, 7, 9),
+        "window_end": date(2026, 7, 20),
+    }
+
+    outcomes, written, adjustments = yfinance_work_queue._execute_claimed_exchange_work(
+        db=Store(),
+        settings=Settings(_env_file=None),
+        exchange="NSE",
+        work_items=[work],
+        run_id="run-1",
+        provider=None,
+        at=datetime(2026, 7, 21, 6, tzinfo=UTC),
+    )
+
+    assert written == adjustments == 1
+    assert outcomes == [
+        {
+            "work_item_id": "nse-work",
+            "status": "incomplete_session",
+            "retryable": True,
+            "error_message": (
+                "Yahoo latest daily candle is 2026-07-17; "
+                "expected completed session 2026-07-20."
+            ),
+        }
+    ]
 
 
 def test_worker_defers_window_that_has_no_completed_session(monkeypatch) -> None:
