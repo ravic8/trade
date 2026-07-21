@@ -5330,6 +5330,59 @@ class TimescaleStore:
         with self.engine.begin() as connection:
             return connection.execute(query).scalar_one_or_none()
 
+    def opportunity_target_session_coverage(
+        self,
+        target_version: str,
+        *,
+        exchange: str,
+        source: str,
+        minimum_coverage: float = 0.95,
+        lookback_sessions: int = 20,
+    ) -> dict[str, Any]:
+        """Resolve the newest sufficiently populated target session.
+
+        The rolling maximum is deliberately based on stored target sessions rather
+        than the mutable current universe, so historic and delisted instruments do
+        not make older sessions appear incomplete.
+        """
+        query = (
+            select(
+                opportunity_targets_daily_table.c.date,
+                func.count().label("instrument_count"),
+            )
+            .where(opportunity_targets_daily_table.c.target_version == target_version)
+            .where(opportunity_targets_daily_table.c.exchange == exchange.upper())
+            .where(opportunity_targets_daily_table.c.source == source.lower())
+            .group_by(opportunity_targets_daily_table.c.date)
+            .order_by(opportunity_targets_daily_table.c.date.desc())
+            .limit(max(2, lookback_sessions))
+        )
+        with self.engine.begin() as connection:
+            rows = [dict(row) for row in connection.execute(query).mappings()]
+        if not rows:
+            return {
+                "latest_available_date": None,
+                "latest_complete_date": None,
+                "expected_instruments": 0,
+                "counts_by_date": {},
+            }
+        counts_by_date = {row["date"]: int(row["instrument_count"] or 0) for row in rows}
+        expected = max(counts_by_date.values())
+        latest_complete = next(
+            (
+                row["date"]
+                for row in rows
+                if expected and int(row["instrument_count"] or 0) / expected >= minimum_coverage
+            ),
+            None,
+        )
+        return {
+            "latest_available_date": rows[0]["date"],
+            "latest_complete_date": latest_complete,
+            "expected_instruments": expected,
+            "counts_by_date": counts_by_date,
+        }
+
     def upsert_daily_opportunity_targets(self, frame: pd.DataFrame) -> int:
         rows = self._daily_opportunity_target_rows(frame)
         if not rows:
@@ -5432,20 +5485,29 @@ class TimescaleStore:
         direction: str = "desc",
         limit: int = 100,
         offset: int = 0,
+        minimum_session_coverage: float = 0.95,
     ) -> dict[str, Any]:
         exchange_code = exchange.upper()
         source_name = source.lower()
-        resolved_date = session_date or self.latest_daily_opportunity_target_date(
+        coverage = self.opportunity_target_session_coverage(
             target_version,
             exchange=exchange_code,
             source=source_name,
+            minimum_coverage=minimum_session_coverage,
         )
+        resolved_date = session_date or coverage["latest_complete_date"]
         if resolved_date is None:
             return {
                 "exchange": exchange_code,
                 "source": source_name,
                 "target_version": target_version,
                 "session_date": None,
+                "latest_available_date": coverage["latest_available_date"],
+                "latest_complete_date": coverage["latest_complete_date"],
+                "session_instruments": 0,
+                "expected_instruments": coverage["expected_instruments"],
+                "coverage_ratio": None,
+                "coverage_status": "unavailable",
                 "total": 0,
                 "summary": {},
                 "rows": [],
@@ -5518,11 +5580,35 @@ class TimescaleStore:
         summary["positive_session_ratio"] = (
             summary["positive_sessions"] / total if total else None
         )
+        session_instruments = coverage["counts_by_date"].get(resolved_date)
+        if session_instruments is None:
+            count_query = select(func.count()).where(
+                opportunity_targets_daily_table.c.target_version == target_version,
+                opportunity_targets_daily_table.c.exchange == exchange_code,
+                opportunity_targets_daily_table.c.source == source_name,
+                opportunity_targets_daily_table.c.date == resolved_date,
+            )
+            with self.engine.begin() as connection:
+                session_instruments = int(connection.execute(count_query).scalar_one() or 0)
+        expected_instruments = int(coverage["expected_instruments"] or 0)
+        coverage_ratio = (
+            min(session_instruments / expected_instruments, 1.0) if expected_instruments else None
+        )
         return {
             "exchange": exchange_code,
             "source": source_name,
             "target_version": target_version,
             "session_date": resolved_date,
+            "latest_available_date": coverage["latest_available_date"],
+            "latest_complete_date": coverage["latest_complete_date"],
+            "session_instruments": session_instruments,
+            "expected_instruments": expected_instruments,
+            "coverage_ratio": coverage_ratio,
+            "coverage_status": (
+                "complete"
+                if coverage_ratio is not None and coverage_ratio >= minimum_session_coverage
+                else "partial"
+            ),
             "total": total,
             "summary": summary,
             "rows": rows,

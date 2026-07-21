@@ -638,12 +638,42 @@ def data_schedule_status() -> list[PipelineScheduleStatusRow]:
             notes="Configured intent only; actual Dagster controls remain private.",
         ),
         PipelineScheduleStatusRow(
+            schedule_name="yfinance_nse_completed_session_work_planner_schedule",
+            job_name="yfinance_nse_completed_session_work_planner_job",
+            cron_schedule="15 12 * * 1-5",
+            execution_timezone="UTC",
+            intended_status=(
+                "running"
+                if current.yfinance_daily_enabled and current.yfinance_nse_enabled
+                else "stopped"
+            ),
+            notes=(
+                "Plans NSE work after close plus the Yahoo provider grace period; "
+                "actual Dagster controls remain private."
+            ),
+        ),
+        PipelineScheduleStatusRow(
             schedule_name="yfinance_daily_work_worker_schedule",
             job_name="yfinance_daily_work_worker_job",
             cron_schedule="*/5 * * * *",
             execution_timezone="UTC",
             intended_status="running" if any_daily_exchange else "stopped",
             notes="Configured intent only; actual Dagster controls remain private.",
+        ),
+        PipelineScheduleStatusRow(
+            schedule_name="nse_completed_session_opportunity_targets_schedule",
+            job_name="nse_completed_session_opportunity_targets_job",
+            cron_schedule="15 13-18 * * 1-5",
+            execution_timezone="UTC",
+            intended_status=(
+                "running"
+                if current.yfinance_daily_enabled and current.yfinance_nse_enabled
+                else "stopped"
+            ),
+            notes=(
+                "Coverage-gated incremental target refresh; repeated checks become no-ops "
+                "after the completed session is current."
+            ),
         ),
         PipelineScheduleStatusRow(
             schedule_name="nse_universe_refresh_schedule",
@@ -1410,6 +1440,7 @@ def daily_opportunities(
             direction=direction,
             limit=limit,
             offset=offset,
+            minimum_session_coverage=get_settings().opportunity_minimum_session_coverage,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

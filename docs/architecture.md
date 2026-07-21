@@ -73,6 +73,11 @@ It displays realized OHLC/previous-close variables and does not read BigQuery
 or a future ClickHouse replica. Predictive candidates must remain a separate,
 leakage-safe layer. See `docs/opportunity_analytics.md`.
 
+NSE daily automation uses yfinance for full-universe durable incremental work.
+The worker enforces the materialized completed-session boundary before writes;
+a post-grace NSE planner fills the just-completed session, and a separate
+coverage-gated Opportunity refresh runs only after source breadth is ready.
+
 The frozen first ML dataset and walk-forward evaluation contract is documented
 in `docs/ml_dataset_v1_strategy.md`. It defines `ml_dataset_v1` as a separate
 post-validation layer depending on `processed_dataset_validation`, with a

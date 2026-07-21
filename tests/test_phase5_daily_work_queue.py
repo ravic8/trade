@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pandas as pd
 import pytest
 
 from trade_research.config import Settings
@@ -11,6 +12,7 @@ from trade_research.data.daily_work import (
     DailyWorkPlanner,
     durable_retry_delay,
 )
+from trade_research.data.yahoo_executor import YahooExecutionSummary
 from trade_research.pipelines import yfinance_work_queue
 from trade_research.storage.timescale import TimescaleStore
 
@@ -488,3 +490,104 @@ def test_worker_cancels_prelisting_claim_without_calling_yahoo(monkeypatch) -> N
     assert result.metrics["succeeded"] == 0
     assert store.transitions[0]["status"] == "cancelled"
     assert store.transitions[0]["error_code"] == "outside_listing_window"
+
+
+def test_worker_clamps_fetch_and_persisted_rows_to_completed_session(monkeypatch) -> None:
+    written_frames: list[pd.DataFrame] = []
+
+    class Store:
+        def latest_provider_eligible_exchange_session(self, *_args, **_kwargs):
+            return {"session_date": date(2026, 7, 17)}
+
+        def upsert_daily_ohlcv(self, frame, **_kwargs):
+            written_frames.append(frame.copy())
+            return len(frame)
+
+        def upsert_daily_price_adjustments(self, frame, **_kwargs):
+            return len(frame)
+
+    captured_rows: list[dict[str, object]] = []
+
+    def execute(**kwargs):
+        captured_rows.extend(kwargs["rows"])
+        return YahooExecutionSummary(
+            frames=[
+                pd.DataFrame(
+                    [
+                        {"Date": date(2026, 7, 17), "Close": 100.0},
+                        {"Date": date(2026, 7, 20), "Close": 101.0},
+                    ]
+                )
+            ],
+            ticker_outcomes=[{"work_item_id": "nse-work", "status": "success", "retryable": False}],
+        )
+
+    monkeypatch.setattr(
+        yfinance_work_queue,
+        "_execute_yfinance_daily_batches_with_controls",
+        execute,
+    )
+    monkeypatch.setattr(yfinance_work_queue, "build_provider_rate_limiter", lambda _s: None)
+    settings = Settings(_env_file=None, yfinance_provider_grace_minutes=120)
+    work = {
+        "work_item_id": "nse-work",
+        "work_type": "daily_incremental",
+        "provider_symbol": "RELIANCE.NS",
+        "provider_instrument_key": "YF|RELIANCE.NS",
+        "window_start": date(2026, 7, 15),
+        "window_end": date(2026, 7, 20),
+    }
+
+    outcomes, written, adjustments = yfinance_work_queue._execute_claimed_exchange_work(
+        db=Store(),
+        settings=settings,
+        exchange="NSE",
+        work_items=[work],
+        run_id="run-1",
+        provider=None,
+        at=datetime(2026, 7, 20, 8, 40, tzinfo=UTC),
+    )
+
+    assert captured_rows[0]["fetch_end"] == "2026-07-17"
+    assert written == adjustments == 1
+    assert written_frames[0]["Date"].tolist() == [date(2026, 7, 17)]
+    assert outcomes[0]["status"] == "success"
+
+
+def test_worker_defers_window_that_has_no_completed_session(monkeypatch) -> None:
+    class Store:
+        def latest_provider_eligible_exchange_session(self, *_args, **_kwargs):
+            return {"session_date": date(2026, 7, 17)}
+
+    monkeypatch.setattr(
+        yfinance_work_queue,
+        "_execute_yfinance_daily_batches_with_controls",
+        lambda **_kwargs: pytest.fail("future-only work must not call Yahoo"),
+    )
+    work = {
+        "work_item_id": "future-work",
+        "work_type": "daily_incremental",
+        "provider_symbol": "RELIANCE.NS",
+        "window_start": date(2026, 7, 20),
+        "window_end": date(2026, 7, 20),
+    }
+
+    outcomes, written, adjustments = yfinance_work_queue._execute_claimed_exchange_work(
+        db=Store(),
+        settings=Settings(_env_file=None),
+        exchange="NSE",
+        work_items=[work],
+        run_id="run-1",
+        provider=None,
+        at=datetime(2026, 7, 20, 8, 40, tzinfo=UTC),
+    )
+
+    assert written == adjustments == 0
+    assert outcomes == [
+        {
+            "work_item_id": "future-work",
+            "status": "session_not_complete",
+            "retryable": True,
+            "error_message": "No completed NSE session is available in the requested window.",
+        }
+    ]

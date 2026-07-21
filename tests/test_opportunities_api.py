@@ -83,6 +83,7 @@ def test_daily_opportunities_exposes_pdf_target_variables(monkeypatch) -> None:
         "direction": "desc",
         "limit": 100,
         "offset": 0,
+        "minimum_session_coverage": 0.95,
     }
 
 

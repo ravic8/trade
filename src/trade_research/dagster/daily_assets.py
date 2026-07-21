@@ -14,6 +14,7 @@ from trade_research.analytics.bigquery import (
 from trade_research.config import get_settings
 from trade_research.pipelines import (
     PipelineRunResult,
+    run_completed_session_opportunity_target_pipeline,
     run_daily_feature_pipeline,
     run_daily_pipeline_health_pipeline,
     run_daily_target_pipeline,
@@ -198,6 +199,17 @@ def yfinance_daily_work_plan(context) -> PipelineRunResult:
 
 @asset(
     group_name="yfinance_daily_queue",
+    compute_kind="python",
+    description="Plan NSE Yahoo work after the provider grace period for the completed session.",
+)
+def yfinance_nse_completed_session_work_plan(context) -> PipelineRunResult:
+    result = run_yfinance_daily_work_planner(exchanges=("NSE",), trigger="dagster")
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="yfinance_daily_queue",
     compute_kind="yfinance",
     description="Claim and execute one bounded batch of durable Yahoo daily work.",
 )
@@ -291,6 +303,22 @@ def nse_opportunity_targets_v1(
 ) -> PipelineRunResult:
     _assert_upstream_not_failed(daily_ohlcv)
     result = run_opportunity_target_pipeline(
+        exchange="NSE",
+        ohlcv_source="yfinance",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="opportunity_analytics",
+    compute_kind="python",
+    description=(
+        "Coverage-gated incremental NSE Opportunity refresh for the latest completed session."
+    ),
+)
+def nse_completed_session_opportunity_targets(context) -> PipelineRunResult:
+    result = run_completed_session_opportunity_target_pipeline(
         exchange="NSE",
         ohlcv_source="yfinance",
     )

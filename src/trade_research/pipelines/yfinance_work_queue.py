@@ -520,6 +520,7 @@ def run_yfinance_daily_work_queue(
                 work_items=exchange_work,
                 run_id=str(run_id),
                 provider=provider,
+                at=observed_at,
             )
             rows_written += written
             adjustment_rows += adjustments
@@ -687,7 +688,36 @@ def _execute_claimed_exchange_work(
     work_items: list[dict[str, Any]],
     run_id: str,
     provider: YFinanceBatchProvider | None,
+    at: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], int, int]:
+    eligible = db.latest_provider_eligible_exchange_session(
+        exchange,
+        at=_as_utc(at or datetime.now(UTC)),
+        provider_grace_minutes=settings.yfinance_provider_grace_minutes,
+    )
+    if eligible is None:
+        raise ValueError(
+            f"No provider-eligible materialized exchange session is available for {exchange}."
+        )
+    completed_session = eligible["session_date"]
+    executable_work: list[dict[str, Any]] = []
+    deferred_outcomes: list[dict[str, Any]] = []
+    for item in work_items:
+        effective = {**item, "window_end": min(item["window_end"], completed_session)}
+        if effective["window_start"] <= effective["window_end"]:
+            executable_work.append(effective)
+            continue
+        deferred_outcomes.append(
+            {
+                "work_item_id": str(item["work_item_id"]),
+                "status": "session_not_complete",
+                "retryable": True,
+                "error_message": (
+                    f"No completed {exchange} session is available in the requested window."
+                ),
+            }
+        )
+
     rows = [
         {
             "work_item_id": str(item["work_item_id"]),
@@ -699,8 +729,10 @@ def _execute_claimed_exchange_work(
             "fetch_start": item["window_start"].isoformat(),
             "fetch_end": item["window_end"].isoformat(),
         }
-        for item in work_items
+        for item in executable_work
     ]
+    if not rows:
+        return deferred_outcomes, 0, 0
     execution = _execute_yfinance_daily_batches_with_controls(
         provider=provider,
         rows=rows,
@@ -711,6 +743,7 @@ def _execute_claimed_exchange_work(
         settings=settings,
     )
     frame = pd.concat(execution.frames, ignore_index=True) if execution.frames else pd.DataFrame()
+    frame = _completed_session_rows(frame, completed_session)
     written = (
         _retry_database_write(
             lambda: db.upsert_daily_ohlcv(frame, exchange=exchange, source="yfinance")
@@ -729,11 +762,22 @@ def _execute_claimed_exchange_work(
         db=db,
         settings=settings,
         exchange=exchange,
-        work_items=work_items,
+        work_items=executable_work,
         ticker_outcomes=execution.ticker_outcomes,
         run_id=run_id,
     )
-    return execution.ticker_outcomes, written, adjustments
+    return [*execution.ticker_outcomes, *deferred_outcomes], written, adjustments
+
+
+def _completed_session_rows(frame: pd.DataFrame, completed_session: date) -> pd.DataFrame:
+    """Drop provider rows newer than the latest safely completed exchange session."""
+    if frame.empty:
+        return frame
+    date_column = "Date" if "Date" in frame.columns else "date"
+    if date_column not in frame.columns:
+        raise ValueError("Yahoo daily frame does not contain a Date column.")
+    row_dates = pd.to_datetime(frame[date_column], errors="coerce").dt.date
+    return frame.loc[row_dates.notna() & (row_dates <= completed_session)].reset_index(drop=True)
 
 
 def _record_successful_provider_history_evidence(

@@ -10,6 +10,7 @@ from trade_research.dagster.daily_assets import (
     factor_research_v1,
     fx_intraday_gap_validation,
     ml_dataset_v1,
+    nse_completed_session_opportunity_targets,
     nse_daily_ohlcv,
     nse_exchange_sessions,
     nse_opportunity_targets_v1,
@@ -27,6 +28,7 @@ from trade_research.dagster.daily_assets import (
     yfinance_daily_work_worker,
     yfinance_fx_crypto_intraday_ohlcv,
     yfinance_fx_intraday_gap_validation,
+    yfinance_nse_completed_session_work_plan,
     yfinance_us_daily_ohlcv,
 )
 
@@ -73,6 +75,16 @@ us_universe_refresh_job = define_asset_job(
 yfinance_daily_work_planner_job = define_asset_job(
     name="yfinance_daily_work_planner_job",
     selection=[yfinance_daily_work_plan],
+)
+
+yfinance_nse_completed_session_work_planner_job = define_asset_job(
+    name="yfinance_nse_completed_session_work_planner_job",
+    selection=[yfinance_nse_completed_session_work_plan],
+)
+
+nse_completed_session_opportunity_targets_job = define_asset_job(
+    name="nse_completed_session_opportunity_targets_job",
+    selection=[nse_completed_session_opportunity_targets],
 )
 
 yfinance_daily_work_worker_job = define_asset_job(
@@ -196,6 +208,22 @@ yfinance_daily_work_planner_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+yfinance_nse_completed_session_work_planner_schedule = ScheduleDefinition(
+    name="yfinance_nse_completed_session_work_planner_schedule",
+    job=yfinance_nse_completed_session_work_planner_job,
+    cron_schedule="15 12 * * 1-5",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+nse_completed_session_opportunity_targets_schedule = ScheduleDefinition(
+    name="nse_completed_session_opportunity_targets_schedule",
+    job=nse_completed_session_opportunity_targets_job,
+    cron_schedule="15 13-18 * * 1-5",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 yfinance_daily_work_worker_schedule = ScheduleDefinition(
     name="yfinance_daily_work_worker_schedule",
     job=yfinance_daily_work_worker_job,
@@ -249,10 +277,12 @@ defs = Definitions(
         tsx_universe_snapshot,
         us_universe_snapshot,
         yfinance_daily_work_plan,
+        yfinance_nse_completed_session_work_plan,
         yfinance_daily_work_worker,
         yfinance_us_daily_ohlcv,
         yfinance_canada_daily_ohlcv,
         nse_opportunity_targets_v1,
+        nse_completed_session_opportunity_targets,
         tsx_opportunity_targets_v1,
         us_opportunity_targets_v1,
         dukascopy_fx_intraday_ohlcv,
@@ -278,7 +308,9 @@ defs = Definitions(
         tsx_universe_refresh_job,
         us_universe_refresh_job,
         yfinance_daily_work_planner_job,
+        yfinance_nse_completed_session_work_planner_job,
         yfinance_daily_work_worker_job,
+        nse_completed_session_opportunity_targets_job,
         nse_exchange_sessions_job,
         tsx_exchange_sessions_job,
         us_exchange_sessions_job,
@@ -293,7 +325,9 @@ defs = Definitions(
         tsx_universe_refresh_schedule,
         us_universe_refresh_schedule,
         yfinance_daily_work_planner_schedule,
+        yfinance_nse_completed_session_work_planner_schedule,
         yfinance_daily_work_worker_schedule,
+        nse_completed_session_opportunity_targets_schedule,
         nse_exchange_sessions_schedule,
         tsx_exchange_sessions_schedule,
         us_exchange_sessions_schedule,
