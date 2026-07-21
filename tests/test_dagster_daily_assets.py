@@ -261,10 +261,10 @@ def test_exchange_session_assets_materialize_canonical_exchanges(monkeypatch) ->
 
 
 def test_phase5_queue_assets_call_durable_pipelines(monkeypatch) -> None:
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, object]] = []
 
-    def fake_planner(*, trigger: str) -> object:
-        calls.append(("planner", trigger))
+    def fake_planner(**kwargs) -> object:
+        calls.append(("planner", kwargs))
         return _result("yfinance_daily_work_planner")
 
     def fake_worker(*, trigger: str) -> object:
@@ -277,7 +277,13 @@ def test_phase5_queue_assets_call_durable_pipelines(monkeypatch) -> None:
     daily_assets.yfinance_daily_work_plan(dagster.build_op_context())
     daily_assets.yfinance_daily_work_worker(dagster.build_op_context())
 
-    assert calls == [("planner", "dagster"), ("worker", "dagster")]
+    assert calls == [
+        (
+            "planner",
+            {"include_initial_backfill": False, "trigger": "dagster"},
+        ),
+        ("worker", "dagster"),
+    ]
 
 
 def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
@@ -285,8 +291,13 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
 ) -> None:
     calls: list[tuple[str, object]] = []
 
-    def fake_planner(*, exchanges, trigger):
-        calls.append(("planner", (exchanges, trigger)))
+    def fake_planner(*, exchanges, include_initial_backfill, trigger):
+        calls.append(
+            (
+                "planner",
+                (exchanges, include_initial_backfill, trigger),
+            )
+        )
         return _result("yfinance_daily_work_planner")
 
     def fake_targets(*, exchange, ohlcv_source):
@@ -304,7 +315,7 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
     daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
 
     assert calls == [
-        ("planner", (("NSE",), "dagster")),
+        ("planner", (("NSE",), False, "dagster")),
         ("targets", ("NSE", "yfinance")),
     ]
 

@@ -107,6 +107,10 @@ the requested window and returned rows to the latest provider-eligible
 materialized exchange session, so an early new-symbol job cannot persist an
 in-progress daily candle.
 
+Scheduled planner assets create incremental work only. Historical initial
+backfills and explicit gap repair remain operator-invoked CLI activities; this
+prevents a changing daily window end from recreating completed ten-year work.
+
 `nse_completed_session_opportunity_targets_schedule` checks hourly from
 `13:15` through `18:15 UTC`. It computes the incremental targets only after the
 latest completed session reaches `OPPORTUNITY_MINIMUM_SESSION_COVERAGE` (95%
