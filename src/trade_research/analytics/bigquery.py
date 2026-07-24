@@ -4,7 +4,7 @@ import os
 import stat
 import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -332,6 +332,43 @@ class BigQueryCanaryReadiness:
     year: int
     successful_run_ids: tuple[str, ...]
     reason: str
+
+
+@dataclass(frozen=True)
+class BigQueryBackfillYearVerification:
+    year: int
+    reconciled: bool
+    run_id: str | None = None
+    run_status: str | None = None
+    partition_status: str | None = None
+    source_row_count: int | None = None
+    destination_row_count: int | None = None
+    count_difference: int | None = None
+    rejected_rows: int | None = None
+    duplicate_business_key_count: int | None = None
+    source_min_date: date | None = None
+    source_max_date: date | None = None
+    destination_min_date: date | None = None
+    destination_max_date: date | None = None
+    source_watermark: str | None = None
+    destination_watermark: str | None = None
+    bigquery_job_id: str | None = None
+    compared_run_id: str | None = None
+    issues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class BigQueryBackfillVerification:
+    exchange: str
+    entity: str
+    start_year: int
+    end_year: int
+    require_idempotent_rerun: bool
+    years: tuple[BigQueryBackfillYearVerification, ...]
+
+    @property
+    def reconciled(self) -> bool:
+        return bool(self.years) and all(year.reconciled for year in self.years)
 
 
 class GoogleBigQueryGateway:
@@ -923,6 +960,231 @@ def evaluate_bigquery_tsx_canary_readiness(
             if ready
             else "The two latest TSX canary runs are not reconciled and equivalent."
         ),
+    )
+
+
+def evaluate_bigquery_backfill_reconciliation(
+    store: TimescaleStore,
+    *,
+    exchange: str,
+    start_year: int,
+    end_year: int,
+    entity: str = "ohlcv_daily",
+    require_idempotent_rerun: bool = False,
+) -> BigQueryBackfillVerification:
+    """Evaluate exchange/year backfills using durable PostgreSQL evidence only."""
+    normalized_exchange = exchange.strip().upper()
+    if normalized_exchange not in {"NSE", "TSX", "US"}:
+        raise ValueError("exchange must be NSE, TSX, or US")
+    if start_year > end_year:
+        raise ValueError("start_year must be less than or equal to end_year")
+    if start_year < 1900 or end_year > 9999:
+        raise ValueError("years must be between 1900 and 9999")
+    spec = ENTITY_SPECS.get(entity)
+    if spec is None:
+        raise ValueError(f"Unknown BigQuery entity: {entity}")
+    if spec.exchange_field is None or spec.date_field is None:
+        raise ValueError(
+            f"BigQuery entity {entity} does not support exchange/year backfill verification"
+        )
+
+    requested_years = tuple(range(start_year, end_year + 1))
+    # Runs are returned newest first. The generous bounded read keeps this command
+    # read-only while allowing repeated attempts without hiding recent evidence.
+    run_limit = max(1000, len(requested_years) * 20)
+    runs = [
+        run
+        for run in store.bigquery_sync_runs(limit=run_limit)
+        if str(run.get("exchange") or "").upper() == normalized_exchange
+        and start_year <= int(run.get("year") or 0) <= end_year
+        and entity in tuple(run.get("entities") or ())
+    ]
+
+    verified_years: list[BigQueryBackfillYearVerification] = []
+    for year in requested_years:
+        candidates = [run for run in runs if int(run.get("year") or 0) == year]
+        if not candidates:
+            verified_years.append(
+                BigQueryBackfillYearVerification(
+                    year=year,
+                    reconciled=False,
+                    issues=("No synchronization run evidence was found.",),
+                )
+            )
+            continue
+
+        primary = _verify_bigquery_backfill_run(
+            store,
+            candidates[0],
+            exchange=normalized_exchange,
+            year=year,
+            entity=entity,
+        )
+        if require_idempotent_rerun:
+            rerun_issues: list[str] = []
+            compared_run_id: str | None = None
+            if len(candidates) < 2:
+                rerun_issues.append("A second run is required to verify idempotency.")
+            else:
+                secondary = _verify_bigquery_backfill_run(
+                    store,
+                    candidates[1],
+                    exchange=normalized_exchange,
+                    year=year,
+                    entity=entity,
+                )
+                compared_run_id = secondary.run_id
+                rerun_issues.extend(
+                    f"Compared run {secondary.run_id}: {issue}" for issue in secondary.issues
+                )
+                comparable_fields = (
+                    "source_row_count",
+                    "destination_row_count",
+                    "count_difference",
+                    "rejected_rows",
+                    "duplicate_business_key_count",
+                    "source_min_date",
+                    "source_max_date",
+                    "destination_min_date",
+                    "destination_max_date",
+                    "source_watermark",
+                    "destination_watermark",
+                )
+                changed_fields = [
+                    field_name
+                    for field_name in comparable_fields
+                    if getattr(primary, field_name) != getattr(secondary, field_name)
+                ]
+                if changed_fields:
+                    rerun_issues.append(
+                        "Idempotent rerun evidence differs for: "
+                        + ", ".join(changed_fields)
+                        + "."
+                    )
+            if rerun_issues:
+                primary = replace(
+                    primary,
+                    reconciled=False,
+                    compared_run_id=compared_run_id,
+                    issues=primary.issues + tuple(rerun_issues),
+                )
+            else:
+                primary = replace(primary, compared_run_id=compared_run_id)
+        verified_years.append(primary)
+
+    return BigQueryBackfillVerification(
+        exchange=normalized_exchange,
+        entity=entity,
+        start_year=start_year,
+        end_year=end_year,
+        require_idempotent_rerun=require_idempotent_rerun,
+        years=tuple(verified_years),
+    )
+
+
+def _verify_bigquery_backfill_run(
+    store: TimescaleStore,
+    run: Mapping[str, Any],
+    *,
+    exchange: str,
+    year: int,
+    entity: str,
+) -> BigQueryBackfillYearVerification:
+    run_id = str(run.get("run_id") or "")
+    run_status = str(run.get("status") or "") or None
+    issues: list[str] = []
+    if run_status != "completed":
+        issues.append(f"Run status is {run_status or 'missing'}, expected completed.")
+    if run.get("error_details"):
+        issues.append("Run contains error details.")
+
+    partitions = [
+        partition
+        for partition in store.bigquery_sync_partitions(run_id=run_id, limit=100)
+        if partition.get("entity") == entity
+        and str(partition.get("exchange") or "").upper() == exchange
+    ]
+    if not partitions:
+        return BigQueryBackfillYearVerification(
+            year=year,
+            reconciled=False,
+            run_id=run_id,
+            run_status=run_status,
+            issues=tuple(issues + ["Matching partition evidence was not found."]),
+        )
+
+    partition = partitions[0]
+    partition_status = str(partition.get("status") or "") or None
+    source_rows = int(partition.get("source_row_count") or 0)
+    destination_rows = int(partition.get("destination_row_count") or 0)
+    count_difference = int(partition.get("count_difference") or 0)
+    rejected_rows = int(partition.get("rejected_rows") or 0)
+    duplicate_keys = int(partition.get("duplicate_business_key_count") or 0)
+    source_min_date = partition.get("source_min_date")
+    source_max_date = partition.get("source_max_date")
+    destination_min_date = partition.get("destination_min_date")
+    destination_max_date = partition.get("destination_max_date")
+    source_watermark = partition.get("source_watermark")
+    destination_watermark = partition.get("destination_watermark")
+    bigquery_job_id = str(partition.get("bigquery_job_id") or "") or None
+
+    if partition_status != "completed":
+        issues.append(
+            f"Partition status is {partition_status or 'missing'}, expected completed."
+        )
+    if partition.get("partition_start") != date(year, 1, 1):
+        issues.append("Partition start does not match the requested calendar year.")
+    if partition.get("partition_end") != date(year, 12, 31):
+        issues.append("Partition end does not match the requested calendar year.")
+    if source_rows <= 0:
+        issues.append("Source row count must be greater than zero.")
+    if source_rows != destination_rows:
+        issues.append("Source and destination row counts do not match.")
+    if count_difference != 0:
+        issues.append("Count difference is not zero.")
+    if rejected_rows != 0:
+        issues.append("Rejected row count is not zero.")
+    if duplicate_keys != 0:
+        issues.append("Duplicate business-key count is not zero.")
+    if source_min_date is None or source_max_date is None:
+        issues.append("Source date bounds are missing.")
+    if destination_min_date is None or destination_max_date is None:
+        issues.append("Destination date bounds are missing.")
+    if (source_min_date, source_max_date) != (
+        destination_min_date,
+        destination_max_date,
+    ):
+        issues.append("Source and destination date bounds do not match.")
+    if not source_watermark or not destination_watermark:
+        issues.append("Source or destination watermark is missing.")
+    if source_watermark != destination_watermark:
+        issues.append("Source and destination watermarks do not match.")
+    if partition.get("schema_drift"):
+        issues.append("Schema drift was recorded.")
+    if partition.get("error_details"):
+        issues.append("Partition contains error details.")
+    if not bigquery_job_id:
+        issues.append("BigQuery job ID is missing.")
+
+    return BigQueryBackfillYearVerification(
+        year=year,
+        reconciled=not issues,
+        run_id=run_id,
+        run_status=run_status,
+        partition_status=partition_status,
+        source_row_count=source_rows,
+        destination_row_count=destination_rows,
+        count_difference=count_difference,
+        rejected_rows=rejected_rows,
+        duplicate_business_key_count=duplicate_keys,
+        source_min_date=source_min_date,
+        source_max_date=source_max_date,
+        destination_min_date=destination_min_date,
+        destination_max_date=destination_max_date,
+        source_watermark=source_watermark,
+        destination_watermark=destination_watermark,
+        bigquery_job_id=bigquery_job_id,
+        issues=tuple(issues),
     )
 
 
