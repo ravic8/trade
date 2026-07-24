@@ -1,7 +1,7 @@
-import * as echarts from "echarts";
 import { useEffect, useRef } from "react";
 
 import type { OpportunityTargetRow } from "../api/types";
+import { echarts } from "../utils/echarts";
 
 export function FeatureChart({ results }: { results: OpportunityTargetRow[] }) {
   const ref = useRef<HTMLDivElement | null>(null);

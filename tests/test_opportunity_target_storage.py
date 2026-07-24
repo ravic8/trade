@@ -70,6 +70,9 @@ def test_opportunity_targets_are_idempotent_and_queryable(tmp_path) -> None:
         sort_by="true_range",
     )
     assert page["session_date"] == date(2026, 1, 5)
+    assert page["selection_mode"] == "automatic"
+    assert page["requested_session_date"] is None
+    assert page["session_exists"] is True
     assert page["total"] == 2
     assert page["session_total"] == 2
     assert len(page["rows"]) == 2
@@ -77,7 +80,12 @@ def test_opportunity_targets_are_idempotent_and_queryable(tmp_path) -> None:
     assert page["summary"]["positive_session_ratio"] == 1.0
     assert page["distributions"]["upside"]["count"] == 2
     assert page["distributions"]["upside"]["percentiles"]["p50"] > 0
+    assert sum(
+        item["count"] for item in page["distributions"]["upside"]["bins"]
+    ) == 2
     assert page["rows"][0]["percentiles"]["upside"] is not None
+    assert page["available_sessions"][0]["date"] == date(2026, 1, 5)
+    assert page["available_sessions"][0]["coverage_status"] == "complete"
 
 
 def test_opportunity_page_supports_symbol_filter_and_explicit_date(tmp_path) -> None:
@@ -96,6 +104,8 @@ def test_opportunity_page_supports_symbol_filter_and_explicit_date(tmp_path) -> 
     )
 
     assert page["total"] == 1
+    assert page["selection_mode"] == "explicit"
+    assert page["requested_session_date"] == date(2026, 1, 5)
     assert page["rows"][0]["symbol"] == "AAA"
 
     first_session = store.opportunity_targets_page(
@@ -105,6 +115,21 @@ def test_opportunity_page_supports_symbol_filter_and_explicit_date(tmp_path) -> 
         session_date=date(2026, 1, 2),
     )
     assert first_session["summary"]["average_gap"] is None
+
+    unavailable = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        session_date=date(2026, 1, 7),
+    )
+    assert unavailable["session_date"] == date(2026, 1, 7)
+    assert unavailable["session_exists"] is False
+    assert unavailable["coverage_status"] == "unavailable"
+    assert unavailable["latest_available_date"] == date(2026, 1, 5)
+    assert unavailable["latest_complete_date"] == date(2026, 1, 5)
+    assert unavailable["session_instruments"] == 0
+    assert unavailable["total"] == 0
+    assert unavailable["distributions"] == {}
 
 
 def test_opportunity_page_combines_percentile_filters_before_pagination(tmp_path) -> None:
@@ -154,6 +179,13 @@ def test_opportunity_page_defaults_to_latest_session_with_sufficient_coverage(tm
     assert page["expected_instruments"] == 2
     assert page["coverage_ratio"] == 1.0
     assert page["coverage_status"] == "complete"
+    assert page["available_sessions"][0] == {
+        "date": date(2026, 1, 6),
+        "instruments": 1,
+        "expected_instruments": 2,
+        "coverage_ratio": 0.5,
+        "coverage_status": "partial",
+    }
 
     explicit_partial = store.opportunity_targets_page(
         target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
@@ -162,5 +194,64 @@ def test_opportunity_page_defaults_to_latest_session_with_sufficient_coverage(tm
         session_date=date(2026, 1, 6),
     )
     assert explicit_partial["session_date"] == date(2026, 1, 6)
+    assert explicit_partial["session_exists"] is True
+    assert explicit_partial["expected_instruments"] == 2
     assert explicit_partial["coverage_ratio"] == 0.5
     assert explicit_partial["coverage_status"] == "partial"
+
+
+def test_opportunity_histograms_keep_outliers_without_flattening_the_scale(tmp_path) -> None:
+    store = TimescaleStore(f"sqlite:///{tmp_path / 'opportunities.sqlite'}")
+    metadata.create_all(store.engine)
+    rows = []
+    for index in range(101):
+        symbol = f"S{index:03d}"
+        instrument_key = f"NSE_EQ|{symbol}"
+        rows.append(
+            {
+                "Date": date(2026, 1, 2),
+                "Open": 100,
+                "High": 101,
+                "Low": 99,
+                "Close": 100,
+                "Volume": 100_000,
+                "OpenInterest": 0,
+                "InstrumentKey": instrument_key,
+                "Symbol": symbol,
+                "Exchange": "NSE",
+                "Source": "yfinance",
+            }
+        )
+        close = 50 if index == 0 else 100 + (((index % 11) - 5) / 10)
+        rows.append(
+            {
+                "Date": date(2026, 1, 5),
+                "Open": 100,
+                "High": max(101, close + 1),
+                "Low": min(99, close - 1),
+                "Close": close,
+                "Volume": 100_000,
+                "OpenInterest": 0,
+                "InstrumentKey": instrument_key,
+                "Symbol": symbol,
+                "Exchange": "NSE",
+                "Source": "yfinance",
+            }
+        )
+    targets = DailyOpportunityTargetBuilder(
+        computed_at=datetime(2026, 1, 6, tzinfo=UTC)
+    ).build(pd.DataFrame(rows))
+    store.upsert_daily_opportunity_targets(targets)
+
+    page = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        session_date=date(2026, 1, 5),
+    )
+    distribution = page["distributions"]["session_return"]
+
+    assert distribution["minimum"] == -0.5
+    assert distribution["display_minimum"] > distribution["minimum"]
+    assert distribution["bins"][0]["lower_overflow"] is True
+    assert sum(item["count"] for item in distribution["bins"]) == 101

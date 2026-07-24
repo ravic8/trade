@@ -913,6 +913,46 @@ a {
   color: #746337;
 }
 
+.opportunity-unavailable-notice {
+  align-items: center;
+  border-color: #e7b9b4;
+  background: #fff5f3;
+  color: #87332e;
+}
+
+.opportunity-unavailable-notice > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.opportunity-unavailable-notice span {
+  color: #7d5752;
+}
+
+.opportunity-unavailable-notice button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  border: 1px solid #d4938c;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #7c2f29;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.opportunity-quality-notice {
+  border-color: #d9c9a3;
+  background: #fffbf1;
+  color: #705319;
+}
+
+.opportunity-quality-notice span {
+  color: #746646;
+}
+
 .opportunity-notice span {
   margin-top: 3px;
   color: #4d6b60;
@@ -969,6 +1009,12 @@ a {
   margin-top: 4px;
   color: #687982;
   font-size: 0.78rem;
+}
+
+.opportunity-results-header > div > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .opportunity-reset-button,
@@ -1152,6 +1198,15 @@ a {
   color: #31443b;
 }
 
+.opportunity-chart-scale-note {
+  margin: 0;
+  border-top: 1px solid #f0f3f2;
+  color: #7b8882;
+  padding: 7px 16px 9px;
+  font-size: 0.66rem;
+  text-align: center;
+}
+
 .opportunity-table-wrap table {
   min-width: 900px;
 }
@@ -1178,8 +1233,43 @@ a {
   text-transform: capitalize;
 }
 
+.opportunity-quality-warning {
+  background: #fff3d8;
+  color: #855d0c;
+}
+
 .opportunity-result-cards {
   display: none;
+}
+
+.opportunity-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid #e5ecef;
+  padding: 14px 18px;
+}
+
+.opportunity-pagination > span {
+  color: #687982;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.opportunity-pagination > div {
+  display: flex;
+  gap: 8px;
+}
+
+.spin {
+  animation: opportunity-spin 0.9s linear infinite;
+}
+
+@keyframes opportunity-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .positive-value {
@@ -1219,6 +1309,16 @@ a {
   .opportunity-reset-button {
     width: 100%;
     justify-content: center;
+  }
+
+  .opportunity-unavailable-notice {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .opportunity-unavailable-notice button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .opportunity-metric-picker {
@@ -1308,6 +1408,26 @@ a {
 
   .opportunity-result-card .opportunity-result-value {
     text-align: right;
+  }
+
+  .opportunity-pagination {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .opportunity-pagination > span {
+    text-align: center;
+  }
+
+  .opportunity-pagination > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .opportunity-pagination .icon-button {
+    min-height: 44px;
+    justify-content: center;
   }
 }
 

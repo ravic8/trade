@@ -68,6 +68,8 @@ export type OpportunityDistributionBin = {
   count: number;
   percentile_min: number | null;
   percentile_max: number | null;
+  lower_overflow: boolean;
+  upper_overflow: boolean;
 };
 
 export type OpportunityDistribution = {
@@ -75,8 +77,18 @@ export type OpportunityDistribution = {
   count: number;
   minimum: number | null;
   maximum: number | null;
+  display_minimum: number | null;
+  display_maximum: number | null;
   percentiles: Partial<Record<"p10" | "p25" | "p50" | "p75" | "p90", number>>;
   bins: OpportunityDistributionBin[];
+};
+
+export type OpportunitySession = {
+  date: string;
+  instruments: number;
+  expected_instruments: number;
+  coverage_ratio: number | null;
+  coverage_status: "complete" | "partial";
 };
 
 export type OpportunityTargetSummary = {
@@ -87,15 +99,21 @@ export type OpportunityTargetSummary = {
   average_true_range?: number | null;
   positive_sessions?: number;
   positive_session_ratio?: number | null;
+  quality_warning_sessions?: number;
+  quality_warning_ratio?: number | null;
 };
 
 export type DailyOpportunitiesResponse = {
   exchange: "NSE" | "TSX" | "US";
-  source: "upstox" | "yfinance";
+  source: "yfinance";
   target_version: string;
+  selection_mode: "automatic" | "explicit";
+  requested_session_date: string | null;
   session_date: string | null;
+  session_exists: boolean;
   latest_available_date: string | null;
   latest_complete_date: string | null;
+  available_sessions: OpportunitySession[];
   session_instruments: number;
   expected_instruments: number;
   coverage_ratio: number | null;

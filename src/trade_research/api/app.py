@@ -1439,8 +1439,11 @@ def daily_opportunities(
     exchange_code = _operations_exchange(exchange)
     assert exchange_code is not None
     resolved_source = source.strip().lower() if source else "yfinance"
-    if resolved_source not in {"upstox", "yfinance"}:
-        raise HTTPException(status_code=400, detail="source must be upstox or yfinance")
+    if resolved_source != "yfinance":
+        raise HTTPException(
+            status_code=400,
+            detail="Opportunity analytics use the canonical yfinance daily feed",
+        )
     requested_percentile_filters = {
         "session_return": (
             session_return_percentile_min,
