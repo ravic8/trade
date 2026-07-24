@@ -73,7 +73,16 @@ export function useDailyOpportunities(params: DailyOpportunitiesParams) {
   return useQuery({
     queryKey: ["daily-opportunities", params],
     queryFn: () => getDailyOpportunities(params),
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData, previousQuery) => {
+      const previousParams = previousQuery?.queryKey[1] as
+        | DailyOpportunitiesParams
+        | undefined;
+      const sameSession =
+        previousParams?.exchange === params.exchange &&
+        (previousParams.sessionDate ?? "") === (params.sessionDate ?? "");
+      return sameSession ? previousData : undefined;
+    },
+    staleTime: 30_000,
   });
 }
 

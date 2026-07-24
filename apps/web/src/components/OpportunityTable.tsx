@@ -56,6 +56,21 @@ function SymbolLink({ symbol }: { symbol: string }) {
   );
 }
 
+function QualityBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`opportunity-quality ${status === "passed" ? "" : "opportunity-quality-warning"}`}
+      title={
+        status === "passed"
+          ? "All target inputs are available"
+          : "One or more target inputs are unavailable"
+      }
+    >
+      {status}
+    </span>
+  );
+}
+
 export function OpportunityTable({ data }: { data: OpportunityTargetRow[] }) {
   return (
     <>
@@ -82,7 +97,7 @@ export function OpportunityTable({ data }: { data: OpportunityTargetRow[] }) {
                   </td>
                 ))}
                 <td>
-                  <span className="opportunity-quality">{row.quality_status}</span>
+                  <QualityBadge status={row.quality_status} />
                 </td>
               </tr>
             ))}
@@ -95,7 +110,7 @@ export function OpportunityTable({ data }: { data: OpportunityTargetRow[] }) {
           <article className="opportunity-result-card" key={row.instrument_key}>
             <header>
               <SymbolLink symbol={row.symbol} />
-              <span className="opportunity-quality">{row.quality_status}</span>
+              <QualityBadge status={row.quality_status} />
             </header>
             <div>
               {displayedMetrics.map(({ metric, label, tone }) => (

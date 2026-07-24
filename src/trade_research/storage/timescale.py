@@ -5338,13 +5338,14 @@ class TimescaleStore:
         exchange: str,
         source: str,
         minimum_coverage: float = 0.95,
-        lookback_sessions: int = 20,
+        expected_window_sessions: int = 20,
+        available_session_limit: int = 120,
     ) -> dict[str, Any]:
         """Resolve the newest sufficiently populated target session.
 
-        The rolling maximum is deliberately based on stored target sessions rather
-        than the mutable current universe, so historic and delisted instruments do
-        not make older sessions appear incomplete.
+        Expected coverage is calculated from each session and the sessions before
+        it. This detects a newly arriving partial session without comparing an old
+        historical session to today's larger or smaller universe.
         """
         query = (
             select(
@@ -5356,7 +5357,6 @@ class TimescaleStore:
             .where(opportunity_targets_daily_table.c.source == source.lower())
             .group_by(opportunity_targets_daily_table.c.date)
             .order_by(opportunity_targets_daily_table.c.date.desc())
-            .limit(max(2, lookback_sessions))
         )
         with self.engine.begin() as connection:
             rows = [dict(row) for row in connection.execute(query).mappings()]
@@ -5366,22 +5366,55 @@ class TimescaleStore:
                 "latest_complete_date": None,
                 "expected_instruments": 0,
                 "counts_by_date": {},
+                "expected_by_date": {},
+                "available_sessions": [],
             }
         counts_by_date = {row["date"]: int(row["instrument_count"] or 0) for row in rows}
-        expected = max(counts_by_date.values())
+        expected_by_date: dict[date, int] = {}
+        window_size = max(2, expected_window_sessions)
+        for index, row in enumerate(rows):
+            comparison_rows = rows[index : index + window_size]
+            expected_by_date[row["date"]] = max(
+                int(item["instrument_count"] or 0) for item in comparison_rows
+            )
         latest_complete = next(
             (
                 row["date"]
                 for row in rows
-                if expected and int(row["instrument_count"] or 0) / expected >= minimum_coverage
+                if expected_by_date[row["date"]]
+                and int(row["instrument_count"] or 0)
+                / expected_by_date[row["date"]]
+                >= minimum_coverage
             ),
             None,
         )
+        available_sessions = []
+        for row in rows[: max(1, available_session_limit)]:
+            session_date = row["date"]
+            instruments = int(row["instrument_count"] or 0)
+            expected = expected_by_date[session_date]
+            coverage_ratio = min(instruments / expected, 1.0) if expected else None
+            available_sessions.append(
+                {
+                    "date": session_date,
+                    "instruments": instruments,
+                    "expected_instruments": expected,
+                    "coverage_ratio": coverage_ratio,
+                    "coverage_status": (
+                        "complete"
+                        if coverage_ratio is not None
+                        and coverage_ratio >= minimum_coverage
+                        else "partial"
+                    ),
+                }
+            )
         return {
             "latest_available_date": rows[0]["date"],
             "latest_complete_date": latest_complete,
-            "expected_instruments": expected,
+            "expected_instruments": expected_by_date[rows[0]["date"]],
             "counts_by_date": counts_by_date,
+            "expected_by_date": expected_by_date,
+            "available_sessions": available_sessions,
         }
 
     def upsert_daily_opportunity_targets(self, frame: pd.DataFrame) -> int:
@@ -5505,9 +5538,13 @@ class TimescaleStore:
                 "exchange": exchange_code,
                 "source": source_name,
                 "target_version": target_version,
+                "selection_mode": "explicit" if session_date is not None else "automatic",
+                "requested_session_date": session_date,
                 "session_date": None,
+                "session_exists": False,
                 "latest_available_date": coverage["latest_available_date"],
                 "latest_complete_date": coverage["latest_complete_date"],
+                "available_sessions": coverage["available_sessions"],
                 "session_instruments": 0,
                 "expected_instruments": coverage["expected_instruments"],
                 "coverage_ratio": None,
@@ -5515,6 +5552,7 @@ class TimescaleStore:
                 "total": 0,
                 "session_total": 0,
                 "summary": {},
+                "percentile_filters": {},
                 "distributions": {},
                 "rows": [],
             }
@@ -5576,6 +5614,32 @@ class TimescaleStore:
                     opportunity_targets_daily_table.select().where(*session_filters)
                 ).mappings()
             ]
+        if not session_rows:
+            return {
+                "exchange": exchange_code,
+                "source": source_name,
+                "target_version": target_version,
+                "selection_mode": "explicit" if session_date is not None else "automatic",
+                "requested_session_date": session_date,
+                "session_date": resolved_date,
+                "session_exists": False,
+                "latest_available_date": coverage["latest_available_date"],
+                "latest_complete_date": coverage["latest_complete_date"],
+                "available_sessions": coverage["available_sessions"],
+                "session_instruments": 0,
+                "expected_instruments": coverage["expected_instruments"],
+                "coverage_ratio": None,
+                "coverage_status": "unavailable",
+                "total": 0,
+                "session_total": 0,
+                "summary": {},
+                "percentile_filters": {
+                    metric: {"minimum": bounds[0], "maximum": bounds[1]}
+                    for metric, bounds in normalized_percentile_filters.items()
+                },
+                "distributions": {},
+                "rows": [],
+            }
 
         session_frame = pd.DataFrame(session_rows)
         distributions: dict[str, dict[str, Any]] = {}
@@ -5589,12 +5653,17 @@ class TimescaleStore:
                     "count": 0,
                     "minimum": None,
                     "maximum": None,
+                    "display_minimum": None,
+                    "display_maximum": None,
                     "percentiles": {},
                     "bins": [],
                 }
                 continue
 
-            numeric = pd.to_numeric(session_frame[metric], errors="coerce")
+            numeric = pd.to_numeric(session_frame[metric], errors="coerce").replace(
+                [math.inf, -math.inf], float("nan")
+            )
+            session_frame[metric] = numeric
             session_frame[percentile_column] = numeric.rank(
                 method="average", pct=True
             ) * 100
@@ -5605,6 +5674,8 @@ class TimescaleStore:
                     "count": 0,
                     "minimum": None,
                     "maximum": None,
+                    "display_minimum": None,
+                    "display_maximum": None,
                     "percentiles": {},
                     "bins": [],
                 }
@@ -5613,8 +5684,11 @@ class TimescaleStore:
             minimum = float(valid.min())
             maximum = float(valid.max())
             quantiles = valid.quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+            display_quantiles = valid.quantile([0.01, 0.99])
+            display_minimum = float(display_quantiles.loc[0.01])
+            display_maximum = float(display_quantiles.loc[0.99])
             bin_count = min(24, max(8, int(math.sqrt(len(valid)))))
-            if math.isclose(minimum, maximum):
+            if math.isclose(display_minimum, display_maximum):
                 histogram_bins = [
                     {
                         "start": minimum,
@@ -5622,14 +5696,20 @@ class TimescaleStore:
                         "count": int(len(valid)),
                         "percentile_min": 0.0,
                         "percentile_max": 100.0,
+                        "lower_overflow": False,
+                        "upper_overflow": False,
                     }
                 ]
             else:
-                width = (maximum - minimum) / bin_count
+                width = (display_maximum - display_minimum) / bin_count
                 buckets: list[list[int]] = [[] for _ in range(bin_count)]
                 for row_index, value in valid.items():
                     bucket_index = min(
-                        int((float(value) - minimum) / width), bin_count - 1
+                        max(
+                            int((float(value) - display_minimum) / width),
+                            0,
+                        ),
+                        bin_count - 1,
                     )
                     buckets[bucket_index].append(int(row_index))
                 histogram_bins = []
@@ -5639,8 +5719,8 @@ class TimescaleStore:
                     ]
                     histogram_bins.append(
                         {
-                            "start": minimum + (index * width),
-                            "end": minimum + ((index + 1) * width),
+                            "start": display_minimum + (index * width),
+                            "end": display_minimum + ((index + 1) * width),
                             "count": len(bucket_rows),
                             "percentile_min": (
                                 float(bucket_percentiles.min())
@@ -5652,6 +5732,10 @@ class TimescaleStore:
                                 if bucket_rows
                                 else None
                             ),
+                            "lower_overflow": index == 0 and minimum < display_minimum,
+                            "upper_overflow": (
+                                index == bin_count - 1 and maximum > display_maximum
+                            ),
                         }
                     )
             distributions[metric] = {
@@ -5659,6 +5743,8 @@ class TimescaleStore:
                 "count": int(len(valid)),
                 "minimum": minimum,
                 "maximum": maximum,
+                "display_minimum": display_minimum,
+                "display_maximum": display_maximum,
                 "percentiles": {
                     "p10": float(quantiles.loc[0.1]),
                     "p25": float(quantiles.loc[0.25]),
@@ -5691,12 +5777,19 @@ class TimescaleStore:
         positive_sessions = (
             int((filtered_frame["session_return"] > 0).sum()) if total else 0
         )
+        quality_warning_sessions = (
+            int((filtered_frame["quality_status"] != "passed").sum()) if total else 0
+        )
 
         def filtered_mean(column: str) -> float | None:
             if not total:
                 return None
             value = filtered_frame[column].mean()
-            return None if pd.isna(value) else float(value)
+            return (
+                None
+                if pd.isna(value) or not math.isfinite(float(value))
+                else float(value)
+            )
 
         summary = {
             "average_return": filtered_mean("session_return"),
@@ -5705,9 +5798,13 @@ class TimescaleStore:
             "average_downside": filtered_mean("downside"),
             "average_true_range": filtered_mean("true_range"),
             "positive_sessions": positive_sessions,
+            "quality_warning_sessions": quality_warning_sessions,
         }
         summary["positive_session_ratio"] = (
             positive_sessions / total if total else None
+        )
+        summary["quality_warning_ratio"] = (
+            quality_warning_sessions / total if total else None
         )
 
         if not filtered_frame.empty:
@@ -5738,7 +5835,11 @@ class TimescaleStore:
                 row.pop(percentile_column, None)
             rows.append(
                 {
-                    key: None if isinstance(value, float) and math.isnan(value) else value
+                    key: (
+                        None
+                        if isinstance(value, float) and not math.isfinite(value)
+                        else value
+                    )
                     for key, value in row.items()
                 }
             )
@@ -5753,7 +5854,12 @@ class TimescaleStore:
             )
             with self.engine.begin() as connection:
                 session_instruments = int(connection.execute(count_query).scalar_one() or 0)
-        expected_instruments = int(coverage["expected_instruments"] or 0)
+        expected_instruments = int(
+            coverage["expected_by_date"].get(
+                resolved_date, coverage["expected_instruments"]
+            )
+            or 0
+        )
         coverage_ratio = (
             min(session_instruments / expected_instruments, 1.0) if expected_instruments else None
         )
@@ -5761,9 +5867,13 @@ class TimescaleStore:
             "exchange": exchange_code,
             "source": source_name,
             "target_version": target_version,
+            "selection_mode": "explicit" if session_date is not None else "automatic",
+            "requested_session_date": session_date,
             "session_date": resolved_date,
+            "session_exists": True,
             "latest_available_date": coverage["latest_available_date"],
             "latest_complete_date": coverage["latest_complete_date"],
+            "available_sessions": coverage["available_sessions"],
             "session_instruments": session_instruments,
             "expected_instruments": expected_instruments,
             "coverage_ratio": coverage_ratio,

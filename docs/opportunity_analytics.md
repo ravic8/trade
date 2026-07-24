@@ -132,11 +132,27 @@ always means the top decile of the complete selected exchange session. Each
 metric accepts independent `*_percentile_min` and `*_percentile_max` query
 parameters. Multiple bands are combined with AND semantics.
 
+Histogram display bounds use P1–P99 so a small number of extreme observations
+cannot flatten the useful center of the chart. The first and last bars retain
+all observations outside those display bounds; no rows are discarded from
+counts, percentiles, filters, or results.
+
+The response distinguishes automatic and explicit session selection and
+includes `session_exists`, `requested_session_date`, and the latest 120
+`available_sessions`. An explicitly requested date without target rows is
+reported as `unavailable`; it is never described as a partial session. Coverage
+expectations are calculated from each session and the stored sessions before
+it, preventing old sessions from being judged against a materially different
+current universe.
+
 The Opportunities UI can show any one-to-six distribution figures at once.
 Charts support hover inspection, mouse/touch zoom, and click-to-filter; every
 figure also exposes explicit minimum and maximum percentile controls. Desktop
 results use a compact ranked table, while narrow viewports use touch-friendly
-opportunity cards.
+opportunity cards. The session control lists only computed sessions, clearly
+marks partial ones, resets when the exchange changes, and paginates matching
+symbols in bounded pages. Opportunity analytics use `yfinance` as their
+canonical daily source.
 
 For long production builds, run the command in `tmux`. If a process or host
 fails, repeat the same `--keep-existing` command; already committed batches are

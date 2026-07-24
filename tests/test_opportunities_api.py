@@ -100,7 +100,10 @@ def test_daily_opportunities_rejects_forex_and_unknown_sort(monkeypatch) -> None
     with TestClient(app) as client:
         forex = client.get("/api/opportunities/daily?exchange=FOREX")
         bad_sort = client.get("/api/opportunities/daily?sort_by=not_a_target")
+        noncanonical_source = client.get("/api/opportunities/daily?source=upstox")
 
     assert forex.status_code == 400
     assert "NSE, TSX, or US" in forex.json()["detail"]
     assert bad_sort.status_code == 400
+    assert noncanonical_source.status_code == 400
+    assert "canonical yfinance" in noncanonical_source.json()["detail"]
