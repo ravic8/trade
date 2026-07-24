@@ -125,6 +125,19 @@ the response includes `latest_available_date`, `latest_complete_date`,
 the latest complete session. An explicitly requested partial date is still
 returned and is labelled `partial`.
 
+The API also returns full-session histograms and P10/P25/P50/P75/P90 values for
+Return, Recovery, Upside, Downside, Giveback, and True Range. Percentile ranks
+are computed before symbol search, sorting, or pagination, so a P90 filter
+always means the top decile of the complete selected exchange session. Each
+metric accepts independent `*_percentile_min` and `*_percentile_max` query
+parameters. Multiple bands are combined with AND semantics.
+
+The Opportunities UI can show any one-to-six distribution figures at once.
+Charts support hover inspection, mouse/touch zoom, and click-to-filter; every
+figure also exposes explicit minimum and maximum percentile controls. Desktop
+results use a compact ranked table, while narrow viewports use touch-friendly
+opportunity cards.
+
 For long production builds, run the command in `tmux`. If a process or host
 fails, repeat the same `--keep-existing` command; already committed batches are
 updated rather than duplicated. Use `--replace-exchange` only for an explicitly

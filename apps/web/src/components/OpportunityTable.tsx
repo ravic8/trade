@@ -1,21 +1,36 @@
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
 import { ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import type { OpportunityTargetRow } from "../api/types";
-import { formatPercent, formatPrice } from "../utils/format";
+import type {
+  OpportunityDistributionMetric,
+  OpportunityTargetRow,
+} from "../api/types";
+import { formatPercent } from "../utils/format";
 
-const columnHelper = createColumnHelper<OpportunityTargetRow>();
+const displayedMetrics: Array<{
+  metric: OpportunityDistributionMetric;
+  label: string;
+  tone: "signed" | "favorable" | "adverse" | "neutral";
+}> = [
+  { metric: "session_return", label: "Return", tone: "signed" },
+  { metric: "recovery", label: "Recovery", tone: "favorable" },
+  { metric: "upside", label: "Upside", tone: "favorable" },
+  { metric: "downside", label: "Downside", tone: "adverse" },
+  { metric: "giveback", label: "Giveback", tone: "adverse" },
+  { metric: "true_range", label: "True range", tone: "neutral" },
+];
 
-function percentCell(
-  value: number | null,
-  tone: "signed" | "favorable" | "adverse" | "neutral" = "neutral",
-) {
+function MetricValue({
+  row,
+  metric,
+  tone,
+}: {
+  row: OpportunityTargetRow;
+  metric: OpportunityDistributionMetric;
+  tone: "signed" | "favorable" | "adverse" | "neutral";
+}) {
+  const value = row[metric];
+  const percentile = row.percentiles[metric];
   let className = "";
   if (value != null && tone === "signed") {
     className = value > 0 ? "positive-value" : value < 0 ? "negative-value" : "";
@@ -24,105 +39,75 @@ function percentCell(
   } else if (value != null && tone === "adverse") {
     className = "negative-value";
   }
-  return <span className={className}>{formatPercent(value)}</span>;
+  return (
+    <span className="opportunity-result-value">
+      <strong className={className}>{formatPercent(value)}</strong>
+      <small>{percentile == null ? "—" : `P${Math.round(percentile)}`}</small>
+    </span>
+  );
 }
 
-const columns = [
-  columnHelper.accessor("symbol", {
-    header: "Symbol",
-    cell: (info) => (
-      <Link className="ticker-link" to={`/symbols/${encodeURIComponent(info.getValue())}`}>
-        {info.getValue()}
-        <ArrowUpRight size={14} />
-      </Link>
-    ),
-  }),
-  columnHelper.accessor("quality_status", { header: "Quality" }),
-  columnHelper.accessor("open", { header: "O", cell: (info) => formatPrice(info.getValue()) }),
-  columnHelper.accessor("high", { header: "H", cell: (info) => formatPrice(info.getValue()) }),
-  columnHelper.accessor("low", { header: "L", cell: (info) => formatPrice(info.getValue()) }),
-  columnHelper.accessor("close", { header: "C", cell: (info) => formatPrice(info.getValue()) }),
-  columnHelper.accessor("previous_close", {
-    header: "P",
-    cell: (info) => formatPrice(info.getValue()),
-  }),
-  columnHelper.accessor("session_return", {
-    header: "Return",
-    cell: (info) => percentCell(info.getValue(), "signed"),
-  }),
-  columnHelper.accessor("gap", {
-    header: "Gap",
-    cell: (info) => percentCell(info.getValue(), "signed"),
-  }),
-  columnHelper.accessor("true_return", {
-    header: "True Return",
-    cell: (info) => percentCell(info.getValue(), "signed"),
-  }),
-  columnHelper.accessor("upside", {
-    header: "Upside",
-    cell: (info) => percentCell(info.getValue(), "favorable"),
-  }),
-  columnHelper.accessor("downside", {
-    header: "Downside",
-    cell: (info) => percentCell(info.getValue(), "adverse"),
-  }),
-  columnHelper.accessor("giveback", {
-    header: "Giveback",
-    cell: (info) => percentCell(info.getValue(), "adverse"),
-  }),
-  columnHelper.accessor("recovery", {
-    header: "Recovery",
-    cell: (info) => percentCell(info.getValue(), "favorable"),
-  }),
-  columnHelper.accessor("session_range", {
-    header: "Range",
-    cell: (info) => percentCell(info.getValue()),
-  }),
-  columnHelper.accessor("true_upside", {
-    header: "True Upside",
-    cell: (info) => percentCell(info.getValue(), "favorable"),
-  }),
-  columnHelper.accessor("true_downside", {
-    header: "True Downside",
-    cell: (info) => percentCell(info.getValue(), "adverse"),
-  }),
-  columnHelper.accessor("true_range", {
-    header: "True Range",
-    cell: (info) => percentCell(info.getValue()),
-  }),
-];
+function SymbolLink({ symbol }: { symbol: string }) {
+  return (
+    <Link className="ticker-link" to={`/symbols/${encodeURIComponent(symbol)}`}>
+      {symbol}
+      <ArrowUpRight size={14} />
+    </Link>
+  );
+}
 
 export function OpportunityTable({ data }: { data: OpportunityTargetRow[] }) {
-  // TanStack Table intentionally returns function-heavy objects; this component is not memoized.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
-
   return (
-    <div className="table-wrap opportunity-table-wrap">
-      <table>
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th key={header.id}>
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
+    <>
+      <div className="table-wrap opportunity-table-wrap opportunity-table-desktop">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              {displayedMetrics.map(({ metric, label }) => (
+                <th key={metric}>{label}</th>
               ))}
+              <th>Quality</th>
             </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+          </thead>
+          <tbody>
+            {data.map((row) => (
+              <tr key={row.instrument_key}>
+                <td>
+                  <SymbolLink symbol={row.symbol} />
+                </td>
+                {displayedMetrics.map(({ metric, tone }) => (
+                  <td key={metric}>
+                    <MetricValue row={row} metric={metric} tone={tone} />
+                  </td>
+                ))}
+                <td>
+                  <span className="opportunity-quality">{row.quality_status}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="opportunity-result-cards">
+        {data.map((row) => (
+          <article className="opportunity-result-card" key={row.instrument_key}>
+            <header>
+              <SymbolLink symbol={row.symbol} />
+              <span className="opportunity-quality">{row.quality_status}</span>
+            </header>
+            <div>
+              {displayedMetrics.map(({ metric, label, tone }) => (
+                <section key={metric}>
+                  <span>{label}</span>
+                  <MetricValue row={row} metric={metric} tone={tone} />
+                </section>
               ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
   );
 }

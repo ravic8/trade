@@ -66,6 +66,8 @@ def test_daily_opportunities_exposes_pdf_target_variables(monkeypatch) -> None:
                 "session_date": "2026-07-17",
                 "symbol": "SHOP",
                 "sort_by": "upside",
+                "upside_percentile_min": "75",
+                "recovery_percentile_max": "90",
             },
         )
 
@@ -84,6 +86,10 @@ def test_daily_opportunities_exposes_pdf_target_variables(monkeypatch) -> None:
         "limit": 100,
         "offset": 0,
         "minimum_session_coverage": 0.95,
+        "percentile_filters": {
+            "recovery": (None, 90.0),
+            "upside": (75.0, None),
+        },
     }
 
 
