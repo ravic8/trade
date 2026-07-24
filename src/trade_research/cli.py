@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 import pandas as pd
 import typer
@@ -26,6 +27,15 @@ from trade_research.data import (
     map_liquid_universe_to_upstox,
 )
 from trade_research.features import FEATURE_VERSION_V1_0
+from trade_research.filings.evaluation import (
+    evaluate_golden_dataset,
+    load_golden_dataset,
+)
+from trade_research.filings.models import ReviewDecision
+from trade_research.filings.registry import import_manifest
+from trade_research.filings.runtime import get_filing_runtime
+from trade_research.filings.store import FilingStore
+from trade_research.filings.tasks import dispatch_filing_run
 from trade_research.market_calendar import session_decision
 from trade_research.modeling.backtest import BacktestConfig
 from trade_research.modeling.baselines import BaselineRunConfig
@@ -287,7 +297,120 @@ def refresh_exchange_sessions(
 def init_db() -> None:
     settings = get_settings()
     TimescaleStore(settings.database_url).initialize()
-    console.print("Initialized TimescaleDB schema")
+    FilingStore(settings.database_url).initialize()
+    console.print("Initialized TimescaleDB and filing-intelligence schemas")
+
+
+@app.command("import-filing-manifest")
+def import_filing_manifest_command(
+    manifest: Annotated[
+        Path | None,
+        typer.Option(help="NSE filing-pack manifest path."),
+    ] = None,
+    workspace_id: Annotated[
+        str,
+        typer.Option(help="Workspace that owns the imported filing records."),
+    ] = "default",
+    verify_hashes: Annotated[
+        bool,
+        typer.Option(
+            "--verify-hashes/--skip-hash-verification",
+            help="Verify every source against its manifest SHA-256 before registration.",
+        ),
+    ] = True,
+) -> None:
+    runtime = get_filing_runtime()
+    manifest_path = (manifest or runtime.settings.filing_manifest_path).resolve()
+    result = import_manifest(
+        runtime.store,
+        manifest_path=manifest_path,
+        workspace_id=workspace_id,
+        verify_hashes=verify_hashes,
+    )
+    console.print(
+        "Filing manifest imported: "
+        f"registered={result.registered} existing={result.existing} "
+        f"failed_skipped={result.skipped_failed} superseded={result.superseded}"
+    )
+    console.print(f"Company: {result.company_id}")
+
+
+@app.command("run-filing-intelligence")
+def run_filing_intelligence_command(
+    filing_id: Annotated[str, typer.Argument(help="Registered filing identifier.")],
+    workspace_id: Annotated[str, typer.Option()] = "default",
+    idempotency_key: Annotated[str | None, typer.Option()] = None,
+    force_review: Annotated[bool, typer.Option()] = False,
+) -> None:
+    runtime = get_filing_runtime()
+    document = runtime.store.document(filing_id, workspace_id)
+    if not document:
+        raise typer.BadParameter("filing document was not found in the workspace")
+    run, created = runtime.store.create_run(
+        workspace_id=workspace_id,
+        company_id=document.company_id,
+        filing_id=filing_id,
+        idempotency_key=idempotency_key or f"cli-{uuid4()}",
+        max_attempts=3,
+        input_payload={"force_review": force_review, "submitted_by": "cli"},
+    )
+    if created:
+        dispatch_filing_run(run.run_id, runtime=runtime)
+    latest = runtime.store.run(run.run_id, workspace_id)
+    assert latest is not None
+    console.print(
+        f"Filing run {latest.run_id}: {latest.status.value} "
+        f"node={latest.current_node} progress={latest.progress:.0%}"
+    )
+    if latest.output_payload:
+        console.print_json(data=latest.output_payload)
+
+
+@app.command("review-filing-intelligence")
+def review_filing_intelligence_command(
+    review_id: Annotated[str, typer.Argument(help="Pending review identifier.")],
+    decision: Annotated[ReviewDecision, typer.Option()],
+    reason: Annotated[str, typer.Option(min=3)],
+    workspace_id: Annotated[str, typer.Option()] = "default",
+    reviewer_id: Annotated[str, typer.Option()] = "cli-reviewer",
+) -> None:
+    runtime = get_filing_runtime()
+    review = runtime.store.decide_review(
+        review_id=review_id,
+        workspace_id=workspace_id,
+        decision=decision,
+        reviewer_id=reviewer_id,
+        reason=reason,
+    )
+    dispatch_filing_run(
+        review.run_id,
+        resume_payload={"review_id": review.review_id},
+        runtime=runtime,
+    )
+    run = runtime.store.run(review.run_id, workspace_id)
+    assert run is not None
+    console.print(f"Filing run {run.run_id}: {run.status.value}")
+
+
+@app.command("evaluate-filing-golden")
+def evaluate_filing_golden_command(
+    dataset_path: Annotated[
+        Path | None,
+        typer.Option(help="Locked filing golden-dataset JSON path."),
+    ] = None,
+    workspace_id: Annotated[str, typer.Option()] = "default",
+) -> None:
+    runtime = get_filing_runtime()
+    path = dataset_path or runtime.settings.filing_golden_dataset_path
+    dataset = load_golden_dataset(path)
+    report = evaluate_golden_dataset(
+        runtime.store,
+        workspace_id=workspace_id,
+        dataset=dataset,
+    )
+    console.print_json(data=report.model_dump(mode="json"))
+    if not report.passed:
+        raise typer.Exit(code=1)
 
 
 @app.command("verify-bigquery-environment")

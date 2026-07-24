@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "dataset_id": "infy-m1-13q-core-v1",
+  "company_id": "NSE:INFY",
+  "source_manifest": "data/filings/nse/INFY/manifest.json",
+  "source_manifest_sha256": "df6cfa1561de902f27fe80025b2c4416c1b6ac517a8f8001f80b1ce9d617721f",
+  "locked_at": "2026-07-24T00:00:00+05:30",
+  "review_status": "seeded_from_exact_nse_xbrl_pending_dual_analyst_signoff",
+  "cases": [
+    {
+      "case_id": "INFY-2023-06-30-consolidated-quarter",
+      "period_end": "2023-06-30",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INDAS_94298_895038_20072023043507.xml",
+      "source_sha256": "6bb3c3fb551be3f967073748df9c961066222656435fcc61e058611be81e0773",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "379330000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "301320000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "59450000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "14.37", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2023-09-30-consolidated-quarter",
+      "period_end": "2023-09-30",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INDAS_97544_949331_12102023044047.xml",
+      "source_sha256": "e493573c00a4c205ecc150ca502cc181d751c25809e0881693f0133870eac511",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "389940000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "308580000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "62150000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "15.01", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2023-12-31-consolidated-quarter",
+      "period_end": "2023-12-31",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INDAS_101013_1017099_11012024061922.xml",
+      "source_sha256": "4f9d22d5246f1728d1865af854cee9dabb2947bff118523d28b198cbe5c7558b",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "388210000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "309910000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "61130000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "14.76", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2024-03-31-consolidated-quarter",
+      "period_end": "2024-03-31",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INDAS_104589_1099938_19042024112830.xml",
+      "source_sha256": "76b50cfcb43c474f7db3203627fe300165dcc54e7890d71eae416d7b838bb977",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "379230000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "304120000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "79750000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "19.25", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2024-06-30-consolidated-quarter",
+      "period_end": "2024-06-30",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INDAS_109110_1192961_18072024074507.xml",
+      "source_sha256": "ef270eb3c5513fd033008c67d28310f325da95eec1d445923b924b6125c62419",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "393150000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "311320000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "63740000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "15.38", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2024-09-30-consolidated-quarter",
+      "period_end": "2024-09-30",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INDAS_112851_1276022_17102024074550.xml",
+      "source_sha256": "c06c3987790f03b4da6ec65f04bed6ec1762747072e892de6e389d9165d032f8",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "409860000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "324450000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "65160000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "15.71", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2024-12-31-consolidated-quarter",
+      "period_end": "2024-12-31",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INDAS_117292_1348213_16012025074012.xml",
+      "source_sha256": "b026cb484f4b9ddf79220cfd84a835f6f3a50217cb1a3f4b3d1df61e6df8bf34",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "417640000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "329530000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "68220000000.00", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "16.43", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2025-03-31-consolidated-quarter",
+      "period_end": "2025-03-31",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INTEGRATED_FILING_INDAS_1417999_17042025113633_WEB.xml",
+      "source_sha256": "3925e8c16ed0c7f23001a92f41916ca86485b2327878f3586443880dc3399034",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "409250000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "324520000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "70380000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "16.98", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2025-06-30-consolidated-quarter",
+      "period_end": "2025-06-30",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INTEGRATED_FILING_INDAS_1491797_23072025085450_WEB.xml",
+      "source_sha256": "39d01e5dbd605dcbf5610aa8347511eaaca3461f3d96f63a4e83f8660840af63",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "422790000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "335810000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "69240000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "16.7", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2025-09-30-consolidated-quarter",
+      "period_end": "2025-09-30",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INTEGRATED_FILING_INDAS_1551001_16102025094433_WEB.xml",
+      "source_sha256": "412f184d7ef6ed8d9c24a53f784abf76038f2ba49ed5f88533bdbd6685b0256f",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "444900000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "352430000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "73750000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "17.76", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2025-12-31-consolidated-quarter",
+      "period_end": "2025-12-31",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INTEGRATED_FILING_INDAS_1601190_14012026083832_WEB.xml",
+      "source_sha256": "bde0697dfbf7284f0b260c90419c9b9fe78f567cb1b8a8bca329d5de9efcfb82",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "454790000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "361000000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "66660000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "16.17", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2026-03-31-consolidated-quarter",
+      "period_end": "2026-03-31",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INTEGRATED_FILING_INDAS_1658040_23042026090154_WEB.xml",
+      "source_sha256": "6f1e964f2ffa30952e4b969d96933e04c85bb04ae24463456ee87b801de32b73",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "464020000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "367640000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "85090000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "21.01", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    },
+    {
+      "case_id": "INFY-2026-06-30-consolidated-quarter",
+      "period_end": "2026-06-30",
+      "consolidation_scope": "consolidated",
+      "source_filename": "INTEGRATED_FILING_INDAS_1700136_23072026054446_WEB.xml",
+      "source_sha256": "5928e8ca820f60f944a66367291a7dc76c8df4536dfaf5627f3d3ff077487bae",
+      "expected_facts": [
+        {"canonical_metric": "revenue", "value": "482110000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "RevenueFromOperations", "context_ref": "OneD"},
+        {"canonical_metric": "total_expenses", "value": "381670000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "Expenses", "context_ref": "OneD"},
+        {"canonical_metric": "net_profit", "value": "77750000000", "currency": "INR", "period_type": "quarter", "xbrl_concept": "ProfitLossForPeriod", "context_ref": "OneD"},
+        {"canonical_metric": "basic_eps", "value": "19.19", "currency": "INR", "period_type": "quarter", "xbrl_concept": "BasicEarningsLossPerShareFromContinuingOperations", "context_ref": "OneD"}
+      ]
+    }
+  ]
+}

@@ -56,6 +56,10 @@ Current focus:
   factor IC review.
 - A guarded Lens chat foundation with typed market-data tools, citation
   provenance, and optional Gemini answer rewriting.
+- Lens M1 NSE filing intelligence for INFY: hash-verified registration,
+  XBRL/PDF parsing, durable LangGraph execution, candidate/approved fact
+  separation, deterministic validation, human review, exact evidence, and
+  bounded cited analysis.
 - Early modeling/target utilities under `src/trade_research/modeling/` and
   exploratory material under `experiments/`.
 
@@ -102,14 +106,25 @@ Core components:
   research progress, and factor IC views. Some non-research endpoints and
   frontend calls intentionally fall back to mock data when live API/DB data is
   unavailable.
-- **Qdrant**: vector store helpers for document retrieval experiments. The
-  storage/search wrapper exists; a full document-ingestion job or CLI is not
-  implemented yet.
-- **Runtime**: Docker Compose supports both local development and an Ubuntu
-  production stack behind Cloudflare Access/Tunnel.
+- **Qdrant**: versioned filing-evidence chunks with workspace, company, filing,
+  version, period, index-version, and embedding-model filters. Filing indexing
+  stays disabled until an embedding provider is configured.
+- **Runtime**: Docker Compose supports local development and an Ubuntu
+  production stack behind Cloudflare Access/Tunnel. The local stack includes API, web,
+  filing worker, Dagster, TimescaleDB/PostgreSQL, Redis, Qdrant, MinIO,
+  OpenTelemetry Collector, Prometheus, and CloudBeaver.
 
 Step 2 feature-layer design docs:
 
+- [Lens NSE Filing Intelligence Vision and Roadmap](docs/lens_nse_filing_intelligence_vision_and_roadmap.md):
+  production architecture, INFY first milestone, LangGraph workflow,
+  Langfuse/OpenTelemetry strategy, release gates, and broader NSE roadmap.
+- [Lens M1 Implementation](docs/lens_m1_implementation.md): delivered code,
+  API and run contracts, local/deployed operation, verification evidence,
+  release checklist, and known boundaries.
+- [INFY M1 13-quarter golden dataset](evaluations/filings/infy_m1_golden.json):
+  locked core values and exact XBRL concept/context assertions used by the
+  executable extraction release gate.
 - [Feature Field Guide v1](docs/feature_field_guide_v1.md): concepts,
   formulas, visual sketches, examples, traps, and research usage for each
   feature family.
