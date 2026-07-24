@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "afbc5dc1f78803752d013a6db99a76293d01d61e",
+  "verified_date": "2026-07-24",
+  "documents": {
+    "docs/current_state.md": "current",
+    "docs/phase0_repository_inventory.md": "current",
+    "docs/phase0_page_data_source_inventory.md": "current",
+    "docs/phase0_cli_and_mutation_inventory.md": "current",
+    "docs/phase0_production_audit.md": "current",
+    "docs/phase0_exit_report.md": "current",
+    "docs/architecture.md": "current",
+    "docs/stabilization_validation_workflow_implementation_plan.md": "proposed",
+    "docs/research_platform_milestone_execution_plan.md": "proposed",
+    "docs/handoff_summary.md": "superseded",
+    "docs/daily_pipeline_handoff.md": "historical",
+    "docs/provider_ingestion_v2_plan.md": "partially_implemented",
+    "docs/on_demand_data_pipeline_mvp.md": "superseded",
+    "docs/research_ui_plan.md": "partially_implemented",
+    "docs/ml_dataset_v1_strategy.md": "partially_implemented",
+    "docs/pipeline_validation.md": "partially_implemented",
+    "docs/yfinance_daily_equities_design_and_implementation.md": "partially_implemented",
+    "docs/deployment_plan.md": "partially_implemented"
+  },
+  "local_compose_services": [
+    "api",
+    "web",
+    "dagster-webserver",
+    "dagster-daemon",
+    "postgres",
+    "redis",
+    "qdrant",
+    "dbeaver"
+  ],
+  "production_compose_services": [
+    "web",
+    "cloudbeaver",
+    "api",
+    "dagster-daemon",
+    "dagster-webserver",
+    "postgres",
+    "redis",
+    "qdrant"
+  ],
+  "dagster_schedules": [
+    "daily_research_schedule",
+    "north_america_daily_yfinance_schedule",
+    "fx_intraday_dukascopy_schedule",
+    "yfinance_fx_intraday_schedule",
+    "nse_universe_refresh_schedule",
+    "tsx_universe_refresh_schedule",
+    "us_universe_refresh_schedule",
+    "yfinance_daily_work_planner_schedule",
+    "yfinance_nse_completed_session_work_planner_schedule",
+    "nse_completed_session_opportunity_targets_schedule",
+    "yfinance_daily_work_worker_schedule",
+    "bigquery_daily_sync_schedule",
+    "nse_exchange_sessions_schedule",
+    "tsx_exchange_sessions_schedule",
+    "us_exchange_sessions_schedule"
+  ],
+  "forbidden_current_claims": {
+    "README.md": [
+      "Cloud/server deployment as the primary operating mode.",
+      "deployment packaging, proxy config, and backup/restore scripts have been removed"
+    ],
+    "docs/architecture.md": [
+      "intentionally local-first and no longer carries deployment packaging"
+    ]
+  }
+}

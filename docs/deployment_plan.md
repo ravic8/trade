@@ -1,9 +1,17 @@
+---
+document_status: partially_implemented
+last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
+last_verified_date: 2026-07-24
+owner: trade-research-platform
+replaced_by: docs/current_state.md
+---
+
 # Deployment Plan
 
 This document captures the deployment direction for the Trade Research app.
-The repo is still local-first for development, but production packaging,
-admin token management, browser analytics access, CI, and first-pass server
-scripts are now in place.
+The repo supports local development and a production Ubuntu deployment.
+Production packaging, admin token management, browser analytics access, CI, and
+first-pass server scripts are in place.
 
 ## Current Deployment Status
 

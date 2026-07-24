@@ -1,3 +1,11 @@
+---
+document_status: partially_implemented
+last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
+last_verified_date: 2026-07-24
+owner: trade-research-platform
+replaced_by: docs/research_platform_milestone_execution_plan.md
+---
+
 # ML Dataset v1 Strategy
 
 This document freezes the first ML dataset and model-evaluation strategy. It is

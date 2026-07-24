@@ -1,16 +1,25 @@
+---
+document_status: current
+last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
+last_verified_date: 2026-07-24
+owner: trade-research-platform
+replaced_by: null
+---
+
 # Repository Architecture
 
 This repo is a small modular monolith for market research, Lens chat, and
 predictive trading experiments. The audited daily research pipeline is the most
 complete part of the system today; chat, UI, and modeling are present but not
-all complete production workflows. The repo is intentionally local-first and no
-longer carries deployment packaging.
+all complete production workflows. It supports local development and an Ubuntu
+production deployment with separate Compose topology, CI/CD, Cloudflare
+identity boundary, PostgreSQL/TimescaleDB, Redis, Dagster, and yfinance
+ingestion.
 
-The next ingestion architecture is tracked in
-`docs/provider_ingestion_v2_plan.md`. It keeps Dagster as the scheduled
-orchestrator, adds provider API rate limiting below every execution surface,
-and introduces local/prod parallelism profiles before adding yfinance and
-Dukascopy data sources.
+Canonical current behavior and production evidence are tracked in
+`docs/current_state.md` and `docs/phase0_production_audit.md`. The older
+provider-ingestion plan is partially implemented and is not the current source
+of truth.
 
 ```text
 apps/web/              React UI

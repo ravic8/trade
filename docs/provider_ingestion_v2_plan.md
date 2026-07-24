@@ -1,4 +1,16 @@
+---
+document_status: partially_implemented
+last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
+last_verified_date: 2026-07-24
+owner: trade-research-platform
+replaced_by: docs/stabilization_validation_workflow_implementation_plan.md
+---
+
 # Provider Ingestion V2 Plan
+
+> Historical implementation plan. Much of its yfinance durable-work design is
+> now implemented. Use the replacement plan and `docs/current_state.md` for
+> current priorities.
 
 This document defines the next data-ingestion architecture for the Trade
 Research app. The immediate priority is scheduled, incremental market-data
