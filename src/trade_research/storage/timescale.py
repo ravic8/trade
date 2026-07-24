@@ -1750,6 +1750,15 @@ class TimescaleStore:
             }
             for item in plan.work_items
         ]
+        symbol_rows = _deduplicate_rows(symbol_rows, ("symbol", "exchange"))
+        member_rows = _deduplicate_rows(
+            member_rows,
+            ("snapshot_id", "canonical_instrument_id"),
+        )
+        provider_rows = _deduplicate_rows(
+            provider_rows,
+            ("source", "instrument_key"),
+        )
 
         with self.engine.begin() as connection:
             connection.execute(
@@ -1845,7 +1854,13 @@ class TimescaleStore:
 
     @staticmethod
     def _persist_yfinance_aliases(connection: Any, plan: UniverseReconciliationPlan) -> None:
-        members = [item for item in plan.members if item.provider_symbol]
+        members = list(
+            {
+                item.canonical_instrument_id: item
+                for item in plan.members
+                if item.provider_symbol
+            }.values()
+        )
         if not members:
             return
         canonical_ids = [item.canonical_instrument_id for item in members]
@@ -6601,7 +6616,7 @@ class TimescaleStore:
             }
             row["quality_status"] = _quality_status(row)
             rows.append(row)
-        return rows
+        return _deduplicate_rows(rows, ("instrument_key", "source", "date"))
 
     @staticmethod
     def _daily_price_adjustment_rows(
@@ -6639,7 +6654,7 @@ class TimescaleStore:
                     "fetched_at": fetched_at,
                 }
             )
-        return rows
+        return _deduplicate_rows(rows, ("instrument_key", "source", "date"))
 
     @staticmethod
     def _intraday_ohlcv_rows(
@@ -7052,6 +7067,17 @@ def _as_utc(value: datetime) -> datetime:
 def _chunks(rows: list[_ChunkItem], size: int) -> Iterable[list[_ChunkItem]]:
     for start in range(0, len(rows), size):
         yield rows[start : start + size]
+
+
+def _deduplicate_rows(
+    rows: list[dict[str, Any]],
+    key_columns: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Return at most one row per database conflict key, with the last row winning."""
+    deduplicated: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in rows:
+        deduplicated[tuple(row[column] for column in key_columns)] = row
+    return list(deduplicated.values())
 
 
 def _clean_string(value: Any) -> str | None:

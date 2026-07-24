@@ -849,7 +849,7 @@ def _local_artifact_summary(
     cleaned = frames["cleaned_ohlcv"]
     if not cleaned.empty:
         cleaned = normalize_ohlcv(cleaned)
-        stock_coverage = _write_stock_coverage(
+        stock_coverage = write_stock_coverage(
             data_root,
             cleaned,
             latest_date,
@@ -882,7 +882,7 @@ def _local_artifact_summary(
     return summary
 
 
-def _write_stock_coverage(
+def write_stock_coverage(
     data_root: Path,
     cleaned: pd.DataFrame,
     latest_date: date,

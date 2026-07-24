@@ -92,7 +92,7 @@ BigQuery production sync. `NSE_DAILY_PRIMARY_SOURCE=upstox` and
 
 ## Dagster state
 
-The repository defines 15 schedules. Every schedule has
+The repository defines 17 schedules. Every schedule has
 `DefaultScheduleStatus.STOPPED`.
 
 | Schedule | Job | Repository default |
@@ -108,15 +108,22 @@ The repository defines 15 schedules. Every schedule has
 | `yfinance_nse_completed_session_work_planner_schedule` | `yfinance_nse_completed_session_work_planner_job` | stopped |
 | `yfinance_daily_work_worker_schedule` | `yfinance_daily_work_worker_job` | stopped |
 | `nse_completed_session_opportunity_targets_schedule` | `nse_completed_session_opportunity_targets_job` | stopped |
+| `tsx_completed_session_opportunity_targets_schedule` | `tsx_completed_session_opportunity_targets_job` | stopped |
+| `us_completed_session_opportunity_targets_schedule` | `us_completed_session_opportunity_targets_job` | stopped |
 | `bigquery_daily_sync_schedule` | `bigquery_export_sync_job` | stopped |
 | `nse_exchange_sessions_schedule` | `nse_exchange_sessions_job` | stopped |
 | `tsx_exchange_sessions_schedule` | `tsx_exchange_sessions_job` | stopped |
 | `us_exchange_sessions_schedule` | `us_exchange_sessions_job` | stopped |
 
-The `/api/data/schedules/status` endpoint reports **configured intent derived
-from application settings**. It explicitly does not query the private Dagster
-instance. The Data page must not be treated as proof that a Dagster schedule is
-running.
+The `/api/data/schedules/status` endpoint reports desired state derived from
+application settings and, when `DAGSTER_READONLY_HOME` is mounted, reads actual
+schedule, tick, run, and repository-origin state from Dagster SQLite in
+read-only mode. Until schedule reconciliation writes the current-origin marker,
+actual running/stopped state is available but origin health remains unknown.
+
+The two North America completed-session target schedules are Phase 1 additions.
+They remain stopped by repository default and become desired-running only when
+their exchange-specific durable yfinance flags are enabled.
 
 Direct audit found 12 running schedule records and 3 stopped schedules:
 

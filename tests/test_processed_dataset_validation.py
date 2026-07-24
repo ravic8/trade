@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from trade_research.pipelines import processed_validation
 from trade_research.validation.processed_datasets import (
     build_date_coverage,
     find_invalid_ohlcv_rows,
@@ -145,6 +146,41 @@ def test_summary_json_contains_required_fields(tmp_path: Path) -> None:
         assert field in result.summary
     assert result.summary["baseline_ml_ready"] is True
     assert result.summary["overall_status"] == "warn"
+
+
+def test_pipeline_materializes_stock_coverage_before_ml_dataset(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    data_dir = _write_minimal_validatable_data(tmp_path)
+    monkeypatch.setattr(
+        processed_validation,
+        "get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "data_dir": data_dir,
+                "nse_daily_primary_source": "upstox",
+            },
+        )(),
+    )
+
+    result = processed_validation.run_processed_dataset_validation_pipeline(
+        data_dir=data_dir,
+        coverage_run_id="dagster-run-1",
+    )
+
+    coverage_path = data_dir / "processed/validation/daily_pipeline_stock_coverage.parquet"
+    windows_path = (
+        data_dir / "processed/validation/daily_pipeline_stock_coverage_windows.parquet"
+    )
+    assert coverage_path.exists()
+    assert windows_path.exists()
+    assert result.artifacts["stock_coverage"] == coverage_path
+    assert result.metrics["stock_coverage"]["coverage_run_id"] == "dagster-run-1"
+    coverage = pd.read_parquet(coverage_path)
+    assert coverage["coverage_pct"].eq(1.0).all()
 
 
 def _write_minimal_validatable_data(tmp_path: Path) -> Path:

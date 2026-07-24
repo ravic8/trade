@@ -55,6 +55,7 @@ services:
     environment:
       APP_ENV: production
       DATA_DIR: /app/data
+      DAGSTER_READONLY_HOME: /app/dagster_readonly
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
       BIGQUERY_ENABLED: ${PROD_BIGQUERY_ENABLED:-false}
@@ -156,6 +157,7 @@ services:
     volumes:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
+      - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_readonly:ro
     depends_on:
       postgres:
         condition: service_healthy

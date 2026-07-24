@@ -630,9 +630,11 @@ def run_yfinance_daily_work_queue(
             "exchange_results": list(exchange_results.values()),
         },
     )
+    has_business_failures = bool(retry_wait or terminal or lost_claims)
+    has_operational_warnings = bool(heartbeat.failure_count)
     return PipelineRunResult(
         name="yfinance_daily_work_queue",
-        status="warn" if retry_wait or terminal or lost_claims else "pass",
+        status="warn" if has_business_failures or has_operational_warnings else "pass",
         rows=rows_written,
         metrics={
             "trigger": trigger,
@@ -660,6 +662,11 @@ def run_yfinance_daily_work_queue(
             *(
                 [f"{lost_claims} work item claims changed ownership before acknowledgement."]
                 if lost_claims
+                else []
+            ),
+            *(
+                [f"{terminal} work items reached terminal failure."]
+                if terminal
                 else []
             ),
             *(

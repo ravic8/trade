@@ -286,6 +286,47 @@ def test_phase5_queue_assets_call_durable_pipelines(monkeypatch) -> None:
     ]
 
 
+def test_yfinance_worker_asset_fails_dagster_run_on_partial_business_outcome(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        daily_assets,
+        "run_yfinance_daily_work_queue",
+        lambda **_kwargs: daily_assets.PipelineRunResult(
+            name="yfinance_daily_work_queue",
+            status="warn",
+            warnings=["1 work item is waiting for durable retry."],
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="durable retry"):
+        daily_assets.yfinance_daily_work_worker(dagster.build_op_context())
+
+
+def test_processed_validation_asset_passes_dagster_run_id(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_pipeline(**kwargs):
+        captured.update(kwargs)
+        return _result("processed_dataset_validation")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_processed_dataset_validation_pipeline",
+        fake_pipeline,
+    )
+    context = dagster.build_op_context()
+
+    daily_assets.processed_dataset_validation(
+        context,
+        daily_ohlcv=_result("daily_ohlcv"),
+        daily_features=_result("daily_features"),
+        daily_targets=_result("daily_targets"),
+    )
+
+    assert captured == {"coverage_run_id": context.run_id}
+
+
 def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
     monkeypatch,
 ) -> None:
@@ -317,6 +358,31 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
     assert calls == [
         ("planner", (("NSE",), False, "dagster")),
         ("targets", ("NSE", "yfinance")),
+    ]
+
+
+def test_north_america_completed_session_assets_use_coverage_gated_refresh(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_targets(*, exchange, ohlcv_source):
+        calls.append((exchange, ohlcv_source))
+        return _result(f"{exchange.lower()}_opportunity_targets")
+
+    monkeypatch.setattr(
+        daily_assets,
+        "run_completed_session_opportunity_target_pipeline",
+        fake_targets,
+    )
+    context = dagster.build_op_context()
+
+    daily_assets.tsx_completed_session_opportunity_targets(context)
+    daily_assets.us_completed_session_opportunity_targets(context)
+
+    assert calls == [
+        ("TSX", "yfinance"),
+        ("US", "yfinance"),
     ]
 
 

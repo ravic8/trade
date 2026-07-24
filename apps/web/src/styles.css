@@ -2278,6 +2278,29 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+.operations-stack-list article > .schedule-status-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.operations-stack-list article > .schedule-status-group > .status-pill.running {
+  color: #245f8f;
+}
+
+.operations-stack-list article > .schedule-status-group > .status-pill.warning {
+  color: #8a5b00;
+}
+
+.operations-stack-list article > .schedule-status-group > .status-pill.failed {
+  color: #9f2f29;
+}
+
+.operations-stack-list article > .schedule-status-group > .status-pill.neutral {
+  color: #5d6970;
+}
+
 .operations-text-button {
   display: inline-flex;
   align-items: center;
@@ -2671,6 +2694,18 @@ tbody tr:hover {
 
   .operations-run-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .operations-stack-list article.schedule-status-row {
+    grid-template-columns: 1fr;
+  }
+
+  .operations-stack-list article.schedule-status-row > div > span {
+    white-space: normal;
+  }
+
+  .operations-stack-list article.schedule-status-row > .schedule-status-group {
+    justify-content: flex-start;
   }
 
   .operations-suggestions button {

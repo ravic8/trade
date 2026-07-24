@@ -491,7 +491,19 @@ export type PipelineScheduleStatusRow = {
   job_name: string;
   cron_schedule: string;
   execution_timezone: string;
+  desired_status: "running" | "stopped";
   intended_status: "running" | "stopped";
+  actual_status: "running" | "stopped" | "unknown";
+  status_drift: boolean | null;
+  origin_health: "current" | "stale" | "mixed" | "unknown";
+  origin_drift: boolean | null;
+  stored_origin_count: number;
+  active_origin_count: number;
+  last_tick_status: string | null;
+  last_tick_at: string | null;
+  last_run_status: string | null;
+  last_run_at: string | null;
+  last_successful_run_at: string | null;
   notes: string | null;
 };
 

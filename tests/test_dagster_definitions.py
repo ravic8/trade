@@ -68,6 +68,21 @@ def test_phase5_yfinance_queue_jobs_and_schedules_are_stopped_by_default() -> No
         definitions.nse_completed_session_opportunity_targets_schedule.default_status
         == dagster.DefaultScheduleStatus.STOPPED
     )
+    for exchange in ("tsx", "us"):
+        job = getattr(
+            definitions,
+            f"{exchange}_completed_session_opportunity_targets_job",
+        )
+        schedule = getattr(
+            definitions,
+            f"{exchange}_completed_session_opportunity_targets_schedule",
+        )
+        assert job.name == f"{exchange}_completed_session_opportunity_targets_job"
+        assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
+        assert schedule.cron_schedule == [
+            "15 22-23 * * 1-5",
+            "15 0-3 * * 2-6",
+        ]
 
 
 def test_bigquery_export_job_and_schedule_are_registered_but_stopped() -> None:

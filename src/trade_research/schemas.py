@@ -536,7 +536,19 @@ class PipelineScheduleStatusRow(BaseModel):
     job_name: str
     cron_schedule: str
     execution_timezone: str
+    desired_status: Literal["running", "stopped"]
     intended_status: Literal["running", "stopped"]
+    actual_status: Literal["running", "stopped", "unknown"]
+    status_drift: bool | None = None
+    origin_health: Literal["current", "stale", "mixed", "unknown"] = "unknown"
+    origin_drift: bool | None = None
+    stored_origin_count: int = Field(default=0, ge=0)
+    active_origin_count: int = Field(default=0, ge=0)
+    last_tick_status: str | None = None
+    last_tick_at: datetime | None = None
+    last_run_status: str | None = None
+    last_run_at: datetime | None = None
+    last_successful_run_at: datetime | None = None
     notes: str | None = None
 
 

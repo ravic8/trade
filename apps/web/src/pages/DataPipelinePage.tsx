@@ -703,16 +703,27 @@ function ScheduleSnapshot({ schedules }: { schedules: PipelineScheduleStatusRow[
   const relevant = schedules.filter((schedule) =>
     schedule.schedule_name.includes("yfinance_daily_work") ||
     schedule.schedule_name.includes("universe_refresh") ||
-    schedule.schedule_name.includes("exchange_sessions"),
+    schedule.schedule_name.includes("exchange_sessions") ||
+    schedule.schedule_name.includes("opportunity_targets"),
   );
   return (
     <section className="data-card">
-      <div className="data-card-header"><div><h2>Automation</h2><p>Expected Dagster schedule state</p></div></div>
+      <div className="data-card-header"><div><h2>Automation</h2><p>Desired and observed Dagster schedule state</p></div></div>
       <div className="operations-stack-list">
         {relevant.map((schedule) => (
-          <article key={schedule.schedule_name}>
-            <div><strong>{humanize(schedule.schedule_name)}</strong><span>{schedule.cron_schedule} · {schedule.execution_timezone}</span></div>
-            <span className={`status-pill ${statusClass(schedule.intended_status)}`}>{schedule.intended_status}</span>
+          <article className="schedule-status-row" key={schedule.schedule_name}>
+            <div>
+              <strong>{humanize(schedule.schedule_name)}</strong>
+              <span>{schedule.cron_schedule} · {schedule.execution_timezone}</span>
+              <span>
+                Desired {schedule.desired_status}
+                {schedule.last_successful_run_at ? ` · Last success ${formatDateTime(schedule.last_successful_run_at)}` : ""}
+              </span>
+            </div>
+            <div className="schedule-status-group">
+              {schedule.status_drift ? <span className="status-pill warning">drift</span> : null}
+              <span className={`status-pill ${statusClass(schedule.actual_status)}`}>{schedule.actual_status}</span>
+            </div>
           </article>
         ))}
         {!relevant.length ? <EmptyState label="No equity schedules were reported." /> : null}
