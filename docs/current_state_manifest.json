@@ -24,12 +24,16 @@
   },
   "local_compose_services": [
     "api",
+    "filing-worker",
     "web",
     "dagster-webserver",
     "dagster-daemon",
     "postgres",
     "redis",
     "qdrant",
+    "minio",
+    "otel-collector",
+    "prometheus",
     "dbeaver"
   ],
   "production_compose_services": [

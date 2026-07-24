@@ -32,6 +32,8 @@ from trade_research.exchange_sessions import (
     expected_dates_for_instrument,
     resolve_expected_session_dates,
 )
+from trade_research.filings.api import router as filing_router
+from trade_research.filings.telemetry import configure_telemetry
 from trade_research.market_calendar import (
     fetch_exchange_holidays,
     validated_exchange_calendar_years,
@@ -95,9 +97,16 @@ app.add_middleware(
     allow_origins=cors_origins(settings.api_cors_origins),
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=[
+        "Content-Type",
+        "X-Workspace-ID",
+        "X-Actor-ID",
+        "X-Idempotency-Key",
+    ],
 )
 app.add_middleware(ChatRateLimitMiddleware, settings_getter=get_settings)
+app.include_router(filing_router)
+configure_telemetry(settings, app=app)
 
 
 def _canonical_data_exchange(value: str) -> str:

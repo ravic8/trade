@@ -40,7 +40,7 @@ def test_phase9_2a_migration_adds_sync_state_and_declares_curated_views(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260720_0009"
+    assert revision == "20260724_0010"
 
     migration_path = Path(
         "migrations/versions/20260719_0007_phase9_2a_analytics_bigquery_foundation.py"

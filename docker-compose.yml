@@ -12,6 +12,20 @@ services:
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      FILING_QUEUE_MODE: celery
+      FILING_ARTIFACT_BACKEND: s3
+      FILING_S3_ENDPOINT_URL: http://minio:9000
+      FILING_S3_BUCKET: lens-filings
+      FILING_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      FILING_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      FILING_CHECKPOINT_SCHEMA: filing_checkpoints
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      TELEMETRY_RELEASE: ${TELEMETRY_RELEASE:-local}
       INGESTION_PROFILE: local
       UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
       DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
@@ -31,11 +45,65 @@ services:
         condition: service_started
       qdrant:
         condition: service_started
+      minio:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 20s
       timeout: 5s
       retries: 5
+
+  filing-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command:
+      [
+        "celery",
+        "-A",
+        "trade_research.filings.tasks:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=filing_intelligence",
+        "--concurrency=${FILING_WORKER_CONCURRENCY:-2}",
+      ]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: docker
+      DATA_DIR: /app/data
+      DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      FILING_QUEUE_MODE: celery
+      FILING_ARTIFACT_BACKEND: s3
+      FILING_S3_ENDPOINT_URL: http://minio:9000
+      FILING_S3_BUCKET: lens-filings
+      FILING_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      FILING_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      FILING_CHECKPOINT_SCHEMA: filing_checkpoints
+      FILING_WORKER_CONCURRENCY: ${FILING_WORKER_CONCURRENCY:-2}
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      TELEMETRY_RELEASE: ${TELEMETRY_RELEASE:-local}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_healthy
 
   web:
     image: node:22-alpine
@@ -159,6 +227,45 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./ops/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "9464:9464"
+
+  prometheus:
+    image: prom/prometheus:latest
+    command: ["--config.file=/etc/prometheus/prometheus.yaml"]
+    volumes:
+      - ./ops/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
   dbeaver:
     image: dbeaver/cloudbeaver:latest
     ports:
@@ -174,5 +281,7 @@ services:
 volumes:
   postgres_data:
   qdrant_data:
+  minio_data:
+  prometheus_data:
   dbeaver_data:
   web_node_modules:

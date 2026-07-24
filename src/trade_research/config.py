@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +52,62 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
     redis_url: str = "redis://localhost:6379/0"
+
+    filing_enabled: bool = True
+    filing_default_workspace_id: str = "default"
+    filing_manifest_path: Path = Path("data/filings/nse/INFY/manifest.json")
+    filing_artifact_backend: Literal["local", "s3"] = "local"
+    filing_artifact_dir: Path = Path("data/filings/artifacts")
+    filing_s3_bucket: str = "lens-filings"
+    filing_s3_prefix: str = "parsed"
+    filing_s3_endpoint_url: str | None = None
+    filing_s3_region: str = "ap-south-1"
+    filing_s3_access_key_id: str | None = None
+    filing_s3_secret_access_key: str | None = None
+    filing_queue_mode: Literal["inline", "celery"] = "inline"
+    filing_queue_name: str = "filing_intelligence"
+    filing_worker_concurrency: int = Field(default=2, ge=1, le=16)
+    filing_worker_lease_seconds: int = Field(default=300, ge=30, le=3600)
+    filing_worker_heartbeat_seconds: int = Field(default=30, ge=5, le=300)
+    filing_checkpoint_database_url: str | None = None
+    filing_checkpoint_schema: str = Field(
+        default="filing_checkpoints",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    filing_require_workspace_header: bool = False
+    filing_auto_approve_xbrl: bool = True
+    filing_force_human_review: bool = False
+    filing_min_auto_approve_confidence: float = Field(default=0.98, ge=0, le=1)
+    filing_parse_min_quality: float = Field(default=0.60, ge=0, le=1)
+    filing_max_document_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        ge=1 * 1024 * 1024,
+        le=500 * 1024 * 1024,
+    )
+    filing_pdf_max_pages: int = Field(default=600, ge=1, le=2_000)
+    filing_pdf_claim_limit: int = Field(default=60, ge=1, le=500)
+    filing_extractor_version: str = "nse-filing-extractor-v1"
+    filing_golden_dataset_path: Path = Path(
+        "evaluations/filings/infy_m1_golden.json"
+    )
+    filing_index_enabled: bool = False
+    filing_qdrant_collection: str = "filing_evidence_v1"
+    filing_index_version: str = "filing-index-v1"
+    filing_chunk_size: int = Field(default=2_500, ge=500, le=10_000)
+    filing_chunk_overlap: int = Field(default=250, ge=0, le=2_000)
+    filing_embedding_batch_size: int = Field(default=64, ge=1, le=256)
+    filing_embedding_vector_size: int = Field(default=1_536, ge=128, le=8_192)
+    filing_index_max_chunks: int = Field(default=1_500, ge=1, le=20_000)
+
+    langfuse_enabled: bool = False
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_sample_rate: float = Field(default=1.0, ge=0, le=1)
+    telemetry_release: str = "local"
+    otel_enabled: bool = False
+    otel_service_name: str = "trade-research"
+    otel_exporter_otlp_endpoint: str | None = None
 
     bigquery_enabled: bool = False
     bigquery_canary_enabled: bool = False
@@ -235,6 +291,32 @@ class Settings(BaseSettings):
             raise ValueError(
                 "NSE yfinance primary requires YFINANCE_DAILY_ENABLED and "
                 "YFINANCE_NSE_ENABLED"
+            )
+        if self.filing_worker_heartbeat_seconds >= self.filing_worker_lease_seconds:
+            raise ValueError("filing worker heartbeat must be shorter than its lease")
+        if self.langfuse_enabled and not (
+            self.langfuse_public_key and self.langfuse_secret_key
+        ):
+            raise ValueError(
+                "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required "
+                "when LANGFUSE_ENABLED=true"
+            )
+        if self.filing_chunk_overlap >= self.filing_chunk_size:
+            raise ValueError("filing chunk overlap must be smaller than chunk size")
+        if self.filing_index_enabled and not self.openai_api_key:
+            raise ValueError(
+                "OPENAI_API_KEY is required when FILING_INDEX_ENABLED=true"
+            )
+        if self.filing_artifact_backend == "s3" and not (
+            self.filing_s3_access_key_id and self.filing_s3_secret_access_key
+        ):
+            raise ValueError(
+                "FILING_S3_ACCESS_KEY_ID and FILING_S3_SECRET_ACCESS_KEY are "
+                "required when FILING_ARTIFACT_BACKEND=s3"
+            )
+        if self.otel_enabled and not self.otel_exporter_otlp_endpoint:
+            raise ValueError(
+                "OTEL_EXPORTER_OTLP_ENDPOINT is required when OTEL_ENABLED=true"
             )
         return self
 
