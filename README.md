@@ -1,15 +1,18 @@
 # Trade Research Agent
 
-Local-first market data and research infrastructure for building a systematic
-trade research agent focused on Indian equities.
+Production-deployed market-data and early quantitative research infrastructure
+for NSE, TSX, and US equities.
 
-The project is currently a local-first data foundation plus an initial factor
-research layer. It builds a clean tradable NSE equity universe, maps symbols to
-provider instruments, ingests audited OHLCV data, stores canonical datasets
-locally, builds deterministic daily technical features, builds forward-return
-target labels, and produces first-pass factor research outputs. Backtesting,
-full model experiments, and a mature Lens research agent sit after this audited
-research-data foundation.
+The platform currently combines FastAPI, React, PostgreSQL/TimescaleDB, Redis,
+Dagster, yfinance, a legacy/comparison Upstox path, and artifact-backed research
+views. Daily yfinance ingestion is active in production, but the repository is
+not yet a scientifically validated model platform: some product pipelines are
+stale, Factors and Models still depend on missing local artifacts, and several
+pages contain synthetic fallback behavior.
+
+Start with [Current Repository and Production State](docs/current_state.md) for
+canonical truth. Older handoff and planning documents are classified with
+metadata and must not override that document.
 
 ## Project Vision
 
@@ -34,12 +37,13 @@ validation-ready evidence before backtests, models, or paper trading.
 
 Current focus:
 
-- NSE listed equities.
+- NSE, TSX, and US listed equities.
+- Scheduled, durable, incremental yfinance daily OHLCV ingestion.
+- Production operations and data-quality visibility.
+- Completed-session Opportunity distributions and percentile filtering.
 - Liquid cash-market universe selection using average daily turnover, volume,
   trading consistency, and zero-volume checks.
-- Upstox instrument master ingestion.
-- Mapping the liquid NSE universe to Upstox instrument keys.
-- Batch daily OHLCV ingestion for mapped NSE equities.
+- Upstox comparison/retirement work for the legacy NSE research path.
 - TimescaleDB/PostgreSQL storage for structured market data.
 - Parquet and CSV outputs for local analytical workflows.
 - Data-quality audits for every major generated dataset.
@@ -63,40 +67,37 @@ layers are trustworthy enough to support validated backtests:
 - Realtime streaming, websockets, or live candle appending.
 - Broker order placement or automated execution.
 - Intraday/minute-level production pipelines for NSE equities.
-- Indices and F&O production coverage.
 - Fundamentals ingestion.
 - Sentiment or alternative data ingestion.
 - Autonomous trading agents.
-- Cloud/server deployment as the primary operating mode.
+- Treating current model artifacts as validated trading evidence.
 
 ## Architecture Overview
 
-The current architecture is a local modular monolith:
+The current architecture is a production-deployed modular monolith:
 
 ```text
-Universe selection
-    -> provider instrument master
-    -> symbol/instrument mapping
-    -> batch OHLCV ingestion
-    -> data-quality audits
-    -> TimescaleDB + Parquet/CSV
-    -> daily technical features
-    -> forward-return targets
-    -> factor research outputs
-    -> signal/backtest/model layers later
-    -> Lens research agent layer in progress
+exchange calendars + accepted universe snapshots
+    -> durable yfinance work planner
+    -> PostgreSQL work queue
+    -> yfinance worker
+    -> validated TimescaleDB daily OHLCV
+    -> completed-session Opportunity targets
+    -> feature/target/research assets
+    -> artifact-backed factor/model views (temporary)
 ```
 
 Core components:
 
 - **Python package**: reusable data, storage, feature, target, factor research,
   chat, and modeling code under `src/trade_research/`.
-- **Typer CLI**: repeatable local batch commands exposed as `trade-research`.
+- **Typer CLI**: legacy/manual batch and administrative commands. Production
+  research mutation is being moved behind UI workflow requests and Dagster.
 - **TimescaleDB/PostgreSQL**: canonical structured market-data store.
 - **Parquet/CSV**: local analytical outputs and reproducible batch artifacts.
-- **Dagster**: asset job and stopped-by-default schedule for the Upstox daily
-  research pipeline. The local Python environment must include Dagster for this
-  runtime to be active.
+- **Dagster**: 15 stopped-by-default schedule definitions, asset jobs, a
+  production daemon, and an optional private webserver. Actual production
+  schedule/tick state must be verified from Dagster, not UI intent badges.
 - **FastAPI + React**: application shell for dashboard, Opportunities, Lens chat,
   research progress, and factor IC views. Some non-research endpoints and
   frontend calls intentionally fall back to mock data when live API/DB data is
@@ -104,8 +105,8 @@ Core components:
 - **Qdrant**: vector store helpers for document retrieval experiments. The
   storage/search wrapper exists; a full document-ingestion job or CLI is not
   implemented yet.
-- **Local runtime**: Docker Compose starts the full local stack: API, web,
-  Dagster, TimescaleDB/PostgreSQL, Redis, Qdrant, and CloudBeaver.
+- **Runtime**: Docker Compose supports both local development and an Ubuntu
+  production stack behind Cloudflare Access/Tunnel.
 
 Step 2 feature-layer design docs:
 
@@ -114,10 +115,10 @@ Step 2 feature-layer design docs:
   feature family.
 - [Feature Layer v1 Spec](docs/feature_layer_v1_spec.md): implementation
   contract for the first feature-layer development batches.
-- [Handoff Summary](docs/handoff_summary.md): concise current-state starter for
-  a fresh Codex chat.
-- [Daily Pipeline Handoff](docs/daily_pipeline_handoff.md): detailed daily
-  pipeline state, latest verified run ids, and retry/coverage details.
+- [Current Repository and Production State](docs/current_state.md): canonical
+  current-state starter for repository work.
+- [Phase 0 Production Audit](docs/phase0_production_audit.md): authenticated UI
+  evidence, pipeline findings, open host checks, and risk register.
 - [ML Dataset v1 Strategy](docs/ml_dataset_v1_strategy.md): frozen contract for
   the first leakage-aware next-day-return dataset, daily walk-forward
   evaluation, and reporting plan.
@@ -125,6 +126,11 @@ Step 2 feature-layer design docs:
   research console plan for pipeline progress and factor research review.
 - [Deployment Speed and Build Caching](docs/deployment_speed.md): implemented
   BuildKit cache design, production measurements, and the future GHCR path.
+- [Stabilization and Validation Plan](docs/stabilization_validation_workflow_implementation_plan.md):
+  phased path from current production state to durable UI-authored research
+  workflows.
+- [Research Platform Milestone Plan](docs/research_platform_milestone_execution_plan.md):
+  implementation phases, gates, and ClickHouse/object-storage target state.
 
 ## Folder Structure
 
@@ -186,8 +192,9 @@ Partially implemented:
   database data is unavailable.
 - Qdrant retrieval. Vector storage, embedding, and search helpers exist, but no
   end-to-end document ingestion command or scheduled job is present.
-- Local app polish. The repo is intentionally local-first; deployment packaging,
-  proxy config, and backup/restore scripts have been removed.
+- Production validation. Deployment packaging exists, but host-level deployed
+  commit/image/migration and Dagster tick evidence are not yet exposed in the
+  application.
 
 Stubbed or mock-backed:
 

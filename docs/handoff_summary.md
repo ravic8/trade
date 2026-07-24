@@ -1,6 +1,15 @@
+---
+document_status: superseded
+last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
+last_verified_date: 2026-07-24
+owner: trade-research-platform
+replaced_by: docs/current_state.md
+---
+
 # Handoff Summary
 
-Use this as the first context file for a new Codex chat.
+> Historical snapshot. Do not use this as current repository or production
+> truth. Start with `docs/current_state.md`.
 
 ## Current Direction
 

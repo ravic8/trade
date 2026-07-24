@@ -25,6 +25,9 @@ jobs:
       - name: Ruff
         run: python -m ruff check
 
+      - name: Current-state documentation
+        run: python scripts/check_current_state_docs.py
+
       - name: Pytest
         run: python -m pytest
 
