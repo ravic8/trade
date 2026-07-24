@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     app_env: str = "local"
     data_dir: Path = Path("data")
+    dagster_readonly_home: Path | None = None
 
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"

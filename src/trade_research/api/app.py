@@ -22,6 +22,8 @@ from trade_research.credentials import (
     provider_credential_status,
     resolve_provider_token,
 )
+from trade_research.dagster.schedule_policy import schedule_policy
+from trade_research.dagster.status import read_dagster_schedule_statuses
 from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
 from trade_research.data.on_demand import run_daily_ohlcv_request
 from trade_research.data.provider_capabilities import provider_capability
@@ -608,158 +610,47 @@ def provider_request_logs(
 @app.get("/api/data/schedules/status", response_model=list[PipelineScheduleStatusRow])
 def data_schedule_status() -> list[PipelineScheduleStatusRow]:
     current = get_settings()
-    any_daily_exchange = current.yfinance_daily_enabled and any(
-        (
-            current.yfinance_nse_enabled,
-            current.yfinance_full_tsx_enabled,
-            current.yfinance_full_us_enabled,
-        )
+    policies = schedule_policy(current)
+    actual = read_dagster_schedule_statuses(
+        current.dagster_readonly_home,
+        {row.schedule_name: row.job_name for row in policies},
     )
-    calendar_status = "running" if current.materialized_exchange_sessions_enabled else "stopped"
-    return [
-        PipelineScheduleStatusRow(
-            schedule_name="daily_research_schedule",
-            job_name="daily_research_pipeline_job",
-            cron_schedule="30 19 * * 1-5",
-            execution_timezone="Asia/Kolkata",
-            intended_status=(
-                "running"
-                if current.nse_daily_primary_source == "yfinance" and current.yfinance_nse_enabled
-                else "stopped"
-            ),
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="yfinance_daily_work_planner_schedule",
-            job_name="yfinance_daily_work_planner_job",
-            cron_schedule="0 6 * * *",
-            execution_timezone="UTC",
-            intended_status="running" if any_daily_exchange else "stopped",
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="yfinance_nse_completed_session_work_planner_schedule",
-            job_name="yfinance_nse_completed_session_work_planner_job",
-            cron_schedule="15 12 * * 1-5",
-            execution_timezone="UTC",
-            intended_status=(
-                "running"
-                if current.yfinance_daily_enabled and current.yfinance_nse_enabled
-                else "stopped"
-            ),
-            notes=(
-                "Plans NSE work after close plus the Yahoo provider grace period; "
-                "actual Dagster controls remain private."
-            ),
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="yfinance_daily_work_worker_schedule",
-            job_name="yfinance_daily_work_worker_job",
-            cron_schedule="*/5 * * * *",
-            execution_timezone="UTC",
-            intended_status="running" if any_daily_exchange else "stopped",
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="nse_completed_session_opportunity_targets_schedule",
-            job_name="nse_completed_session_opportunity_targets_job",
-            cron_schedule="15 13-18 * * 1-5",
-            execution_timezone="UTC",
-            intended_status=(
-                "running"
-                if current.yfinance_daily_enabled and current.yfinance_nse_enabled
-                else "stopped"
-            ),
-            notes=(
-                "Coverage-gated incremental target refresh; repeated checks become no-ops "
-                "after the completed session is current."
-            ),
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="nse_universe_refresh_schedule",
-            job_name="nse_universe_refresh_job",
-            cron_schedule="0 8 * * 1-5",
-            execution_timezone="Asia/Kolkata",
-            intended_status=(
-                "running"
-                if current.yfinance_daily_enabled and current.yfinance_nse_enabled
-                else "stopped"
-            ),
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="tsx_universe_refresh_schedule",
-            job_name="tsx_universe_refresh_job",
-            cron_schedule="0 8 * * 1-5",
-            execution_timezone="America/Toronto",
-            intended_status=(
-                "running"
-                if current.yfinance_daily_enabled and current.yfinance_full_tsx_enabled
-                else "stopped"
-            ),
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="us_universe_refresh_schedule",
-            job_name="us_universe_refresh_job",
-            cron_schedule="0 8 * * 1-5",
-            execution_timezone="America/New_York",
-            intended_status=(
-                "running"
-                if current.yfinance_daily_enabled and current.yfinance_full_us_enabled
-                else "stopped"
-            ),
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="nse_exchange_sessions_schedule",
-            job_name="nse_exchange_sessions_job",
-            cron_schedule="0 6 1 * *",
-            execution_timezone="Asia/Kolkata",
-            intended_status=calendar_status,
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="tsx_exchange_sessions_schedule",
-            job_name="tsx_exchange_sessions_job",
-            cron_schedule="0 6 1 * *",
-            execution_timezone="America/Toronto",
-            intended_status=calendar_status,
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="us_exchange_sessions_schedule",
-            job_name="us_exchange_sessions_job",
-            cron_schedule="0 6 1 * *",
-            execution_timezone="America/New_York",
-            intended_status=calendar_status,
-            notes="Configured intent only; actual Dagster controls remain private.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="north_america_daily_yfinance_schedule",
-            job_name="north_america_daily_yfinance_job",
-            cron_schedule="30 3 * * 2-6",
-            execution_timezone="Asia/Kolkata",
-            intended_status="stopped",
-            notes="Read-only status; cadence is controlled in private Dagster.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="fx_intraday_dukascopy_schedule",
-            job_name="fx_intraday_dukascopy_job",
-            cron_schedule="15 * * * 1-5",
-            execution_timezone="UTC",
-            intended_status="stopped",
-            notes="Keep stopped because Dukascopy datafeed times out.",
-        ),
-        PipelineScheduleStatusRow(
-            schedule_name="yfinance_fx_intraday_schedule",
-            job_name="yfinance_fx_intraday_job",
-            cron_schedule="20 * * * *",
-            execution_timezone="UTC",
-            intended_status="stopped",
-            notes="Keep stopped until intraday cadence is explicitly chosen.",
-        ),
-    ]
+    rows: list[PipelineScheduleStatusRow] = []
+    for policy in policies:
+        observed = actual.get(policy.schedule_name)
+        actual_status = observed.actual_status if observed else "unknown"
+        status_drift = (
+            actual_status != policy.desired_status
+            if actual_status != "unknown"
+            else None
+        )
+        if observed and observed.origin_drift:
+            status_drift = True
+        rows.append(
+            PipelineScheduleStatusRow(
+                schedule_name=policy.schedule_name,
+                job_name=policy.job_name,
+                cron_schedule=policy.cron_schedule,
+                execution_timezone=policy.execution_timezone,
+                desired_status=policy.desired_status,
+                intended_status=policy.desired_status,
+                actual_status=actual_status,
+                status_drift=status_drift,
+                origin_health=observed.origin_health if observed else "unknown",
+                origin_drift=observed.origin_drift if observed else None,
+                stored_origin_count=observed.stored_origin_count if observed else 0,
+                active_origin_count=observed.active_origin_count if observed else 0,
+                last_tick_status=observed.last_tick_status if observed else None,
+                last_tick_at=observed.last_tick_at if observed else None,
+                last_run_status=observed.last_run_status if observed else None,
+                last_run_at=observed.last_run_at if observed else None,
+                last_successful_run_at=(
+                    observed.last_successful_run_at if observed else None
+                ),
+                notes=policy.notes,
+            )
+        )
+    return rows
 
 
 @app.get("/api/data/bulk-fetch-preview", response_model=DataBulkFetchPreviewResponse)

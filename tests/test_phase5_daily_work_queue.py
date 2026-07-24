@@ -309,6 +309,7 @@ def test_worker_acknowledges_success_and_schedules_retryable_failure(monkeypatch
     assert result.metrics["stale_locks_recovered"] == 1
     assert result.metrics["succeeded"] == 1
     assert result.metrics["retry_wait"] == 1
+    assert result.status == "warn"
     assert result.metrics["ohlcv_rows_written"] == 42
     assert store.finished["items_processed"] == 2
     assert store.finished["run_metadata_patch"] == {

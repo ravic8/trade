@@ -1444,11 +1444,14 @@ def test_data_schedule_status_endpoint() -> None:
     schedules = {row["schedule_name"]: row for row in payload}
     assert schedules["fx_intraday_dukascopy_schedule"]["intended_status"] == "stopped"
     assert schedules["yfinance_fx_intraday_schedule"]["intended_status"] == "stopped"
-    assert "private" in schedules["daily_research_schedule"]["notes"]
+    assert schedules["daily_research_schedule"]["desired_status"] == "running"
+    assert schedules["daily_research_schedule"]["actual_status"] == "unknown"
     assert "yfinance_daily_work_planner_schedule" in schedules
     assert "yfinance_nse_completed_session_work_planner_schedule" in schedules
     assert "yfinance_daily_work_worker_schedule" in schedules
     assert "nse_completed_session_opportunity_targets_schedule" in schedules
+    assert "tsx_completed_session_opportunity_targets_schedule" in schedules
+    assert "us_completed_session_opportunity_targets_schedule" in schedules
     assert "nse_universe_refresh_schedule" in schedules
     assert "tsx_universe_refresh_schedule" in schedules
     assert "us_universe_refresh_schedule" in schedules
@@ -1481,6 +1484,8 @@ def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) ->
         "yfinance_nse_completed_session_work_planner_schedule",
         "yfinance_daily_work_worker_schedule",
         "nse_completed_session_opportunity_targets_schedule",
+        "tsx_completed_session_opportunity_targets_schedule",
+        "us_completed_session_opportunity_targets_schedule",
         "nse_universe_refresh_schedule",
         "tsx_universe_refresh_schedule",
         "us_universe_refresh_schedule",
@@ -1489,6 +1494,43 @@ def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) ->
         "us_exchange_sessions_schedule",
     ):
         assert schedules[schedule_name]["intended_status"] == "running"
+
+
+def test_data_schedule_status_exposes_actual_state_and_origin_drift(
+    monkeypatch,
+) -> None:
+    from trade_research.dagster.status import DagsterScheduleStatus
+
+    monkeypatch.setattr(
+        "trade_research.api.app.read_dagster_schedule_statuses",
+        lambda *_args, **_kwargs: {
+            "yfinance_daily_work_worker_schedule": DagsterScheduleStatus(
+                actual_status="running",
+                origin_health="stale",
+                origin_drift=True,
+                stored_origin_count=1,
+                active_origin_count=1,
+                last_tick_status="success",
+                last_tick_at=datetime(2026, 7, 24, 6, 5, tzinfo=UTC),
+                last_run_status="failure",
+                last_run_at=datetime(2026, 7, 24, 6, 5, tzinfo=UTC),
+                last_successful_run_at=datetime(2026, 7, 24, 6, 0, tzinfo=UTC),
+            )
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/data/schedules/status")
+
+    worker = next(
+        row
+        for row in response.json()
+        if row["schedule_name"] == "yfinance_daily_work_worker_schedule"
+    )
+    assert worker["actual_status"] == "running"
+    assert worker["status_drift"] is True
+    assert worker["origin_health"] == "stale"
+    assert worker["last_run_status"] == "failure"
 
 
 def test_data_pipeline_run_detail_endpoint(monkeypatch) -> None:

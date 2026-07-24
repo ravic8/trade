@@ -95,7 +95,7 @@ Core components:
   research mutation is being moved behind UI workflow requests and Dagster.
 - **TimescaleDB/PostgreSQL**: canonical structured market-data store.
 - **Parquet/CSV**: local analytical outputs and reproducible batch artifacts.
-- **Dagster**: 15 stopped-by-default schedule definitions, asset jobs, a
+- **Dagster**: 17 stopped-by-default schedule definitions, asset jobs, a
   production daemon, and an optional private webserver. Actual production
   schedule/tick state must be verified from Dagster, not UI intent badges.
 - **FastAPI + React**: application shell for dashboard, Opportunities, Lens chat,
@@ -118,7 +118,9 @@ Step 2 feature-layer design docs:
 - [Current Repository and Production State](docs/current_state.md): canonical
   current-state starter for repository work.
 - [Phase 0 Production Audit](docs/phase0_production_audit.md): authenticated UI
-  evidence, pipeline findings, open host checks, and risk register.
+  and direct host evidence, pipeline findings, and risk register.
+- [Phase 1 Schedule Reconciliation Runbook](docs/phase1_schedule_reconciliation_runbook.md):
+  recoverable stale-origin repair and desired-versus-actual verification.
 - [ML Dataset v1 Strategy](docs/ml_dataset_v1_strategy.md): frozen contract for
   the first leakage-aware next-day-return dataset, daily walk-forward
   evaluation, and reporting plan.

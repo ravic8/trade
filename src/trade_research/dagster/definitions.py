@@ -16,10 +16,12 @@ from trade_research.dagster.daily_assets import (
     nse_opportunity_targets_v1,
     nse_universe_snapshot,
     processed_dataset_validation,
+    tsx_completed_session_opportunity_targets,
     tsx_exchange_sessions,
     tsx_opportunity_targets_v1,
     tsx_universe_snapshot,
     upstox_daily_ohlcv,
+    us_completed_session_opportunity_targets,
     us_exchange_sessions,
     us_opportunity_targets_v1,
     us_universe_snapshot,
@@ -85,6 +87,16 @@ yfinance_nse_completed_session_work_planner_job = define_asset_job(
 nse_completed_session_opportunity_targets_job = define_asset_job(
     name="nse_completed_session_opportunity_targets_job",
     selection=[nse_completed_session_opportunity_targets],
+)
+
+tsx_completed_session_opportunity_targets_job = define_asset_job(
+    name="tsx_completed_session_opportunity_targets_job",
+    selection=[tsx_completed_session_opportunity_targets],
+)
+
+us_completed_session_opportunity_targets_job = define_asset_job(
+    name="us_completed_session_opportunity_targets_job",
+    selection=[us_completed_session_opportunity_targets],
 )
 
 yfinance_daily_work_worker_job = define_asset_job(
@@ -224,6 +236,28 @@ nse_completed_session_opportunity_targets_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+tsx_completed_session_opportunity_targets_schedule = ScheduleDefinition(
+    name="tsx_completed_session_opportunity_targets_schedule",
+    job=tsx_completed_session_opportunity_targets_job,
+    cron_schedule=[
+        "15 22-23 * * 1-5",
+        "15 0-3 * * 2-6",
+    ],
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+us_completed_session_opportunity_targets_schedule = ScheduleDefinition(
+    name="us_completed_session_opportunity_targets_schedule",
+    job=us_completed_session_opportunity_targets_job,
+    cron_schedule=[
+        "15 22-23 * * 1-5",
+        "15 0-3 * * 2-6",
+    ],
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 yfinance_daily_work_worker_schedule = ScheduleDefinition(
     name="yfinance_daily_work_worker_schedule",
     job=yfinance_daily_work_worker_job,
@@ -283,6 +317,8 @@ defs = Definitions(
         yfinance_canada_daily_ohlcv,
         nse_opportunity_targets_v1,
         nse_completed_session_opportunity_targets,
+        tsx_completed_session_opportunity_targets,
+        us_completed_session_opportunity_targets,
         tsx_opportunity_targets_v1,
         us_opportunity_targets_v1,
         dukascopy_fx_intraday_ohlcv,
@@ -311,6 +347,8 @@ defs = Definitions(
         yfinance_nse_completed_session_work_planner_job,
         yfinance_daily_work_worker_job,
         nse_completed_session_opportunity_targets_job,
+        tsx_completed_session_opportunity_targets_job,
+        us_completed_session_opportunity_targets_job,
         nse_exchange_sessions_job,
         tsx_exchange_sessions_job,
         us_exchange_sessions_job,
@@ -328,6 +366,8 @@ defs = Definitions(
         yfinance_nse_completed_session_work_planner_schedule,
         yfinance_daily_work_worker_schedule,
         nse_completed_session_opportunity_targets_schedule,
+        tsx_completed_session_opportunity_targets_schedule,
+        us_completed_session_opportunity_targets_schedule,
         nse_exchange_sessions_schedule,
         tsx_exchange_sessions_schedule,
         us_exchange_sessions_schedule,

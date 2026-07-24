@@ -223,6 +223,11 @@ def yfinance_nse_completed_session_work_plan(context) -> PipelineRunResult:
 def yfinance_daily_work_worker(context) -> PipelineRunResult:
     result = run_yfinance_daily_work_queue(trigger="dagster")
     context.add_output_metadata(_result_metadata(result))
+    if result.status != "pass":
+        raise RuntimeError(
+            "Yfinance durable worker completed with business or operational failures: "
+            "; ".join(result.warnings or [f"pipeline status={result.status}"])
+        )
     return result
 
 
@@ -327,6 +332,38 @@ def nse_opportunity_targets_v1(
 def nse_completed_session_opportunity_targets(context) -> PipelineRunResult:
     result = run_completed_session_opportunity_target_pipeline(
         exchange="NSE",
+        ohlcv_source="yfinance",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="opportunity_analytics",
+    compute_kind="python",
+    description=(
+        "Coverage-gated incremental TSX Opportunity refresh for the latest completed session."
+    ),
+)
+def tsx_completed_session_opportunity_targets(context) -> PipelineRunResult:
+    result = run_completed_session_opportunity_target_pipeline(
+        exchange="TSX",
+        ohlcv_source="yfinance",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="opportunity_analytics",
+    compute_kind="python",
+    description=(
+        "Coverage-gated incremental US Opportunity refresh for the latest completed session."
+    ),
+)
+def us_completed_session_opportunity_targets(context) -> PipelineRunResult:
+    result = run_completed_session_opportunity_target_pipeline(
+        exchange="US",
         ohlcv_source="yfinance",
     )
     context.add_output_metadata(_result_metadata(result))
@@ -477,7 +514,7 @@ def processed_dataset_validation(
     _assert_upstream_not_failed(daily_ohlcv)
     _assert_upstream_not_failed(daily_features)
     _assert_upstream_not_failed(daily_targets)
-    result = run_processed_dataset_validation_pipeline()
+    result = run_processed_dataset_validation_pipeline(coverage_run_id=context.run_id)
     context.add_output_metadata(_result_metadata(result))
     return result
 
