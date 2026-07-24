@@ -155,11 +155,15 @@ Detailed evidence is in `docs/phase0_production_audit.md`.
 
 - `web`;
 - `api`;
+- `filing-worker`;
 - `dagster-daemon`;
 - optional profile `dagster-webserver`;
 - `postgres`;
 - `redis`;
 - `qdrant`;
+- `minio` and one-shot `minio-init`;
+- `otel-collector`;
+- `prometheus`;
 - `cloudbeaver`.
 
 Important boundaries:
@@ -168,8 +172,10 @@ Important boundaries:
 - Cloudflare Tunnel/Access is the public identity boundary;
 - Dagster webserver is optional and intended for private admin access;
 - CloudBeaver has no directly published production port;
+- MinIO, OpenTelemetry, and Prometheus have no directly published production
+  ports;
 - PostgreSQL uses a loopback host port for SSH-tunneled administration;
-- API, Dagster daemon, and Dagster webserver share the API image;
+- API, filing worker, Dagster daemon, and Dagster webserver share the API image;
 - deployment applies Alembic migrations before starting the full stack.
 
 The GitHub deployment workflow joins Tailscale and uses SSH to synchronize and

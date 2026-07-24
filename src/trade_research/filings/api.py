@@ -95,6 +95,11 @@ def filing_health(
             if runtime.settings.database_url.startswith("sqlite")
             else "postgresql"
         ),
+        "artifact_backend": runtime.settings.filing_artifact_backend,
+        "workspace_header_required": (
+            runtime.settings.filing_require_workspace_header
+        ),
+        "index_enabled": runtime.settings.filing_index_enabled,
         "langfuse_enabled": runtime.settings.langfuse_enabled,
         "otel_enabled": runtime.settings.otel_enabled,
         "extractor_version": runtime.settings.filing_extractor_version,

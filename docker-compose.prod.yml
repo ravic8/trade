@@ -1,5 +1,42 @@
 name: trade-prod
 
+x-filing-environment: &filing-environment
+  FILING_ENABLED: ${PROD_FILING_ENABLED:-true}
+  FILING_DEFAULT_WORKSPACE_ID: ${PROD_FILING_DEFAULT_WORKSPACE_ID:-default}
+  FILING_MANIFEST_PATH: ${PROD_FILING_MANIFEST_PATH:-/app/data/filings/nse/INFY/manifest.json}
+  FILING_QUEUE_MODE: celery
+  FILING_QUEUE_NAME: ${PROD_FILING_QUEUE_NAME:-filing_intelligence}
+  FILING_ARTIFACT_BACKEND: s3
+  FILING_ARTIFACT_DIR: /app/data/filings/artifacts
+  FILING_S3_ENDPOINT_URL: http://minio:9000
+  FILING_S3_BUCKET: ${PROD_FILING_S3_BUCKET:-lens-filings}
+  FILING_S3_PREFIX: ${PROD_FILING_S3_PREFIX:-parsed}
+  FILING_S3_REGION: ${PROD_FILING_S3_REGION:-us-east-1}
+  FILING_S3_ACCESS_KEY_ID: ${PROD_FILING_S3_ACCESS_KEY_ID:?set PROD_FILING_S3_ACCESS_KEY_ID}
+  FILING_S3_SECRET_ACCESS_KEY: ${PROD_FILING_S3_SECRET_ACCESS_KEY:?set PROD_FILING_S3_SECRET_ACCESS_KEY}
+  FILING_WORKER_CONCURRENCY: ${PROD_FILING_WORKER_CONCURRENCY:-2}
+  FILING_WORKER_LEASE_SECONDS: ${PROD_FILING_WORKER_LEASE_SECONDS:-300}
+  FILING_WORKER_HEARTBEAT_SECONDS: ${PROD_FILING_WORKER_HEARTBEAT_SECONDS:-30}
+  FILING_CHECKPOINT_SCHEMA: ${PROD_FILING_CHECKPOINT_SCHEMA:-filing_checkpoints}
+  FILING_REQUIRE_WORKSPACE_HEADER: ${PROD_FILING_REQUIRE_WORKSPACE_HEADER:-true}
+  FILING_AUTO_APPROVE_XBRL: ${PROD_FILING_AUTO_APPROVE_XBRL:-true}
+  FILING_FORCE_HUMAN_REVIEW: ${PROD_FILING_FORCE_HUMAN_REVIEW:-false}
+  FILING_MIN_AUTO_APPROVE_CONFIDENCE: ${PROD_FILING_MIN_AUTO_APPROVE_CONFIDENCE:-0.98}
+  FILING_PARSE_MIN_QUALITY: ${PROD_FILING_PARSE_MIN_QUALITY:-0.60}
+  FILING_GOLDEN_DATASET_PATH: /app/evaluations/filings/infy_m1_golden.json
+  FILING_INDEX_ENABLED: ${PROD_FILING_INDEX_ENABLED:-false}
+  FILING_INDEX_VERSION: ${PROD_FILING_INDEX_VERSION:-filing-index-v1}
+  FILING_QDRANT_COLLECTION: ${PROD_FILING_QDRANT_COLLECTION:-filing_evidence_v1}
+  LANGFUSE_ENABLED: ${PROD_LANGFUSE_ENABLED:-false}
+  LANGFUSE_PUBLIC_KEY: ${PROD_LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${PROD_LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_BASE_URL: ${PROD_LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+  LANGFUSE_SAMPLE_RATE: ${PROD_LANGFUSE_SAMPLE_RATE:-1.0}
+  OTEL_ENABLED: ${PROD_OTEL_ENABLED:-true}
+  OTEL_SERVICE_NAME: ${PROD_OTEL_SERVICE_NAME:-trade-research}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  TELEMETRY_RELEASE: ${PROD_TELEMETRY_RELEASE:-production}
+
 services:
   web:
     image: ${PROD_WEB_IMAGE:-trade-research-web:local}
@@ -53,6 +90,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     environment:
+      <<: *filing-environment
       APP_ENV: production
       DATA_DIR: /app/data
       DAGSTER_READONLY_HOME: /app/dagster_readonly
@@ -165,12 +203,65 @@ services:
         condition: service_started
       qdrant:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 20s
       timeout: 5s
       retries: 5
       start_period: 20s
+    restart: unless-stopped
+
+  filing-worker:
+    image: ${PROD_API_IMAGE:-trade-research-api:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command:
+      [
+        "celery",
+        "-A",
+        "trade_research.filings.tasks:celery_app",
+        "worker",
+        "--loglevel=${PROD_FILING_WORKER_LOG_LEVEL:-INFO}",
+        "--queues=${PROD_FILING_QUEUE_NAME:-filing_intelligence}",
+        "--concurrency=${PROD_FILING_WORKER_CONCURRENCY:-2}",
+      ]
+    environment:
+      <<: *filing-environment
+      APP_ENV: production
+      DATA_DIR: /app/data
+      DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
+      REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${PROD_QDRANT_API_KEY:-}
+      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
+    volumes:
+      - ${PROD_TRADE_DATA_DIR:-./data}:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery -A trade_research.filings.tasks:celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5 | grep -q pong",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   dagster-daemon:
@@ -434,6 +525,100 @@ services:
     image: qdrant/qdrant:latest
     volumes:
       - ${PROD_QDRANT_DATA_DIR:-./data/qdrant}:/qdrant/storage
+    restart: unless-stopped
+
+  minio:
+    image: ${PROD_MINIO_IMAGE:-minio/minio:latest}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${PROD_MINIO_ROOT_USER:?set PROD_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${PROD_MINIO_ROOT_PASSWORD:?set PROD_MINIO_ROOT_PASSWORD}
+    volumes:
+      - ${PROD_MINIO_DATA_DIR:-/opt/trade/minio}:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  minio-init:
+    image: ${PROD_MINIO_CLIENT_IMAGE:-minio/mc:latest}
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${PROD_MINIO_ROOT_USER:?set PROD_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${PROD_MINIO_ROOT_PASSWORD:?set PROD_MINIO_ROOT_PASSWORD}
+      FILING_S3_BUCKET: ${PROD_FILING_S3_BUCKET:-lens-filings}
+      FILING_S3_ACCESS_KEY_ID: ${PROD_FILING_S3_ACCESS_KEY_ID:?set PROD_FILING_S3_ACCESS_KEY_ID}
+      FILING_S3_SECRET_ACCESS_KEY: ${PROD_FILING_S3_SECRET_ACCESS_KEY:?set PROD_FILING_S3_SECRET_ACCESS_KEY}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mc alias set lens http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "lens/$$FILING_S3_BUCKET"
+        mc version enable "lens/$$FILING_S3_BUCKET"
+        cat > /tmp/filing-artifacts-policy.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetBucketLocation",
+                "s3:GetBucketVersioning",
+                "s3:ListBucket"
+              ],
+              "Resource": ["arn:aws:s3:::$$FILING_S3_BUCKET"]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:GetObjectVersion",
+                "s3:PutObject"
+              ],
+              "Resource": ["arn:aws:s3:::$$FILING_S3_BUCKET/*"]
+            }
+          ]
+        }
+        EOF
+        mc admin policy create lens filing-artifacts /tmp/filing-artifacts-policy.json
+        if ! mc admin user info lens "$$FILING_S3_ACCESS_KEY_ID" >/dev/null 2>&1; then
+          mc admin user add lens "$$FILING_S3_ACCESS_KEY_ID" "$$FILING_S3_SECRET_ACCESS_KEY"
+        fi
+        mc admin policy attach lens filing-artifacts --user "$$FILING_S3_ACCESS_KEY_ID"
+    restart: "no"
+
+  otel-collector:
+    image: ${PROD_OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:latest}
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./ops/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    expose:
+      - "4317"
+      - "4318"
+      - "9464"
+    restart: unless-stopped
+
+  prometheus:
+    image: ${PROD_PROMETHEUS_IMAGE:-prom/prometheus:latest}
+    user: ${PROD_PROMETHEUS_UID:-1000}:${PROD_PROMETHEUS_GID:-1000}
+    command:
+      [
+        "--config.file=/etc/prometheus/prometheus.yaml",
+        "--storage.tsdb.path=/prometheus",
+        "--storage.tsdb.retention.time=${PROD_PROMETHEUS_RETENTION:-30d}",
+      ]
+    volumes:
+      - ./ops/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}:/prometheus
+    depends_on:
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
 
 networks:

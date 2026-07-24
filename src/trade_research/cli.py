@@ -32,6 +32,7 @@ from trade_research.filings.evaluation import (
     load_golden_dataset,
 )
 from trade_research.filings.models import ReviewDecision
+from trade_research.filings.production import verify_filing_production
 from trade_research.filings.registry import import_manifest
 from trade_research.filings.runtime import get_filing_runtime
 from trade_research.filings.store import FilingStore
@@ -407,6 +408,27 @@ def evaluate_filing_golden_command(
         runtime.store,
         workspace_id=workspace_id,
         dataset=dataset,
+    )
+    console.print_json(data=report.model_dump(mode="json"))
+    if not report.passed:
+        raise typer.Exit(code=1)
+
+
+@app.command("verify-filing-production")
+def verify_filing_production_command(
+    timeout_seconds: Annotated[
+        float,
+        typer.Option(
+            min=0.5,
+            max=30.0,
+            help="Per-service timeout for read-only production probes.",
+        ),
+    ] = 5.0,
+) -> None:
+    """Verify the deployed filing runtime without changing business data."""
+    report = verify_filing_production(
+        get_settings(),
+        timeout_seconds=timeout_seconds,
     )
     console.print_json(data=report.model_dump(mode="json"))
     if not report.passed:

@@ -48,6 +48,8 @@ exit 0
     env_file.write_text(
         "\n".join(
             [
+                "PROD_FILING_ENABLED=false",
+                "PROD_OTEL_ENABLED=false",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
                 f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
                 f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
@@ -147,6 +149,8 @@ exit 0
     env_file.write_text(
         "\n".join(
             [
+                "PROD_FILING_ENABLED=false",
+                "PROD_OTEL_ENABLED=false",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
                 f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
                 f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
@@ -220,6 +224,8 @@ exit 0
     env_file.write_text(
         "\n".join(
             [
+                "PROD_FILING_ENABLED=false",
+                "PROD_OTEL_ENABLED=false",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
                 f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
                 f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
@@ -306,11 +312,11 @@ def test_deploy_reports_build_migration_and_total_timings() -> None:
     assert "deployment completed in" in script
 
 
-def test_prod_compose_reuses_one_api_image_for_dagster_services() -> None:
+def test_prod_compose_reuses_one_api_image_for_python_services() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     compose = (repository_root / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
-    assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 3
+    assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 4
 
 
 def _call_index(calls: list[str], fragment: str) -> int:

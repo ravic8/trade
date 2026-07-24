@@ -122,6 +122,9 @@ Step 2 feature-layer design docs:
 - [Lens M1 Implementation](docs/lens_m1_implementation.md): delivered code,
   API and run contracts, local/deployed operation, verification evidence,
   release checklist, and known boundaries.
+- [Lens M1 Production Acceptance](docs/lens_m1_production_acceptance.md):
+  secure production runtime configuration, read-only readiness verification,
+  INFY canary, backup, recovery, and M1 exit gates.
 - [INFY M1 13-quarter golden dataset](evaluations/filings/infy_m1_golden.json):
   locked core values and exact XBRL concept/context assertions used by the
   executable extraction release gate.
