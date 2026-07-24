@@ -77,7 +77,10 @@ export const dailyOpportunities: DailyOpportunitiesResponse = {
   coverage_ratio: null,
   coverage_status: "unavailable",
   total: 0,
+  session_total: 0,
   summary: {},
+  percentile_filters: {},
+  distributions: {},
   rows: [],
 };
 

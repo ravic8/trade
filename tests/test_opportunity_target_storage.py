@@ -71,9 +71,13 @@ def test_opportunity_targets_are_idempotent_and_queryable(tmp_path) -> None:
     )
     assert page["session_date"] == date(2026, 1, 5)
     assert page["total"] == 2
+    assert page["session_total"] == 2
     assert len(page["rows"]) == 2
     assert page["summary"]["positive_sessions"] == 2
     assert page["summary"]["positive_session_ratio"] == 1.0
+    assert page["distributions"]["upside"]["count"] == 2
+    assert page["distributions"]["upside"]["percentiles"]["p50"] > 0
+    assert page["rows"][0]["percentiles"]["upside"] is not None
 
 
 def test_opportunity_page_supports_symbol_filter_and_explicit_date(tmp_path) -> None:
@@ -93,6 +97,39 @@ def test_opportunity_page_supports_symbol_filter_and_explicit_date(tmp_path) -> 
 
     assert page["total"] == 1
     assert page["rows"][0]["symbol"] == "AAA"
+
+    first_session = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        session_date=date(2026, 1, 2),
+    )
+    assert first_session["summary"]["average_gap"] is None
+
+
+def test_opportunity_page_combines_percentile_filters_before_pagination(tmp_path) -> None:
+    store = TimescaleStore(f"sqlite:///{tmp_path / 'opportunities.sqlite'}")
+    metadata.create_all(store.engine)
+    store.upsert_daily_opportunity_targets(_targets())
+
+    page = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        session_date=date(2026, 1, 5),
+        percentile_filters={
+            "upside": (75, 100),
+            "recovery": (50, 100),
+        },
+    )
+
+    assert page["session_total"] == 2
+    assert page["total"] == 1
+    assert page["rows"][0]["symbol"] == "AAA"
+    assert page["percentile_filters"] == {
+        "upside": {"minimum": 75, "maximum": 100},
+        "recovery": {"minimum": 50, "maximum": 100},
+    }
 
 
 def test_opportunity_page_defaults_to_latest_session_with_sufficient_coverage(tmp_path) -> None:

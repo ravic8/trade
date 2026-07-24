@@ -46,6 +46,37 @@ export type OpportunityTargetRow = {
   true_upside: number | null;
   true_downside: number | null;
   true_range: number | null;
+  percentiles: Partial<Record<OpportunityDistributionMetric, number | null>>;
+};
+
+export type OpportunityDistributionMetric =
+  | "session_return"
+  | "recovery"
+  | "upside"
+  | "downside"
+  | "giveback"
+  | "true_range";
+
+export type OpportunityPercentileRange = {
+  minimum?: number;
+  maximum?: number;
+};
+
+export type OpportunityDistributionBin = {
+  start: number;
+  end: number;
+  count: number;
+  percentile_min: number | null;
+  percentile_max: number | null;
+};
+
+export type OpportunityDistribution = {
+  metric: OpportunityDistributionMetric;
+  count: number;
+  minimum: number | null;
+  maximum: number | null;
+  percentiles: Partial<Record<"p10" | "p25" | "p50" | "p75" | "p90", number>>;
+  bins: OpportunityDistributionBin[];
 };
 
 export type OpportunityTargetSummary = {
@@ -70,7 +101,10 @@ export type DailyOpportunitiesResponse = {
   coverage_ratio: number | null;
   coverage_status: "complete" | "partial" | "unavailable";
   total: number;
+  session_total: number;
   summary: OpportunityTargetSummary;
+  percentile_filters: Partial<Record<OpportunityDistributionMetric, OpportunityPercentileRange>>;
+  distributions: Partial<Record<OpportunityDistributionMetric, OpportunityDistribution>>;
   rows: OpportunityTargetRow[];
 };
 
@@ -82,6 +116,9 @@ export type DailyOpportunitiesParams = {
   direction?: "asc" | "desc";
   limit?: number;
   offset?: number;
+  percentileFilters?: Partial<
+    Record<OpportunityDistributionMetric, OpportunityPercentileRange>
+  >;
 };
 
 export type Candle = {

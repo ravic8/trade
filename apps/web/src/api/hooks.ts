@@ -73,6 +73,7 @@ export function useDailyOpportunities(params: DailyOpportunitiesParams) {
   return useQuery({
     queryKey: ["daily-opportunities", params],
     queryFn: () => getDailyOpportunities(params),
+    placeholderData: (previousData) => previousData,
   });
 }
 

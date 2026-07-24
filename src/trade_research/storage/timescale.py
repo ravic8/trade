@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -5486,6 +5487,9 @@ class TimescaleStore:
         limit: int = 100,
         offset: int = 0,
         minimum_session_coverage: float = 0.95,
+        percentile_filters: Mapping[
+            str, tuple[float | None, float | None]
+        ] | None = None,
     ) -> dict[str, Any]:
         exchange_code = exchange.upper()
         source_name = source.lower()
@@ -5509,77 +5513,236 @@ class TimescaleStore:
                 "coverage_ratio": None,
                 "coverage_status": "unavailable",
                 "total": 0,
+                "session_total": 0,
                 "summary": {},
+                "distributions": {},
                 "rows": [],
             }
 
         allowed_sort_columns = {
-            "symbol": opportunity_targets_daily_table.c.symbol,
-            "session_return": opportunity_targets_daily_table.c.session_return,
-            "gap": opportunity_targets_daily_table.c.gap,
-            "true_return": opportunity_targets_daily_table.c.true_return,
-            "upside": opportunity_targets_daily_table.c.upside,
-            "downside": opportunity_targets_daily_table.c.downside,
-            "giveback": opportunity_targets_daily_table.c.giveback,
-            "recovery": opportunity_targets_daily_table.c.recovery,
-            "session_range": opportunity_targets_daily_table.c.session_range,
-            "true_upside": opportunity_targets_daily_table.c.true_upside,
-            "true_downside": opportunity_targets_daily_table.c.true_downside,
-            "true_range": opportunity_targets_daily_table.c.true_range,
-            "volume": opportunity_targets_daily_table.c.volume,
+            "symbol",
+            "session_return",
+            "gap",
+            "true_return",
+            "upside",
+            "downside",
+            "giveback",
+            "recovery",
+            "session_range",
+            "true_upside",
+            "true_downside",
+            "true_range",
+            "volume",
         }
         if sort_by not in allowed_sort_columns:
             raise ValueError(f"Unsupported opportunity sort column: {sort_by}")
         if direction.lower() not in {"asc", "desc"}:
             raise ValueError("direction must be asc or desc")
 
-        filters = [
+        distribution_metrics = (
+            "session_return",
+            "recovery",
+            "upside",
+            "downside",
+            "giveback",
+            "true_range",
+        )
+        normalized_percentile_filters: dict[
+            str, tuple[float | None, float | None]
+        ] = {}
+        for metric, bounds in (percentile_filters or {}).items():
+            if metric not in distribution_metrics:
+                raise ValueError(f"Unsupported opportunity percentile metric: {metric}")
+            lower, upper = bounds
+            if lower is not None and not 0 <= lower <= 100:
+                raise ValueError("percentile minimum must be between 0 and 100")
+            if upper is not None and not 0 <= upper <= 100:
+                raise ValueError("percentile maximum must be between 0 and 100")
+            if lower is not None and upper is not None and lower > upper:
+                raise ValueError("percentile minimum cannot exceed maximum")
+            if lower is not None or upper is not None:
+                normalized_percentile_filters[metric] = (lower, upper)
+
+        session_filters = [
             opportunity_targets_daily_table.c.target_version == target_version,
             opportunity_targets_daily_table.c.exchange == exchange_code,
             opportunity_targets_daily_table.c.source == source_name,
             opportunity_targets_daily_table.c.date == resolved_date,
         ]
-        if symbol:
-            filters.append(opportunity_targets_daily_table.c.symbol.ilike(f"%{symbol.strip()}%"))
-
-        sort_column = allowed_sort_columns[sort_by]
-        ordering = sort_column.asc().nulls_last()
-        if direction.lower() == "desc":
-            ordering = sort_column.desc().nulls_last()
-        row_query = (
-            opportunity_targets_daily_table.select()
-            .where(*filters)
-            .order_by(ordering, opportunity_targets_daily_table.c.symbol)
-            .limit(min(max(limit, 1), 500))
-            .offset(max(offset, 0))
-        )
-        summary_query = select(
-            func.count().label("row_count"),
-            func.avg(opportunity_targets_daily_table.c.session_return).label(
-                "average_return"
-            ),
-            func.avg(opportunity_targets_daily_table.c.gap).label("average_gap"),
-            func.avg(opportunity_targets_daily_table.c.upside).label("average_upside"),
-            func.avg(opportunity_targets_daily_table.c.downside).label("average_downside"),
-            func.avg(opportunity_targets_daily_table.c.true_range).label(
-                "average_true_range"
-            ),
-            func.sum(
-                case(
-                    (opportunity_targets_daily_table.c.session_return > 0, 1),
-                    else_=0,
-                )
-            ).label("positive_sessions"),
-        ).where(*filters)
         with self.engine.begin() as connection:
-            rows = [dict(row) for row in connection.execute(row_query).mappings()]
-            summary = dict(connection.execute(summary_query).mappings().one())
+            session_rows = [
+                dict(row)
+                for row in connection.execute(
+                    opportunity_targets_daily_table.select().where(*session_filters)
+                ).mappings()
+            ]
 
-        total = int(summary.pop("row_count") or 0)
-        summary["positive_sessions"] = int(summary.get("positive_sessions") or 0)
-        summary["positive_session_ratio"] = (
-            summary["positive_sessions"] / total if total else None
+        session_frame = pd.DataFrame(session_rows)
+        distributions: dict[str, dict[str, Any]] = {}
+        percentile_columns: dict[str, str] = {}
+        for metric in distribution_metrics:
+            percentile_column = f"{metric}_percentile"
+            percentile_columns[metric] = percentile_column
+            if session_frame.empty:
+                distributions[metric] = {
+                    "metric": metric,
+                    "count": 0,
+                    "minimum": None,
+                    "maximum": None,
+                    "percentiles": {},
+                    "bins": [],
+                }
+                continue
+
+            numeric = pd.to_numeric(session_frame[metric], errors="coerce")
+            session_frame[percentile_column] = numeric.rank(
+                method="average", pct=True
+            ) * 100
+            valid = numeric.dropna()
+            if valid.empty:
+                distributions[metric] = {
+                    "metric": metric,
+                    "count": 0,
+                    "minimum": None,
+                    "maximum": None,
+                    "percentiles": {},
+                    "bins": [],
+                }
+                continue
+
+            minimum = float(valid.min())
+            maximum = float(valid.max())
+            quantiles = valid.quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+            bin_count = min(24, max(8, int(math.sqrt(len(valid)))))
+            if math.isclose(minimum, maximum):
+                histogram_bins = [
+                    {
+                        "start": minimum,
+                        "end": maximum,
+                        "count": int(len(valid)),
+                        "percentile_min": 0.0,
+                        "percentile_max": 100.0,
+                    }
+                ]
+            else:
+                width = (maximum - minimum) / bin_count
+                buckets: list[list[int]] = [[] for _ in range(bin_count)]
+                for row_index, value in valid.items():
+                    bucket_index = min(
+                        int((float(value) - minimum) / width), bin_count - 1
+                    )
+                    buckets[bucket_index].append(int(row_index))
+                histogram_bins = []
+                for index, bucket_rows in enumerate(buckets):
+                    bucket_percentiles = session_frame.loc[
+                        bucket_rows, percentile_column
+                    ]
+                    histogram_bins.append(
+                        {
+                            "start": minimum + (index * width),
+                            "end": minimum + ((index + 1) * width),
+                            "count": len(bucket_rows),
+                            "percentile_min": (
+                                float(bucket_percentiles.min())
+                                if bucket_rows
+                                else None
+                            ),
+                            "percentile_max": (
+                                float(bucket_percentiles.max())
+                                if bucket_rows
+                                else None
+                            ),
+                        }
+                    )
+            distributions[metric] = {
+                "metric": metric,
+                "count": int(len(valid)),
+                "minimum": minimum,
+                "maximum": maximum,
+                "percentiles": {
+                    "p10": float(quantiles.loc[0.1]),
+                    "p25": float(quantiles.loc[0.25]),
+                    "p50": float(quantiles.loc[0.5]),
+                    "p75": float(quantiles.loc[0.75]),
+                    "p90": float(quantiles.loc[0.9]),
+                },
+                "bins": histogram_bins,
+            }
+
+        filtered_frame = session_frame
+        if symbol and not filtered_frame.empty:
+            filtered_frame = filtered_frame[
+                filtered_frame["symbol"]
+                .astype(str)
+                .str.contains(symbol.strip(), case=False, regex=False)
+            ]
+        for metric, (lower, upper) in normalized_percentile_filters.items():
+            percentile_column = percentile_columns[metric]
+            if lower is not None:
+                filtered_frame = filtered_frame[
+                    filtered_frame[percentile_column] >= lower
+                ]
+            if upper is not None:
+                filtered_frame = filtered_frame[
+                    filtered_frame[percentile_column] <= upper
+                ]
+
+        total = int(len(filtered_frame))
+        positive_sessions = (
+            int((filtered_frame["session_return"] > 0).sum()) if total else 0
         )
+
+        def filtered_mean(column: str) -> float | None:
+            if not total:
+                return None
+            value = filtered_frame[column].mean()
+            return None if pd.isna(value) else float(value)
+
+        summary = {
+            "average_return": filtered_mean("session_return"),
+            "average_gap": filtered_mean("gap"),
+            "average_upside": filtered_mean("upside"),
+            "average_downside": filtered_mean("downside"),
+            "average_true_range": filtered_mean("true_range"),
+            "positive_sessions": positive_sessions,
+        }
+        summary["positive_session_ratio"] = (
+            positive_sessions / total if total else None
+        )
+
+        if not filtered_frame.empty:
+            filtered_frame = filtered_frame.sort_values(
+                by=[sort_by, "symbol"] if sort_by != "symbol" else ["symbol"],
+                ascending=(
+                    [direction.lower() == "asc", True]
+                    if sort_by != "symbol"
+                    else [direction.lower() == "asc"]
+                ),
+                na_position="last",
+                kind="stable",
+            )
+        page_frame = filtered_frame.iloc[
+            max(offset, 0) : max(offset, 0) + min(max(limit, 1), 500)
+        ]
+        rows = []
+        for row in page_frame.to_dict(orient="records"):
+            row["percentiles"] = {
+                metric: (
+                    None
+                    if pd.isna(row.get(percentile_column))
+                    else float(row[percentile_column])
+                )
+                for metric, percentile_column in percentile_columns.items()
+            }
+            for percentile_column in percentile_columns.values():
+                row.pop(percentile_column, None)
+            rows.append(
+                {
+                    key: None if isinstance(value, float) and math.isnan(value) else value
+                    for key, value in row.items()
+                }
+            )
+
         session_instruments = coverage["counts_by_date"].get(resolved_date)
         if session_instruments is None:
             count_query = select(func.count()).where(
@@ -5610,7 +5773,13 @@ class TimescaleStore:
                 else "partial"
             ),
             "total": total,
+            "session_total": len(session_rows),
             "summary": summary,
+            "percentile_filters": {
+                metric: {"minimum": bounds[0], "maximum": bounds[1]}
+                for metric, bounds in normalized_percentile_filters.items()
+            },
+            "distributions": distributions,
             "rows": rows,
         }
 

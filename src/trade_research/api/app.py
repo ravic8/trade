@@ -1418,6 +1418,18 @@ def daily_opportunities(
     direction: Annotated[str, Query()] = "desc",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
+    session_return_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
+    session_return_percentile_max: Annotated[float | None, Query(ge=0, le=100)] = None,
+    recovery_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
+    recovery_percentile_max: Annotated[float | None, Query(ge=0, le=100)] = None,
+    upside_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
+    upside_percentile_max: Annotated[float | None, Query(ge=0, le=100)] = None,
+    downside_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
+    downside_percentile_max: Annotated[float | None, Query(ge=0, le=100)] = None,
+    giveback_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
+    giveback_percentile_max: Annotated[float | None, Query(ge=0, le=100)] = None,
+    true_range_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
+    true_range_percentile_max: Annotated[float | None, Query(ge=0, le=100)] = None,
 ) -> dict:
     """Return realized completed-session Opportunity variables.
 
@@ -1429,6 +1441,22 @@ def daily_opportunities(
     resolved_source = source.strip().lower() if source else "yfinance"
     if resolved_source not in {"upstox", "yfinance"}:
         raise HTTPException(status_code=400, detail="source must be upstox or yfinance")
+    requested_percentile_filters = {
+        "session_return": (
+            session_return_percentile_min,
+            session_return_percentile_max,
+        ),
+        "recovery": (recovery_percentile_min, recovery_percentile_max),
+        "upside": (upside_percentile_min, upside_percentile_max),
+        "downside": (downside_percentile_min, downside_percentile_max),
+        "giveback": (giveback_percentile_min, giveback_percentile_max),
+        "true_range": (true_range_percentile_min, true_range_percentile_max),
+    }
+    percentile_filters = {
+        metric: bounds
+        for metric, bounds in requested_percentile_filters.items()
+        if bounds[0] is not None or bounds[1] is not None
+    }
     try:
         return _store().opportunity_targets_page(
             target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
@@ -1441,6 +1469,7 @@ def daily_opportunities(
             limit=limit,
             offset=offset,
             minimum_session_coverage=get_settings().opportunity_minimum_session_coverage,
+            percentile_filters=percentile_filters,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

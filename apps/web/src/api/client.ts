@@ -123,6 +123,14 @@ export function getDailyOpportunities(
   if (params.direction) query.set("direction", params.direction);
   if (params.limit) query.set("limit", String(params.limit));
   if (params.offset) query.set("offset", String(params.offset));
+  for (const [metric, range] of Object.entries(params.percentileFilters ?? {})) {
+    if (range.minimum != null) {
+      query.set(`${metric}_percentile_min`, String(range.minimum));
+    }
+    if (range.maximum != null) {
+      query.set(`${metric}_percentile_max`, String(range.maximum));
+    }
+  }
   return strictFetchJson(`/api/opportunities/daily?${query.toString()}`);
 }
 
