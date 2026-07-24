@@ -62,6 +62,36 @@ tar_if_exists "${PROD_TRADE_ARTIFACTS_DIR:-/opt/trade/artifacts}" "artifacts.tgz
 tar_if_exists "${PROD_QDRANT_DATA_DIR:-/opt/trade/qdrant}" "qdrant.tgz"
 tar_if_exists "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}" "dagster_home.tgz"
 
+filing_worker_was_running=false
+minio_was_running=false
+if [[ -n "$("${compose[@]}" ps --status running -q filing-worker)" ]]; then
+  filing_worker_was_running=true
+  log "stopping filing worker before object-store backup"
+  "${compose[@]}" stop filing-worker
+fi
+if [[ -n "$("${compose[@]}" ps --status running -q minio)" ]]; then
+  minio_was_running=true
+  log "stopping MinIO for a consistent object-store backup"
+  "${compose[@]}" stop minio
+fi
+
+restart_filing_storage() {
+  if [[ "$minio_was_running" == true ]]; then
+    log "restarting MinIO after object-store backup"
+    "${compose[@]}" up -d --no-deps minio
+  fi
+  if [[ "$filing_worker_was_running" == true ]]; then
+    log "restarting filing worker after object-store backup"
+    "${compose[@]}" up -d filing-worker
+  fi
+}
+trap restart_filing_storage EXIT
+tar_if_exists "${PROD_MINIO_DATA_DIR:-/opt/trade/minio}" "minio.tgz"
+restart_filing_storage
+filing_worker_was_running=false
+minio_was_running=false
+trap - EXIT
+
 cloudbeaver_was_running=false
 if [[ -n "$("${compose[@]}" ps --status running -q cloudbeaver)" ]]; then
   cloudbeaver_was_running=true
@@ -82,9 +112,10 @@ cloudbeaver_was_running=false
 trap - EXIT
 
 cat > "$BACKUP_DIR/README.txt" <<'EOF'
-This backup contains the Postgres database dump, the CloudBeaver workspace,
-and selected persistent runtime directories. CloudBeaver is stopped briefly
-while its workspace is archived. Provider credentials are stored encrypted in Postgres.
+This backup contains the Postgres database dump, the versioned MinIO filing
+object store, the CloudBeaver workspace, and selected persistent runtime
+directories. MinIO, the filing worker, and CloudBeaver are stopped briefly
+while their state is archived. Provider credentials are stored encrypted in Postgres.
 Restore of those credentials requires the matching PROD_APP_SECRET_KEY from the
 server environment, which is intentionally not copied into this backup.
 EOF

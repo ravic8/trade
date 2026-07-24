@@ -34,6 +34,15 @@ mkdir_from_var() {
   fi
 }
 
+require_secure_value() {
+  local name="$1"
+  local value="$2"
+  if [[ -z "$value" || "$value" == replace-* || "$value" == "minioadmin" ]]; then
+    printf '[trade-deploy] %s must be set to a non-placeholder value\n' "$name" >&2
+    exit 1
+  fi
+}
+
 require_command git
 require_command docker
 require_command curl
@@ -47,6 +56,35 @@ source "$ENV_FILE"
 set +a
 
 require_file "$APP_DIR/docker-compose.prod.yml"
+
+if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
+  require_secure_value "PROD_MINIO_ROOT_USER" "${PROD_MINIO_ROOT_USER:-}"
+  require_secure_value "PROD_MINIO_ROOT_PASSWORD" "${PROD_MINIO_ROOT_PASSWORD:-}"
+  require_secure_value \
+    "PROD_FILING_S3_ACCESS_KEY_ID" \
+    "${PROD_FILING_S3_ACCESS_KEY_ID:-}"
+  require_secure_value \
+    "PROD_FILING_S3_SECRET_ACCESS_KEY" \
+    "${PROD_FILING_S3_SECRET_ACCESS_KEY:-}"
+  if [[ "${#PROD_MINIO_ROOT_PASSWORD}" -lt 16 \
+    || "${#PROD_FILING_S3_SECRET_ACCESS_KEY}" -lt 16 ]]; then
+    printf '[trade-deploy] MinIO root and application secrets must be at least 16 characters\n' >&2
+    exit 1
+  fi
+  if [[ "$PROD_MINIO_ROOT_USER" == "$PROD_FILING_S3_ACCESS_KEY_ID" ]]; then
+    printf '[trade-deploy] filing storage must not use the MinIO root identity\n' >&2
+    exit 1
+  fi
+  if [[ "${PROD_FILING_REQUIRE_WORKSPACE_HEADER:-true}" != "true" ]]; then
+    printf '[trade-deploy] production filing workspace enforcement must remain enabled\n' >&2
+    exit 1
+  fi
+fi
+
+if [[ "${PROD_LANGFUSE_ENABLED:-false}" == "true" ]]; then
+  require_secure_value "PROD_LANGFUSE_PUBLIC_KEY" "${PROD_LANGFUSE_PUBLIC_KEY:-}"
+  require_secure_value "PROD_LANGFUSE_SECRET_KEY" "${PROD_LANGFUSE_SECRET_KEY:-}"
+fi
 
 if [[ "${PROD_BIGQUERY_ENABLED:-false}" == "true" ]]; then
   bigquery_credential_file="${PROD_BIGQUERY_CREDENTIALS_FILE:-}"
@@ -69,6 +107,12 @@ mkdir_from_var "${PROD_TRADE_ARTIFACTS_DIR:-/opt/trade/artifacts}"
 mkdir_from_var "${PROD_POSTGRES_DATA_DIR:-/opt/trade/postgres}"
 mkdir_from_var "${PROD_REDIS_DATA_DIR:-/opt/trade/redis}"
 mkdir_from_var "${PROD_QDRANT_DATA_DIR:-/opt/trade/qdrant}"
+if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
+  mkdir_from_var "${PROD_MINIO_DATA_DIR:-/opt/trade/minio}"
+fi
+if [[ "${PROD_OTEL_ENABLED:-true}" == "true" ]]; then
+  mkdir_from_var "${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}"
+fi
 mkdir_from_var "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}"
 cloudbeaver_workspace="${PROD_CLOUDBEAVER_WORKSPACE_DIR:-/opt/trade/cloudbeaver}"
 cloudbeaver_connections_dir="$cloudbeaver_workspace/GlobalConfiguration/.dbeaver"
@@ -125,8 +169,9 @@ log "validating compose config"
 "${compose[@]}" config >/dev/null
 
 log "building production images"
-# API, Dagster daemon, and the optional Dagster webserver intentionally share
-# one image tag. Building api once refreshes all three services.
+# API, filing worker, Dagster daemon, and the optional Dagster webserver
+# intentionally share one image tag. Building api once refreshes every Python
+# service.
 build_started_seconds=$SECONDS
 "${compose[@]}" build api web
 log "production image build completed in $((SECONDS - build_started_seconds))s"
@@ -176,9 +221,13 @@ if [[ "$dagster_webserver_was_running" == true ]]; then
 fi
 
 health_url="${TRADE_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/api/health}"
+filing_health_url="${TRADE_FILING_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/api/filings/health}"
 cloudbeaver_health_url="${TRADE_CLOUDBEAVER_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/}"
 cloudbeaver_host="${PROD_CLOUDBEAVER_HOST:-sql.example.com}"
 log "checking health at $health_url"
+if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
+  log "checking filing runtime at $filing_health_url"
+fi
 log "checking CloudBeaver through Caddy at $cloudbeaver_health_url"
 if [[ "$dagster_webserver_was_running" == true ]]; then
   dagster_health_url="${TRADE_DAGSTER_HEALTH_URL:-http://127.0.0.1:${PROD_DAGSTER_WEB_PORT:-3000}}"
@@ -187,11 +236,27 @@ fi
 
 for attempt in {1..30}; do
   api_health_ok=false
+  filing_health_ok=true
   cloudbeaver_health_ok=false
   dagster_health_ok=true
 
   if curl -fsS "$health_url" >/dev/null; then
     api_health_ok=true
+  fi
+  if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
+    filing_health_ok=false
+    filing_health_payload="$(curl -fsS "$filing_health_url" || true)"
+    if [[ "$filing_health_payload" == *'"status":"ok"'* \
+      && "$filing_health_payload" == *'"queue_mode":"celery"'* \
+      && "$filing_health_payload" == *'"checkpoint_backend":"postgresql"'* \
+      && "$filing_health_payload" == *'"artifact_backend":"s3"'* \
+      && "$filing_health_payload" == *'"workspace_header_required":true'* \
+      && -n "$("${compose[@]}" ps --status running -q filing-worker)" \
+      && -n "$("${compose[@]}" ps --status running -q minio)" \
+      && -n "$("${compose[@]}" ps --status running -q otel-collector)" \
+      && -n "$("${compose[@]}" ps --status running -q prometheus)" ]]; then
+      filing_health_ok=true
+    fi
   fi
   if curl -fsS -H "Host: $cloudbeaver_host" "$cloudbeaver_health_url" >/dev/null; then
     cloudbeaver_health_ok=true
@@ -204,6 +269,7 @@ for attempt in {1..30}; do
   fi
 
   if [[ "$api_health_ok" == true \
+    && "$filing_health_ok" == true \
     && "$cloudbeaver_health_ok" == true \
     && "$dagster_health_ok" == true ]]; then
     log "health check passed"
@@ -217,7 +283,7 @@ done
 
 log "health check failed; recent service state follows"
 "${compose[@]}" ps >&2
-log_services=(api web cloudbeaver)
+log_services=(api web cloudbeaver filing-worker minio minio-init otel-collector prometheus)
 if [[ "$dagster_webserver_was_running" == true ]]; then
   log_services+=(dagster-webserver)
 fi

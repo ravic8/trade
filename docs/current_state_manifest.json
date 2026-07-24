@@ -40,11 +40,16 @@
     "web",
     "cloudbeaver",
     "api",
+    "filing-worker",
     "dagster-daemon",
     "dagster-webserver",
     "postgres",
     "redis",
-    "qdrant"
+    "qdrant",
+    "minio",
+    "minio-init",
+    "otel-collector",
+    "prometheus"
   ],
   "dagster_schedules": [
     "daily_research_schedule",

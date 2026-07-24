@@ -209,6 +209,13 @@ Set `OTEL_ENABLED=true` to export traces and metrics through the bundled
 collector. Qdrant indexing is off by default because it requires a valid
 embedding provider key; enable it with `FILING_INDEX_ENABLED=true`.
 
+The production stack uses the corresponding `PROD_FILING_*`,
+`PROD_LANGFUSE_*`, `PROD_OTEL_*`, and `PROD_MINIO_*` variables from
+`.env.prod.example`. Follow
+[`lens_m1_production_acceptance.md`](lens_m1_production_acceptance.md) for
+server configuration, the read-only readiness gate, corpus canary, locked
+evaluation, backup, and M1 sign-off.
+
 ## Operational behavior
 
 Run states are:
@@ -332,6 +339,7 @@ supersession links identified: 11
 Code-complete does not by itself authorize a production launch. Before
 external production traffic:
 
+- run `trade-research verify-filing-production` in the deployed API container;
 - run migrations against a production-like PostgreSQL backup;
 - validate PostgreSQL checkpoint recovery after worker termination;
 - enable strong workspace/actor authentication and rotate MinIO credentials;

@@ -115,9 +115,14 @@ caddy             public HTTP entrypoint behind Cloudflare Tunnel
 web               built React static files
 cloudbeaver       internal browser SQL client for curated analytics views
 api               FastAPI application
+filing-worker     Celery worker for durable filing-intelligence runs
 postgres          TimescaleDB/PostgreSQL
 redis             internal cache/queue dependency
 qdrant            internal vector store
+minio             private, versioned filing-artifact object store
+minio-init        one-shot bucket, policy, and application-user bootstrap
+otel-collector    private OpenTelemetry receiver and processor
+prometheus        private filing/runtime metrics store
 dagster-daemon    internal scheduled job runner
 dagster-webserver private admin UI, reachable only over Tailscale
 ```
@@ -384,8 +389,9 @@ waits for database readiness, and applies Alembic migrations from a one-off
 container using the newly built API image. Application containers are replaced
 only after migration succeeds. A migration failure leaves the prior application
 release running and fails the deployment. Finally, it checks
-`http://localhost:${PROD_WEB_PORT:-8080}/api/health` and the CloudBeaver
-hostname route through the same Caddy entrypoint.
+`http://localhost:${PROD_WEB_PORT:-8080}/api/health`, the durable filing
+runtime and its required services, and the CloudBeaver hostname route through
+the same Caddy entrypoint.
 
 The private Dagster webserver remains opt-in through the `admin` Compose
 profile. If it is already running when a deployment starts, the deploy script
@@ -394,10 +400,10 @@ HTTP endpoint. A stopped or never-started admin webserver remains stopped, so
 routine deployments do not enable the administrative UI.
 
 Production image builds use stable dependency layers and BuildKit package
-caches. FastAPI and both Dagster processes share one Python image, so the
-deployment builds it once. Build, migration, and total durations are recorded
-in the deployment log. See `docs/deployment_speed.md` for the implemented
-local-cache design and the proposed immutable GHCR second phase.
+caches. FastAPI, the filing worker, and both Dagster processes share one Python
+image, so the deployment builds it once. Build, migration, and total durations
+are recorded in the deployment log. See `docs/deployment_speed.md` for the
+implemented local-cache design and the proposed immutable GHCR second phase.
 
 ## Persistent Server Paths
 
@@ -409,7 +415,10 @@ Use stable server-owned paths outside the git checkout:
 /opt/trade/data
 /opt/trade/artifacts
 /opt/trade/postgres
+/opt/trade/redis
 /opt/trade/qdrant
+/opt/trade/minio
+/opt/trade/prometheus
 /opt/trade/dagster_home
 /opt/trade/cloudbeaver
 /opt/trade/backups
@@ -428,6 +437,7 @@ Back up:
 Timescale/Postgres dump
 data/
 artifacts/
+versioned MinIO filing object store
 dagster_home/
 CloudBeaver workspace
 encrypted provider credentials
