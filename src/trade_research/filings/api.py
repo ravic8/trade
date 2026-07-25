@@ -390,7 +390,10 @@ def recover_stale_filing_runs(
     runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[str]:
-    recovered = runtime.store.recover_stale_runs(limit=limit)
+    recovered = runtime.store.recover_stale_runs(
+        workspace_id=workspace_id,
+        limit=limit,
+    )
     for run_id in recovered:
         run = runtime.store.run(run_id, workspace_id)
         if run:

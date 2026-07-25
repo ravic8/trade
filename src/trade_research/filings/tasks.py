@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -68,6 +70,40 @@ def process_filing_run(
         "status": run.status.value,
         "current_node": run.current_node,
     }
+
+
+@celery_app.task(
+    bind=True,
+    name="filings.worker_recovery_probe",
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def worker_recovery_probe(
+    self,
+    probe_id: str,
+    *,
+    hold_seconds: int = 120,
+) -> dict[str, Any]:
+    from trade_research.filings.resilience import (
+        begin_worker_probe_attempt,
+        complete_worker_probe,
+        current_process_start_ticks,
+        timeout_worker_probe,
+    )
+
+    bounded_hold = min(max(int(hold_seconds), 30), 300)
+    status = begin_worker_probe_attempt(
+        settings,
+        probe_id=probe_id,
+        worker_pid=os.getpid(),
+        process_start_ticks=current_process_start_ticks(),
+        hostname=str(self.request.hostname),
+    )
+    if status["attempt_count"] == 1:
+        time.sleep(bounded_hold)
+        timeout_worker_probe(settings, probe_id=probe_id)
+        raise RuntimeError("worker termination was not observed during resilience probe")
+    return complete_worker_probe(settings, probe_id=probe_id)
 
 
 def dispatch_filing_run(

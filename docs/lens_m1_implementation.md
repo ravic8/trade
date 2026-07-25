@@ -229,8 +229,12 @@ accepted -> queued -> running
 
 Workers use late Celery acknowledgement, reject work on worker loss, prefetch
 one task, acquire a database lease, and send heartbeats. Expired running leases
-can be returned to the queue. Each run has a maximum attempt count and stable
-idempotency key.
+can be returned to the queue through a workspace-scoped atomic transition.
+Each run has a maximum attempt count and stable idempotency key. The production
+resilience drill terminates a bounded Celery execution child, verifies task
+redelivery to a replacement child, expires a controlled filing lease, and
+requires the recovered filing to complete without duplicate approved facts.
+It writes a machine-readable report under `/opt/trade/resilience-reports`.
 
 The telemetry contract records:
 

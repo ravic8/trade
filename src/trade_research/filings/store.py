@@ -430,31 +430,43 @@ class FilingStore:
                 .values(**values)
             )
 
-    def recover_stale_runs(self, *, limit: int = 100) -> list[str]:
+    def recover_stale_runs(
+        self,
+        *,
+        workspace_id: str | None = None,
+        limit: int = 100,
+    ) -> list[str]:
         now = utc_now()
+        conditions = [
+            filing_runs_table.c.status == FilingRunStatus.RUNNING.value,
+            filing_runs_table.c.lease_expires_at < now,
+            filing_runs_table.c.cancel_requested.is_(False),
+            filing_runs_table.c.attempt_count < filing_runs_table.c.max_attempts,
+        ]
+        if workspace_id is not None:
+            conditions.append(filing_runs_table.c.workspace_id == workspace_id)
         with self.engine.begin() as connection:
-            rows = connection.execute(
+            eligible = (
                 select(filing_runs_table.c.run_id)
-                .where(
-                    filing_runs_table.c.status == FilingRunStatus.RUNNING.value,
-                    filing_runs_table.c.lease_expires_at < now,
-                    filing_runs_table.c.cancel_requested.is_(False),
-                    filing_runs_table.c.attempt_count < filing_runs_table.c.max_attempts,
-                )
+                .where(*conditions)
+                .order_by(filing_runs_table.c.lease_expires_at)
                 .limit(limit)
-            ).scalars().all()
-            if rows:
-                connection.execute(
-                    update(filing_runs_table)
-                    .where(filing_runs_table.c.run_id.in_(rows))
-                    .values(
-                        status=FilingRunStatus.RETRYING.value,
-                        current_node="lease_expired",
-                        worker_id=None,
-                        lease_expires_at=None,
-                        updated_at=now,
-                    )
+            )
+            rows = connection.execute(
+                update(filing_runs_table)
+                .where(
+                    filing_runs_table.c.run_id.in_(eligible),
+                    *conditions,
                 )
+                .values(
+                    status=FilingRunStatus.RETRYING.value,
+                    current_node="lease_expired",
+                    worker_id=None,
+                    lease_expires_at=None,
+                    updated_at=now,
+                )
+                .returning(filing_runs_table.c.run_id)
+            ).scalars().all()
         return list(rows)
 
     def upsert_evidence(self, evidence: Iterable[EvidenceReference]) -> list[str]:
