@@ -87,7 +87,7 @@ def read_dagster_schedule_statuses(
                 for row in rows
                 if str(row["job_origin_id"]) in ticks
             ),
-            key=lambda item: item["timestamp"],
+            key=lambda item: _timestamp_sort_key(item["timestamp"]),
             default=None,
         )
         job_runs = run_statuses.get(job_name, {})
@@ -184,12 +184,16 @@ def _latest_ticks(connection: sqlite3.Connection) -> dict[str, sqlite3.Row]:
         """
         SELECT job_origin_id, status, timestamp
         FROM job_ticks
-        ORDER BY timestamp DESC
         """
     ).fetchall()
     latest: dict[str, sqlite3.Row] = {}
     for row in rows:
-        latest.setdefault(str(row["job_origin_id"]), row)
+        origin_id = str(row["job_origin_id"])
+        existing = latest.get(origin_id)
+        if existing is None or _timestamp_sort_key(
+            row["timestamp"]
+        ) > _timestamp_sort_key(existing["timestamp"]):
+            latest[origin_id] = row
     return latest
 
 
@@ -265,7 +269,21 @@ def _run_observed_at(row: sqlite3.Row) -> datetime | None:
     return None
 
 
-def _timestamp_to_datetime(value: Any) -> datetime:
+def _timestamp_to_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value.replace(tzinfo=value.tzinfo or UTC).astimezone(UTC)
-    return datetime.fromtimestamp(float(value), tz=UTC)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            pass
+        else:
+            return parsed.replace(tzinfo=parsed.tzinfo or UTC).astimezone(UTC)
+    try:
+        return datetime.fromtimestamp(float(value), tz=UTC)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _timestamp_sort_key(value: Any) -> datetime:
+    return _timestamp_to_datetime(value) or datetime.min.replace(tzinfo=UTC)
