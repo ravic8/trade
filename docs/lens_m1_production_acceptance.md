@@ -159,7 +159,11 @@ deploy/restore-drill.sh /opt/trade/backups/<timestamp>
 
 The drill does not invoke the production Compose project or publish host ports.
 It verifies the backup checksums, safely extracts every archive under a unique
-restore directory, and re-hashes every source document in the INFY manifest.
+restore directory, and re-hashes every successfully acquired source document
+in the INFY manifest. Entries explicitly marked failed, or carrying an
+acquisition error, are counted and skipped using the same semantics as the
+production manifest importer; the current pack must verify 123 documents and
+account for one failed download.
 It then:
 
 1. restores `postgres.dump` into a fresh TimescaleDB container using

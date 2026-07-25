@@ -30,12 +30,23 @@ def _create_backup(tmp_path: Path) -> Path:
     document = documents_dir / "filing.xml"
     document.write_text("<xbrl>restored</xbrl>", encoding="utf-8")
     manifest = {
+        "candidate_count": 2,
+        "document_count": 1,
+        "failed_download_count": 1,
         "documents": [
             {
                 "relative_path": "documents/filing.xml",
                 "bytes": document.stat().st_size,
                 "sha256": sha256(document.read_bytes()).hexdigest(),
-            }
+                "acquisition_status": "downloaded",
+                "error": None,
+            },
+            {
+                "relative_path": "documents/missing.pdf",
+                "sha256": None,
+                "acquisition_status": "failed",
+                "error": "curl exit code 22",
+            },
         ]
     }
     (manifest_dir / "manifest.json").write_text(
@@ -194,6 +205,7 @@ def test_restore_drill_is_isolated_and_emits_passing_report(tmp_path: Path) -> N
     assert report["source_manifest"] == {
         "document_count": 1,
         "verified_document_count": 1,
+        "failed_skipped_count": 1,
     }
     assert report["postgresql"]["migration_revision"] == "20260724_0010"
     assert report["postgresql"]["timescaledb_version"] == "2.17.2"
@@ -344,3 +356,4 @@ def test_restore_drill_is_documented_and_has_configured_isolated_paths() -> None
     assert "deploy/restore-drill.sh /opt/trade/backups/<timestamp>" in acceptance
     assert "timescaledb_pre_restore()" in acceptance
     assert "TRADE_RESTORE_KEEP=true" in acceptance
+    assert "account for one failed download" in acceptance
