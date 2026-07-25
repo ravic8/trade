@@ -82,6 +82,12 @@ def build_schedule_reconciliation_plan(
                 )
             )
 
+        stale_states = [
+            state
+            for state in stored_states
+            if state.instigator_name == schedule_name
+            and state.instigator_origin_id != current_origin_id
+        ]
         actions.extend(
             ScheduleReconciliationAction(
                 action="stop_stale",
@@ -89,10 +95,17 @@ def build_schedule_reconciliation_plan(
                 origin_id=state.instigator_origin_id,
                 selector_id=state.selector_id,
             )
-            for state in stored_states
-            if state.instigator_name == schedule_name
-            and state.instigator_origin_id != current_origin_id
-            and state.is_running
+            for state in stale_states
+            if state.is_running
+        )
+        actions.extend(
+            ScheduleReconciliationAction(
+                action="delete_stale",
+                schedule_name=schedule_name,
+                origin_id=state.instigator_origin_id,
+                selector_id=state.selector_id,
+            )
+            for state in stale_states
         )
 
     managed_names = set(remote_schedules)
@@ -105,7 +118,12 @@ def build_schedule_reconciliation_plan(
     )
     actions.sort(
         key=lambda action: (
-            {"start_current": 0, "stop_current": 1, "stop_stale": 2}[action.action],
+            {
+                "stop_stale": 0,
+                "delete_stale": 1,
+                "start_current": 2,
+                "stop_current": 3,
+            }[action.action],
             action.schedule_name,
             action.origin_id,
         )
@@ -143,6 +161,11 @@ def apply_schedule_reconciliation_plan(
                 action.origin_id,
                 action.selector_id,
                 None,
+            )
+        elif action.action == "delete_stale":
+            instance.delete_instigator_state(
+                action.origin_id,
+                action.selector_id,
             )
         else:
             raise ValueError(f"Unsupported schedule reconciliation action: {action.action}")

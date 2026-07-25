@@ -38,12 +38,15 @@ class _Instance:
         self.states = states
         self.started: list[str] = []
         self.stopped: list[tuple[str, str, str | None]] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.events: list[tuple[str, str]] = []
 
     def all_instigator_state(self, **_kwargs):
         return self.states
 
     def start_schedule(self, schedule: _Schedule) -> None:
         self.started.append(schedule.name)
+        self.events.append(("start", schedule.name))
 
     def stop_schedule(self, origin_id, selector_id, schedule) -> None:
         self.stopped.append(
@@ -53,6 +56,11 @@ class _Instance:
                 schedule.name if schedule is not None else None,
             )
         )
+        self.events.append(("stop", origin_id))
+
+    def delete_instigator_state(self, origin_id: str, selector_id: str) -> None:
+        self.deleted.append((origin_id, selector_id))
+        self.events.append(("delete", origin_id))
 
 
 def _state(
@@ -70,7 +78,7 @@ def _state(
     )
 
 
-def test_reconciliation_starts_current_before_stopping_stale_origin(
+def test_reconciliation_migrates_stale_origin_before_starting_current(
     tmp_path: Path,
 ) -> None:
     worker = _Schedule(
@@ -98,8 +106,9 @@ def test_reconciliation_starts_current_before_stopping_stale_origin(
     plan = build_schedule_reconciliation_plan(instance, repository, settings)
 
     assert [action.action for action in plan.actions] == [
-        "start_current",
         "stop_stale",
+        "delete_stale",
+        "start_current",
     ]
     marker = tmp_path / "schedule_current_origin.json"
     apply_schedule_reconciliation_plan(
@@ -112,9 +121,135 @@ def test_reconciliation_starts_current_before_stopping_stale_origin(
     assert instance.stopped == [
         ("stale-worker-origin", "stale-worker-selector", None)
     ]
+    assert instance.deleted == [
+        ("stale-worker-origin", "stale-worker-selector")
+    ]
+    assert instance.events == [
+        ("stop", "stale-worker-origin"),
+        ("delete", "stale-worker-origin"),
+        ("start", worker.name),
+    ]
     payload = json.loads(marker.read_text(encoding="utf-8"))
     assert payload["repository_origin_id"] == "current-repository-origin"
     assert payload["schedules"][worker.name]["origin_id"] == "current-worker-origin"
+
+
+def test_reconciliation_deletes_stopped_stale_origin_before_starting_current(
+    tmp_path: Path,
+) -> None:
+    worker = _Schedule(
+        "yfinance_daily_work_worker_schedule",
+        "current-worker-origin",
+        "current-worker-selector",
+    )
+    repository = _Repository([worker])
+    instance = _Instance(
+        [
+            _state(
+                worker.name,
+                "stale-worker-origin",
+                "stale-worker-selector",
+                running=False,
+            )
+        ]
+    )
+    settings = Settings(
+        _env_file=None,
+        yfinance_daily_enabled=True,
+        yfinance_full_us_enabled=True,
+    )
+
+    plan = build_schedule_reconciliation_plan(instance, repository, settings)
+
+    assert [action.action for action in plan.actions] == [
+        "delete_stale",
+        "start_current",
+    ]
+    apply_schedule_reconciliation_plan(
+        instance,
+        repository,
+        plan,
+        marker_path=tmp_path / "schedule_current_origin.json",
+    )
+    assert instance.stopped == []
+    assert instance.deleted == [
+        ("stale-worker-origin", "stale-worker-selector")
+    ]
+    assert instance.events == [
+        ("delete", "stale-worker-origin"),
+        ("start", worker.name),
+    ]
+
+
+def test_reconciliation_removes_stale_origin_for_desired_stopped_schedule(
+    tmp_path: Path,
+) -> None:
+    legacy = _Schedule(
+        "yfinance_daily_na_schedule",
+        "current-legacy-origin",
+        "current-legacy-selector",
+    )
+    repository = _Repository([legacy])
+    instance = _Instance(
+        [
+            _state(
+                legacy.name,
+                "stale-legacy-origin",
+                "stale-legacy-selector",
+                running=True,
+            )
+        ]
+    )
+
+    plan = build_schedule_reconciliation_plan(
+        instance,
+        repository,
+        Settings(_env_file=None),
+    )
+
+    assert [action.action for action in plan.actions] == [
+        "stop_stale",
+        "delete_stale",
+    ]
+    apply_schedule_reconciliation_plan(
+        instance,
+        repository,
+        plan,
+        marker_path=tmp_path / "schedule_current_origin.json",
+    )
+    assert instance.started == []
+    assert instance.events == [
+        ("stop", "stale-legacy-origin"),
+        ("delete", "stale-legacy-origin"),
+    ]
+
+
+def test_reconciliation_is_idempotent_for_current_running_state() -> None:
+    worker = _Schedule(
+        "yfinance_daily_work_worker_schedule",
+        "current-worker-origin",
+        "current-worker-selector",
+    )
+    repository = _Repository([worker])
+    instance = _Instance(
+        [
+            _state(
+                worker.name,
+                worker.get_remote_origin_id(),
+                worker.selector_id,
+                running=True,
+            )
+        ]
+    )
+    settings = Settings(
+        _env_file=None,
+        yfinance_daily_enabled=True,
+        yfinance_full_us_enabled=True,
+    )
+
+    plan = build_schedule_reconciliation_plan(instance, repository, settings)
+
+    assert plan.actions == ()
 
 
 def test_reconciliation_does_not_delete_unmanaged_active_schedules() -> None:
