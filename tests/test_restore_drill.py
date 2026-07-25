@@ -104,6 +104,9 @@ fi
 if [[ "$call" == *"network rm"* && "${FAKE_NETWORK_RM_FAIL:-false}" == "true" ]]; then
   exit 7
 fi
+if [[ "$call" == *"--network none --user 0:0"* && "${FAKE_CLEANUP_FAIL:-false}" == "true" ]]; then
+  exit 8
+fi
 if [[ "$call" == *"SELECT extversion FROM pg_extension"* ]]; then
   printf '%s\n' '2.17.2'
 elif [[ "$call" == *"SELECT version_num FROM alembic_version"* ]]; then
@@ -227,6 +230,9 @@ def test_restore_drill_is_isolated_and_emits_passing_report(tmp_path: Path) -> N
     assert "timescaledb_post_restore()" in docker_calls
     assert "network rm trade-restore-" in docker_calls
     assert docker_calls.count("rm -f trade-restore-") == 3
+    assert "--network none --user 0:0" in docker_calls
+    assert "--entrypoint python" in docker_calls
+    assert ":/restore-work" in docker_calls
 
 
 def test_checksum_failure_never_starts_restore_containers(tmp_path: Path) -> None:
@@ -341,6 +347,34 @@ def test_cleanup_failure_changes_passing_drill_to_failure(tmp_path: Path) -> Non
     assert report["stage"] == "cleanup"
     assert report["isolation"]["work_dir_retained"] is True
     assert Path(report["isolation"]["work_dir"]).is_dir()
+
+
+def test_privileged_restore_data_cleanup_failure_is_reported(tmp_path: Path) -> None:
+    backup_dir = _create_backup(tmp_path)
+    fake_bin, docker_log = _create_fake_tools(tmp_path)
+    environment, _restore_root, report_root = _environment(
+        tmp_path,
+        fake_bin,
+        docker_log,
+    )
+    environment["FAKE_CLEANUP_FAIL"] = "true"
+
+    completed = subprocess.run(
+        ["bash", str(RESTORE_SCRIPT), str(backup_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 1
+    report_path = next(report_root.glob("*.json"))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "failed"
+    assert report["stage"] == "cleanup"
+    assert report["isolation"]["work_dir_retained"] is True
+    assert Path(report["isolation"]["work_dir"]).is_dir()
+    assert "failed to remove restore data" in completed.stderr
 
 
 def test_restore_drill_is_documented_and_has_configured_isolated_paths() -> None:
