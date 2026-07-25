@@ -931,7 +931,39 @@ class FilingStore:
                         value = date.fromisoformat(value)
                     row[key] = value
                 Decimal(str(row["value_decimal"]))
-                fact_id = stable_id("approved-fact", candidate["candidate_id"])
+                existing_fact_id = connection.execute(
+                    select(filing_approved_facts_table.c.fact_id).where(
+                        filing_approved_facts_table.c.workspace_id
+                        == row["workspace_id"],
+                        filing_approved_facts_table.c.company_id
+                        == row["company_id"],
+                        filing_approved_facts_table.c.canonical_metric
+                        == row["canonical_metric"],
+                        filing_approved_facts_table.c.period_end == row["period_end"],
+                        filing_approved_facts_table.c.period_type == row["period_type"],
+                        filing_approved_facts_table.c.consolidation_scope
+                        == row["consolidation_scope"],
+                        filing_approved_facts_table.c.source_filing_id
+                        == row["source_filing_id"],
+                        filing_approved_facts_table.c.source_filing_version
+                        == row["source_filing_version"],
+                    )
+                ).scalar_one_or_none()
+                fact_id = (
+                    str(existing_fact_id)
+                    if existing_fact_id is not None
+                    else stable_id(
+                        "approved-fact",
+                        row["workspace_id"],
+                        row["company_id"],
+                        row["canonical_metric"],
+                        row["period_end"],
+                        row["period_type"],
+                        row["consolidation_scope"],
+                        row["source_filing_id"],
+                        row["source_filing_version"],
+                    )
+                )
                 connection.execute(
                     update(filing_approved_facts_table)
                     .where(
@@ -987,13 +1019,19 @@ class FilingStore:
                     approved,
                     index_elements=["fact_id"],
                     update_columns=[
+                        "candidate_id",
+                        "run_id",
+                        "reported_label",
                         "value_decimal",
                         "currency",
                         "unit_scale",
+                        "period_start",
                         "evidence_ids",
                         "confidence",
                         "validation_status",
                         "review_status",
+                        "extractor_version",
+                        "prompt_version",
                         "approved_at",
                         "approved_by",
                         "is_current",

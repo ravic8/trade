@@ -2,23 +2,31 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 
 from trade_research.api.app import app
 from trade_research.config import Settings, get_settings
 from trade_research.filings.api import filing_runtime_dependency
-from trade_research.filings.extractors import _normalize_legacy_nse_duration
+from trade_research.filings.extractors import (
+    _normalize_legacy_nse_duration,
+    extract_pdf_intelligence,
+)
 from trade_research.filings.models import (
     FilingRunStatus,
+    ParsedDocument,
+    ParsedPage,
     ReviewDecision,
     ReviewStatus,
 )
 from trade_research.filings.registry import import_manifest
 from trade_research.filings.runtime import FilingRuntime
-from trade_research.filings.store import FilingStore
+from trade_research.filings.store import FilingStore, stable_id
+from trade_research.filings.tables import filing_approved_facts_table
 
 
 def _xbrl(revenue: str = "1000", *, include_eps: bool = False) -> bytes:
@@ -257,13 +265,82 @@ def test_xbrl_workflow_auto_approves_with_exact_evidence_and_replays_safely(
         evidence_ids=[facts[0].evidence_ids[0]],
     ) == []
 
-    replayed = runtime.run_once(run.run_id, worker_id="test-worker-replay")
+    first_candidates = runtime.store.candidate_facts(run.run_id)
+    assert len(first_candidates) == 1
+
+    # Production may contain approved facts created with the legacy,
+    # candidate-derived primary key. A new run must reuse that fact identity.
+    legacy_fact_id = stable_id("approved-fact", "legacy-production-candidate")
+    with runtime.store.begin() as connection:
+        connection.execute(
+            update(filing_approved_facts_table)
+            .where(filing_approved_facts_table.c.fact_id == facts[0].fact_id)
+            .values(fact_id=legacy_fact_id)
+        )
+
+    replay_run, replay_created = runtime.store.create_run(
+        workspace_id="alpha",
+        company_id="NSE:INFY",
+        filing_id=filing_id,
+        idempotency_key="fy25-results-replay",
+        max_attempts=3,
+    )
+    assert replay_created is True
+    runtime.store.mark_run_queued(replay_run.run_id)
+    replayed = runtime.run_once(replay_run.run_id, worker_id="test-worker-replay")
     replayed_facts = runtime.store.approved_facts(
         workspace_id="alpha",
         company_id="NSE:INFY",
     )
+    replayed_candidates = runtime.store.candidate_facts(replay_run.run_id)
+
     assert replayed.status == FilingRunStatus.COMPLETED
-    assert [fact.fact_id for fact in replayed_facts] == [facts[0].fact_id]
+    assert replayed.output_payload["validation"]["candidate_count"] == 1
+    assert len(replayed_candidates) == 1
+    assert replayed_candidates[0]["candidate_id"] != first_candidates[0]["candidate_id"]
+    assert [fact.fact_id for fact in replayed_facts] == [legacy_fact_id]
+    assert replayed_facts[0].run_id == replay_run.run_id
+
+
+def test_pdf_intelligence_object_identity_is_scoped_to_run() -> None:
+    text = "Revenue growth guidance is 4% to 7% for the next fiscal year."
+    parsed = ParsedDocument(
+        filing_id="filing-1",
+        content_type="application/pdf",
+        parser_name="test",
+        parser_version="1",
+        parse_quality=1,
+        artifact_uri="memory://filing-1",
+        pages=[ParsedPage(page=1, text=text, character_count=len(text))],
+    )
+    common = {
+        "parsed": parsed,
+        "workspace_id": "alpha",
+        "company_id": "NSE:INFY",
+        "filing_id": "filing-1",
+        "filing_version": 1,
+        "source_hash": "a" * 64,
+        "period_end": date(2025, 3, 31),
+        "section": "operational_guidance",
+        "claim_limit": 10,
+    }
+
+    first_evidence, first_objects = extract_pdf_intelligence(
+        run_id="run-1",
+        **common,
+    )
+    replay_evidence, replay_objects = extract_pdf_intelligence(
+        run_id="run-2",
+        **common,
+    )
+
+    assert [item.evidence_id for item in replay_evidence] == [
+        item.evidence_id for item in first_evidence
+    ]
+    assert len(first_objects) == len(replay_objects) == 1
+    assert first_objects[0].object_id != replay_objects[0].object_id
+    assert first_objects[0].run_id == "run-1"
+    assert replay_objects[0].run_id == "run-2"
 
 
 def test_langgraph_human_review_interrupt_and_resume(tmp_path: Path) -> None:
