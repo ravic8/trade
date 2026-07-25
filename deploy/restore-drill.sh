@@ -625,7 +625,14 @@ minio_listing="$(
       set -eu
       mc alias set restore http://$MINIO_CONTAINER:9000 \
         \"\$RESTORE_ACCESS_KEY\" \"\$RESTORE_SECRET_KEY\" >/dev/null
-      mc version info \"restore/\$RESTORE_BUCKET\" | grep -qi enabled
+      version_info=\"\$(mc version info \"restore/\$RESTORE_BUCKET\")\"
+      case \"\$version_info\" in
+        *enabled*|*Enabled*|*ENABLED*) ;;
+        *)
+          printf '%s\n' 'restored MinIO bucket versioning is not enabled' >&2
+          exit 1
+          ;;
+      esac
       mc find \"restore/\$RESTORE_BUCKET/\$RESTORE_PREFIX\" \
         --name parsed_document.json --print
     "

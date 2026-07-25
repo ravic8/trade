@@ -346,6 +346,7 @@ def test_cleanup_failure_changes_passing_drill_to_failure(tmp_path: Path) -> Non
 
 
 def test_restore_drill_is_documented_and_has_configured_isolated_paths() -> None:
+    script = RESTORE_SCRIPT.read_text(encoding="utf-8")
     example = (REPOSITORY_ROOT / ".env.prod.example").read_text(encoding="utf-8")
     acceptance = (
         REPOSITORY_ROOT / "docs" / "lens_m1_production_acceptance.md"
@@ -357,3 +358,5 @@ def test_restore_drill_is_documented_and_has_configured_isolated_paths() -> None
     assert "timescaledb_pre_restore()" in acceptance
     assert "TRADE_RESTORE_KEEP=true" in acceptance
     assert "account for one failed download" in acceptance
+    assert "version_info=" in script
+    assert "| grep" not in script
