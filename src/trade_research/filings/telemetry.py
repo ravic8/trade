@@ -19,6 +19,7 @@ _configured = False
 _instrumented_apps: set[int] = set()
 _instrumented_engines: set[int] = set()
 _instrumented_celery: set[int] = set()
+_MASK_ARGUMENT_UNSET = object()
 
 
 def configure_telemetry(
@@ -214,7 +215,18 @@ def flush_configured_langfuse(settings: Settings) -> None:
             logger.exception("unable to flush Langfuse events")
 
 
-def sanitize_telemetry(value: Any) -> Any:
+def sanitize_telemetry(
+    value: Any = _MASK_ARGUMENT_UNSET,
+    *,
+    data: Any = _MASK_ARGUMENT_UNSET,
+    **_: Any,
+) -> Any:
+    """Redact telemetry through internal and Langfuse mask call conventions."""
+    if data is not _MASK_ARGUMENT_UNSET:
+        value = data
+    elif value is _MASK_ARGUMENT_UNSET:
+        raise TypeError("telemetry data is required")
+
     sensitive_keys = {
         "raw_text",
         "text",
