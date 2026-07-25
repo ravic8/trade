@@ -213,6 +213,7 @@ def extract_xbrl_financial_candidates(
         )
         candidate_id = stable_id(
             "filing-candidate",
+            run_id,
             filing_id,
             filing_version,
             metric,
@@ -372,6 +373,7 @@ def extract_pdf_intelligence(
                     )
                     object_id = stable_id(
                         "filing-intelligence-object",
+                        run_id,
                         filing_id,
                         filing_version,
                         page.page,
@@ -449,6 +451,7 @@ def extract_pdf_intelligence(
                     IntelligenceObject(
                         object_id=stable_id(
                             "filing-intelligence-object",
+                            run_id,
                             filing_id,
                             filing_version,
                             page.page,
