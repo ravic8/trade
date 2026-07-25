@@ -1226,6 +1226,32 @@ class FilingStore:
                 trace_id=trace_id,
             )
 
+    def audit_events(
+        self,
+        *,
+        workspace_id: str,
+        action: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = select(filing_audit_events_table).where(
+            filing_audit_events_table.c.workspace_id == workspace_id
+        )
+        if action is not None:
+            query = query.where(filing_audit_events_table.c.action == action)
+        if target_type is not None:
+            query = query.where(
+                filing_audit_events_table.c.target_type == target_type
+            )
+        if target_id is not None:
+            query = query.where(filing_audit_events_table.c.target_id == target_id)
+        query = query.order_by(
+            filing_audit_events_table.c.created_at.desc()
+        ).limit(limit)
+        with self.engine.connect() as connection:
+            return [dict(row) for row in connection.execute(query).mappings()]
+
     def _insert_audit_event(
         self,
         connection: Connection,

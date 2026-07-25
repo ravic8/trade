@@ -235,6 +235,11 @@ resilience drill terminates a bounded Celery execution child, verifies task
 redelivery to a replacement child, expires a controlled filing lease, and
 requires the recovered filing to complete without duplicate approved facts.
 It writes a machine-readable report under `/opt/trade/resilience-reports`.
+The human-review acceptance drill separately forces a durable LangGraph
+interrupt, verifies the complete evidence packet and released lease, records
+an approval through the authenticated production API, validates the audit
+event, and requires the resumed run to persist reviewer-attributed facts. Its
+machine-readable report is written under `/opt/trade/human-review-reports`.
 
 The telemetry contract records:
 

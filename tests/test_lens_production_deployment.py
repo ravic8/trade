@@ -104,6 +104,7 @@ def test_production_env_and_deploy_fail_closed_for_filing_secrets() -> None:
         "PROD_MINIO_ROOT_USER",
         "PROD_MINIO_ROOT_PASSWORD",
         "PROD_RESILIENCE_REPORT_DIR=/opt/trade/resilience-reports",
+        "PROD_HUMAN_REVIEW_REPORT_DIR=/opt/trade/human-review-reports",
         "PROD_FILING_REQUIRE_WORKSPACE_HEADER=true",
         "PROD_OTEL_ENABLED=true",
     ):
