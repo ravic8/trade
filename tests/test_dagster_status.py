@@ -228,6 +228,73 @@ def test_status_reader_ignores_invalid_tick_timestamp(tmp_path: Path) -> None:
     assert worker.last_tick_at is None
 
 
+def test_status_reader_follows_ticks_across_origin_migration(tmp_path: Path) -> None:
+    home = tmp_path / "dagster"
+    schedules_path = home / "schedules/schedules.db"
+    schedules_path.parent.mkdir(parents=True)
+    (home / "schedule_current_origin.json").write_text(
+        json.dumps({"repository_origin_id": "current-repository-origin"}),
+        encoding="utf-8",
+    )
+    with sqlite3.connect(schedules_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE jobs (
+                job_origin_id TEXT,
+                selector_id TEXT,
+                repository_origin_id TEXT,
+                status TEXT,
+                job_type TEXT,
+                job_body TEXT,
+                update_timestamp TEXT
+            );
+            CREATE TABLE job_ticks (
+                job_origin_id TEXT,
+                selector_id TEXT,
+                status TEXT,
+                timestamp TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "current-worker-origin",
+                "stable-worker-selector",
+                "current-repository-origin",
+                "RUNNING",
+                "SCHEDULE",
+                json.dumps(
+                    {
+                        "origin": {
+                            "job_name": "worker_schedule",
+                        }
+                    }
+                ),
+                "2026-07-25 17:38:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO job_ticks VALUES (?, ?, ?, ?)",
+            (
+                "stale-worker-origin",
+                "stable-worker-selector",
+                "SUCCESS",
+                "2026-07-25 17:40:00",
+            ),
+        )
+
+    worker = read_dagster_schedule_statuses(
+        home,
+        {"worker_schedule": "worker_job"},
+    )["worker_schedule"]
+
+    assert worker.origin_health == "current"
+    assert worker.origin_drift is False
+    assert worker.last_tick_status == "success"
+    assert worker.last_tick_at == datetime(2026, 7, 25, 17, 40, tzinfo=UTC)
+
+
 def test_readonly_sqlite_opens_wal_database_on_readonly_mount(
     tmp_path: Path,
 ) -> None:
