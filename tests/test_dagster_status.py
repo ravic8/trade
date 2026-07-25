@@ -70,7 +70,7 @@ def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> No
                 "old-worker-origin",
                 "worker-selector",
                 "SUCCESS",
-                datetime(2026, 7, 24, 6, 5, tzinfo=UTC).timestamp(),
+                "2026-07-24 06:05:00.000000",
             ),
         )
 
@@ -124,6 +124,7 @@ def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> No
     assert worker.origin_health == "stale"
     assert worker.origin_drift is True
     assert worker.last_tick_status == "success"
+    assert worker.last_tick_at == datetime(2026, 7, 24, 6, 5, tzinfo=UTC)
     assert worker.last_run_status == "failure"
     assert worker.last_successful_run_at == datetime(
         2026,
@@ -163,6 +164,68 @@ def test_instigator_name_supports_legacy_serialized_shape() -> None:
         )
         == "legacy_schedule"
     )
+
+
+def test_status_reader_ignores_invalid_tick_timestamp(tmp_path: Path) -> None:
+    home = tmp_path / "dagster"
+    schedules_path = home / "schedules/schedules.db"
+    schedules_path.parent.mkdir(parents=True)
+    with sqlite3.connect(schedules_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE jobs (
+                job_origin_id TEXT,
+                selector_id TEXT,
+                repository_origin_id TEXT,
+                status TEXT,
+                job_type TEXT,
+                job_body TEXT,
+                update_timestamp TEXT
+            );
+            CREATE TABLE job_ticks (
+                job_origin_id TEXT,
+                selector_id TEXT,
+                status TEXT,
+                timestamp TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "worker-origin",
+                "worker-selector",
+                "repository-origin",
+                "RUNNING",
+                "SCHEDULE",
+                json.dumps(
+                    {
+                        "origin": {
+                            "job_name": "worker_schedule",
+                        }
+                    }
+                ),
+                "2026-07-24 06:00:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO job_ticks VALUES (?, ?, ?, ?)",
+            (
+                "worker-origin",
+                "worker-selector",
+                "SUCCESS",
+                "not-a-timestamp",
+            ),
+        )
+
+    worker = read_dagster_schedule_statuses(
+        home,
+        {"worker_schedule": "worker_job"},
+    )["worker_schedule"]
+
+    assert worker.actual_status == "running"
+    assert worker.last_tick_status == "success"
+    assert worker.last_tick_at is None
 
 
 def test_readonly_sqlite_opens_wal_database_on_readonly_mount(
