@@ -3,7 +3,10 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from trade_research.dagster.status import read_dagster_schedule_statuses
+from trade_research.dagster.status import (
+    _readonly_sqlite,
+    read_dagster_schedule_statuses,
+)
 
 
 def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> None:
@@ -105,7 +108,8 @@ def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> No
         {
             "yfinance_daily_work_worker_schedule": (
                 "yfinance_daily_work_worker_job"
-            )
+            ),
+            "stopped_by_default_schedule": "stopped_by_default_job",
         },
     )
 
@@ -123,6 +127,12 @@ def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> No
         0,
         tzinfo=UTC,
     )
+    stopped = statuses["stopped_by_default_schedule"]
+    assert stopped.actual_status == "stopped"
+    assert stopped.origin_health == "current"
+    assert stopped.origin_drift is False
+    assert stopped.stored_origin_count == 0
+    assert stopped.active_origin_count == 0
 
 
 def test_status_reader_returns_empty_when_storage_is_unavailable(
@@ -132,3 +142,32 @@ def test_status_reader_returns_empty_when_storage_is_unavailable(
         tmp_path / "missing",
         {"schedule": "job"},
     ) == {}
+
+
+def test_readonly_sqlite_opens_wal_database_on_readonly_mount(
+    tmp_path: Path,
+) -> None:
+    database_dir = tmp_path / "readonly"
+    database_dir.mkdir()
+    database_path = database_dir / "dagster.db"
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        connection.execute("CREATE TABLE values_table (value INTEGER)")
+        connection.execute("INSERT INTO values_table VALUES (1)")
+        connection.commit()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{database_path}{suffix}")
+        if sidecar.exists():
+            sidecar.unlink()
+    database_path.chmod(0o444)
+    database_dir.chmod(0o555)
+    try:
+        with _readonly_sqlite(database_path) as connection:
+            assert connection.execute("SELECT value FROM values_table").fetchone()[
+                0
+            ] == 1
+    finally:
+        database_dir.chmod(0o755)
+        database_path.chmod(0o644)
