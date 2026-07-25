@@ -114,10 +114,8 @@ elif [[ "$call" == *"COUNT(*) FROM filing_approved_facts"* ]]; then
   printf '%s\n' '1186'
 elif [[ "$call" == *"alembic heads"* ]]; then
   printf '%s\n' '20260724_0010 (head)'
-elif [[ "$call" == *"mc find"* ]]; then
-  for number in $(seq 1 26); do
-    printf 'restore/lens-filings/parsed/%s/parsed_document.json\n' "$number"
-  done
+elif [[ "$call" == *"trade_research.filings.restore_validation"* ]]; then
+  printf '%s\n' '{"versioning_status":"Enabled","object_count":26}'
 elif [[ "$call" == *"evaluate-filing-golden"* ]]; then
   cat <<'JSON'
 {
@@ -358,5 +356,7 @@ def test_restore_drill_is_documented_and_has_configured_isolated_paths() -> None
     assert "timescaledb_pre_restore()" in acceptance
     assert "TRADE_RESTORE_KEEP=true" in acceptance
     assert "account for one failed download" in acceptance
-    assert "version_info=" in script
+    assert "trade_research.filings.restore_validation" in script
+    assert "mc find" not in script
+    assert "--print" not in script
     assert "| grep" not in script
