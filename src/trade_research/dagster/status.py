@@ -83,9 +83,9 @@ def read_dagster_schedule_statuses(
         )
         latest_tick = max(
             (
-                ticks[str(row["job_origin_id"])]
+                ticks[str(row["selector_id"])]
                 for row in rows
-                if str(row["job_origin_id"]) in ticks
+                if str(row["selector_id"]) in ticks
             ),
             key=lambda item: _timestamp_sort_key(item["timestamp"]),
             default=None,
@@ -182,18 +182,18 @@ def _find_named_value(value: Any, name: str) -> Any:
 def _latest_ticks(connection: sqlite3.Connection) -> dict[str, sqlite3.Row]:
     rows = connection.execute(
         """
-        SELECT job_origin_id, status, timestamp
+        SELECT selector_id, status, timestamp
         FROM job_ticks
         """
     ).fetchall()
     latest: dict[str, sqlite3.Row] = {}
     for row in rows:
-        origin_id = str(row["job_origin_id"])
-        existing = latest.get(origin_id)
+        selector_id = str(row["selector_id"])
+        existing = latest.get(selector_id)
         if existing is None or _timestamp_sort_key(
             row["timestamp"]
         ) > _timestamp_sort_key(existing["timestamp"]):
-            latest[origin_id] = row
+            latest[selector_id] = row
     return latest
 
 
