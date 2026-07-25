@@ -225,6 +225,48 @@ requires `status: passed`, `worker_termination.redelivered: true`,
 `worker_termination.worker_healthy: true`, and
 `stale_lease_recovery.recovered: true`.
 
+## Human-review interrupt and resume drill
+
+Run the drill with an email already present in `PROD_ADMIN_EMAILS` and the
+configured identity header:
+
+```bash
+TRADE_APP_DIR=/opt/trade/app \
+TRADE_ENV_FILE=/opt/trade/.env \
+PROD_HUMAN_REVIEW_REPORT_DIR=/opt/trade/human-review-reports \
+deploy/filing-human-review-drill.py \
+  739dea02-ef41-5b20-88e5-cfdf6bcb61fc \
+  --workspace-id default \
+  --expected-facts 59 \
+  --reviewer-email <allowlisted-admin-email> \
+  --actor-header cf-access-authenticated-user-email
+```
+
+The drill fails before creating a run unless the reviewer is in the production
+admin allowlist and the selected actor header appears in
+`ADMIN_EMAIL_HEADERS`. It then submits a uniquely idempotent filing run through
+the production API with `force_review=true`. Acceptance requires the LangGraph
+workflow to:
+
+1. stop at `human_review` with status `waiting_review` on its first claim;
+2. release its worker identity and execution lease;
+3. persist exactly 59 candidate facts, at least 59 evidence records, and zero
+   validation defects in the pending review packet;
+4. accept an approval through the production review API using the allowlisted
+   reviewer identity and an explicit reason;
+5. persist exactly one matching `review.approve` audit event;
+6. resume through Celery and complete on its second claim; and
+7. persist 59 unique approved facts carrying the reviewer identity and
+   `review_status=approved`.
+
+The drill intentionally creates a reviewed production filing run and updates
+the current approved fact rows for that filing. The filing values are already
+covered by the locked golden dataset. Every execution writes a secret-free
+JSON result under `/opt/trade/human-review-reports`. Acceptance requires
+`status: passed`, `interrupt.worker_lease_released: true`,
+`decision.audit_verified: true`, and
+`resume.worker_lease_released: true`.
+
 ## Canary and locked evaluation
 
 Only after the read-only gate passes:
