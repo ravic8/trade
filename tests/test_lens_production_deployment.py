@@ -9,6 +9,11 @@ import yaml
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
 def _production_compose() -> dict[str, object]:
     return yaml.safe_load((REPOSITORY_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8"))
 
@@ -165,11 +170,118 @@ def test_api_image_contains_locked_filing_evaluation() -> None:
     assert "COPY evaluations ./evaluations" in dockerfile
 
 
-def test_backup_captures_minio_with_worker_quiesced() -> None:
+def test_backup_is_atomic_and_quiesces_mutable_services() -> None:
     backup = (REPOSITORY_ROOT / "deploy/backup.sh").read_text(encoding="utf-8")
 
-    stop_worker = backup.index("stop filing-worker")
-    stop_minio = backup.index("stop minio")
-    archive = backup.index('"minio.tgz"')
-    restart = backup.index("restart_filing_storage\n", archive)
-    assert stop_worker < stop_minio < archive < restart
+    stops = [
+        backup.index(f"stop {service}")
+        for service in (
+            "filing-worker",
+            "dagster-daemon",
+            "dagster-webserver",
+            "cloudbeaver",
+            "qdrant",
+            "minio",
+        )
+    ]
+    database_dump = backup.index("pg_dump")
+    archives = [
+        backup.index(f'"{name}.tgz"')
+        for name in (
+            "data",
+            "artifacts",
+            "qdrant",
+            "dagster_home",
+            "minio",
+            "cloudbeaver",
+        )
+    ]
+    restart = backup.rindex("\nrestart_quiesced_services\n")
+    finalize = backup.index('mv "$BACKUP_DIR" "$FINAL_BACKUP_DIR"')
+
+    assert max(stops) < database_dump < min(archives)
+    assert max(archives) < restart < finalize
+    assert 'BACKUP_DIR="$BACKUP_ROOT/.incomplete-$STAMP"' in backup
+    assert "sha256sum postgres.dump > SHA256SUMS" in backup
+
+
+def test_failed_backup_remains_incomplete_and_restarts_services(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    backup_root = tmp_path / "backups"
+    env_file = tmp_path / "production.env"
+
+    persistent_directories = {
+        "PROD_TRADE_DATA_DIR": tmp_path / "data",
+        "PROD_TRADE_ARTIFACTS_DIR": tmp_path / "artifacts",
+        "PROD_QDRANT_DATA_DIR": tmp_path / "qdrant",
+        "PROD_DAGSTER_HOME_DIR": tmp_path / "dagster-home",
+        "PROD_MINIO_DATA_DIR": tmp_path / "minio",
+        "PROD_CLOUDBEAVER_WORKSPACE_DIR": tmp_path / "cloudbeaver",
+    }
+    for directory in persistent_directories.values():
+        directory.mkdir()
+        (directory / "state").write_text("state", encoding="utf-8")
+
+    env_file.write_text(
+        "\n".join(f"{name}={path}" for name, path in persistent_directories.items())
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_executable(
+        fake_bin / "docker",
+        """#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *"ps --status running -q"* ]]; then
+  printf '%s\n' 'running-container'
+elif [[ "$*" == *"exec -T postgres pg_dump"* ]]; then
+  printf '%s\n' 'fake-postgres-dump'
+fi
+exit 0
+""",
+    )
+    _write_executable(
+        fake_bin / "tar",
+        "#!/usr/bin/env bash\nexit 23\n",
+    )
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "TRADE_APP_DIR": str(REPOSITORY_ROOT),
+            "TRADE_ENV_FILE": str(env_file),
+            "TRADE_BACKUP_DIR": str(backup_root),
+            "FAKE_DOCKER_LOG": str(docker_log),
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(REPOSITORY_ROOT / "deploy/backup.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 23
+    backups = list(backup_root.iterdir())
+    assert len(backups) == 1
+    assert backups[0].name.startswith(".incomplete-")
+
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    for service in (
+        "filing-worker",
+        "dagster-daemon",
+        "dagster-webserver",
+        "cloudbeaver",
+        "qdrant",
+        "minio",
+    ):
+        assert f"stop {service}" in docker_calls
+    for service in ("minio", "qdrant", "cloudbeaver"):
+        assert f"up -d --no-deps {service}" in docker_calls
+    for service in ("filing-worker", "dagster-daemon", "dagster-webserver"):
+        assert f"up -d {service}" in docker_calls

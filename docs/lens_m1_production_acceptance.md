@@ -136,10 +136,13 @@ PROD_BACKUP_DIR=/opt/trade/backups \
 deploy/backup.sh
 ```
 
-The backup script briefly quiesces the filing worker and MinIO, archives the
-versioned object store, restarts both services, and also captures the PostgreSQL
-dump and existing platform artifacts. A backup is not accepted until a restore
-has been exercised on an isolated production-like host.
+The backup script briefly quiesces the filing worker, Dagster, CloudBeaver,
+Qdrant, and MinIO before capturing the PostgreSQL dump and mutable persistent
+directories. It writes into a hidden `.incomplete-*` directory, records
+SHA-256 checksums, restarts every service that was previously running, and only
+then atomically publishes the timestamped backup directory. A backup is not
+accepted until its checksums pass and a restore has been exercised on an
+isolated production-like host.
 
 ## Canary and locked evaluation
 
