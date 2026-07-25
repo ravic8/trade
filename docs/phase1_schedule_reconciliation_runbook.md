@@ -58,9 +58,12 @@ Preview the exact actions:
   python /app/scripts/reconcile_dagster_schedules.py
 ```
 
-Review every `start_current`, `stop_current`, and `stop_stale` action. Unknown
-active schedules appear under `unmanaged_active_schedules`; the reconciler
-reports but never deletes or stops them.
+Review every `stop_stale`, `delete_stale`, `start_current`, and `stop_current`
+action. For a stale managed schedule, the reconciler stops the old origin,
+deletes only its instigator-state row, and then starts the current origin.
+Dagster tick and run history is retained. Unknown active schedules appear under
+`unmanaged_active_schedules`; the reconciler reports but never deletes or stops
+them.
 
 Apply only after the preview is approved:
 
@@ -97,6 +100,7 @@ Expected results:
 
 - desired running schedules are running under the current origin;
 - no stale-origin schedule remains active;
+- a second preview reports no actions;
 - `status_drift` and `origin_drift` are false for managed schedules;
 - TSX and US completed-session Opportunity schedules are running when their
   yfinance exchange flags are enabled;
