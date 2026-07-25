@@ -455,7 +455,6 @@ log \
 postgres_image="${TRADE_RESTORE_POSTGRES_IMAGE:-timescale/timescaledb:latest-pg16}"
 api_image="${PROD_API_IMAGE:-trade-research-api:local}"
 minio_image="${PROD_MINIO_IMAGE:-minio/minio:latest}"
-minio_client_image="${PROD_MINIO_CLIENT_IMAGE:-minio/mc:latest}"
 qdrant_image="${TRADE_RESTORE_QDRANT_IMAGE:-qdrant/qdrant:latest}"
 db_name="trade_restore"
 db_user="restore_validator"
@@ -469,7 +468,6 @@ PY
 
 DB_ENV_FILE="$WORK_DIR/postgres.env"
 MINIO_ENV_FILE="$WORK_DIR/minio.env"
-CLIENT_ENV_FILE="$WORK_DIR/minio-client.env"
 API_ENV_FILE="$WORK_DIR/api.env"
 umask 077
 printf 'POSTGRES_DB=%s\nPOSTGRES_USER=%s\nPOSTGRES_PASSWORD=%s\n' \
@@ -478,12 +476,6 @@ printf 'MINIO_ROOT_USER=%s\nMINIO_ROOT_PASSWORD=%s\n' \
   "${PROD_MINIO_ROOT_USER:?set PROD_MINIO_ROOT_USER}" \
   "${PROD_MINIO_ROOT_PASSWORD:?set PROD_MINIO_ROOT_PASSWORD}" \
   > "$MINIO_ENV_FILE"
-printf '%s\n' \
-  "RESTORE_ACCESS_KEY=${PROD_FILING_S3_ACCESS_KEY_ID:?set PROD_FILING_S3_ACCESS_KEY_ID}" \
-  "RESTORE_SECRET_KEY=${PROD_FILING_S3_SECRET_ACCESS_KEY:?set PROD_FILING_S3_SECRET_ACCESS_KEY}" \
-  "RESTORE_BUCKET=${PROD_FILING_S3_BUCKET:-lens-filings}" \
-  "RESTORE_PREFIX=${PROD_FILING_S3_PREFIX:-parsed}" \
-  > "$CLIENT_ENV_FILE"
 printf '%s\n' \
   "APP_ENV=restore-drill" \
   "DATABASE_URL=postgresql+psycopg://$db_user:$db_password@$POSTGRES_CONTAINER:5432/$db_name" \
@@ -615,32 +607,29 @@ done
 [[ "$minio_ready" == true ]] || fail "isolated MinIO did not become ready"
 
 stage="minio_validation"
-minio_listing="$(
+minio_result="$(
   docker run --rm \
     --network "$NETWORK" \
-    --env-file "$CLIENT_ENV_FILE" \
-    --entrypoint /bin/sh \
-    "$minio_client_image" \
-    -c "
-      set -eu
-      mc alias set restore http://$MINIO_CONTAINER:9000 \
-        \"\$RESTORE_ACCESS_KEY\" \"\$RESTORE_SECRET_KEY\" >/dev/null
-      version_info=\"\$(mc version info \"restore/\$RESTORE_BUCKET\")\"
-      case \"\$version_info\" in
-        *enabled*|*Enabled*|*ENABLED*) ;;
-        *)
-          printf '%s\n' 'restored MinIO bucket versioning is not enabled' >&2
-          exit 1
-          ;;
-      esac
-      mc find \"restore/\$RESTORE_BUCKET/\$RESTORE_PREFIX\" \
-        --name parsed_document.json --print
-    "
+    --env-file "$API_ENV_FILE" \
+    "$api_image" \
+    python -m trade_research.filings.restore_validation
 )"
-minio_versioning_verified=true
-minio_object_count="$(
-  printf '%s\n' "$minio_listing" | awk 'NF {count++} END {print count + 0}'
-)"
+read -r minio_versioning_verified minio_object_count < <(
+  python3 - "$minio_result" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+print(
+    str(payload["versioning_status"] == "Enabled").lower(),
+    payload["object_count"],
+)
+PY
+)
+[[ "$minio_versioning_verified" == true ]] \
+  || fail "restored MinIO bucket versioning is not enabled"
+[[ "$minio_object_count" =~ ^[0-9]+$ ]] \
+  || fail "restored MinIO object count is invalid"
 (( minio_object_count >= minimum_minio_objects )) \
   || fail \
     "restored MinIO objects $minio_object_count are below $minimum_minio_objects"
