@@ -271,7 +271,25 @@ cleanup() {
   if [[ "$result_status" == "passed" \
     && "$KEEP_RESTORE" != "true" \
     && "$cleanup_failed" == false ]]; then
-    if rm -rf -- "$WORK_DIR"; then
+    if docker run --rm \
+      --network none \
+      --user 0:0 \
+      --label trade.restore-drill="$DRILL_ID" \
+      --entrypoint python \
+      -v "$WORK_DIR:/restore-work" \
+      "$api_image" \
+      -c '
+from pathlib import Path
+import shutil
+
+root = Path("/restore-work")
+for child in root.iterdir():
+    if child.is_dir() and not child.is_symlink():
+        shutil.rmtree(child)
+    else:
+        child.unlink()
+' \
+      && rm -rf -- "$WORK_DIR"; then
       log "removed isolated restore data"
     else
       printf '[trade-restore] failed to remove restore data: %s\n' "$WORK_DIR" >&2
