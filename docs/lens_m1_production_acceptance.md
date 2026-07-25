@@ -13,12 +13,14 @@ The production stack provides:
 - a dedicated Celery filing worker using Redis;
 - a private MinIO object store with bucket versioning;
 - a bucket-scoped MinIO application identity distinct from the root identity;
-- OpenTelemetry collection and private Prometheus storage;
+- OpenTelemetry collection, private Prometheus storage, and authenticated
+  Alertmanager delivery;
 - optional Langfuse export using server-owned secrets; and
 - fail-closed deployment checks for authentication, storage, queue, and
   checkpoint configuration.
 
-None of MinIO, Prometheus, or the OpenTelemetry receiver publishes a host port.
+None of MinIO, Prometheus, Alertmanager, or the OpenTelemetry receiver
+publishes a host port.
 
 ## One-time server configuration
 
@@ -52,8 +54,8 @@ PROD_LANGFUSE_SECRET_KEY=...
 ```
 
 The example permits image overrides. Pin MinIO, the MinIO client,
-OpenTelemetry Collector, and Prometheus to reviewed immutable versions before
-external traffic.
+OpenTelemetry Collector, Prometheus, and Alertmanager to reviewed immutable
+versions before external traffic.
 
 ## Source corpus
 
@@ -266,6 +268,53 @@ JSON result under `/opt/trade/human-review-reports`. Acceptance requires
 `status: passed`, `interrupt.worker_lease_released: true`,
 `decision.audit_verified: true`, and
 `resume.worker_lease_released: true`.
+
+## Alert delivery and resolution drill
+
+Deployment creates a private, 64-character Alertmanager webhook credential at
+`PROD_ALERT_WEBHOOK_TOKEN_FILE` when it does not already exist. The file is
+mounted read-only into the API and Alertmanager containers and is never copied
+into a report or committed to Git. Prometheus and Alertmanager publish no host
+ports.
+
+Run:
+
+```bash
+cd /opt/trade/app
+
+TRADE_APP_DIR=/opt/trade/app \
+TRADE_ENV_FILE=/opt/trade/.env \
+PROD_ALERT_REPORT_DIR=/opt/trade/alert-reports \
+./deploy/filing-alert-delivery-drill.py \
+  --workspace-id default
+```
+
+The drill is bounded and does not fail a filing run. It:
+
+1. requires the read-only production readiness gate to pass;
+2. verifies Alertmanager readiness and the three required filing rules loaded
+   by Prometheus;
+3. proves that the internal webhook rejects unauthenticated traffic;
+4. injects a uniquely labelled critical acceptance alert into Alertmanager;
+5. requires an authenticated firing notification to be durably recorded in
+   the filing audit ledger;
+6. resolves the same alert; and
+7. requires a matching durable resolved notification.
+
+Every execution writes a secret-free JSON report under
+`/opt/trade/alert-reports`. Acceptance requires `status: passed`,
+`topology.prometheus_rules_verified: true`,
+`topology.unauthenticated_webhook_rejected: true`,
+`delivery.durable_receipt_verified: true`, and
+`resolution.durable_receipt_verified: true`.
+
+The bundled rules cover filing workflow failures, blocking deterministic
+validation defects, and loss of the OpenTelemetry metrics exporter. Prometheus
+alerting rules send alerts to Alertmanager, which handles notification routing
+and delivery. Configuration follows the official
+[Prometheus alerting overview](https://prometheus.io/docs/alerting/latest/overview/)
+and
+[Alertmanager webhook configuration](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config).
 
 ## Canary and locked evaluation
 

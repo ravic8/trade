@@ -1,0 +1,34 @@
+groups:
+  - name: lens-filing-m1
+    interval: 15s
+    rules:
+      - alert: LensFilingWorkflowFailure
+        expr: increase(filing_workflow_runs_total{status="failed"}[10m]) > 0
+        labels:
+          severity: critical
+          service: filing-intelligence
+          workspace_id: default
+        annotations:
+          summary: Filing intelligence workflow failed
+          description: At least one filing workflow failed during the last ten minutes.
+
+      - alert: LensFilingBlockingValidationDefect
+        expr: increase(filing_validation_defects_total{severity="blocking"}[10m]) > 0
+        labels:
+          severity: critical
+          service: filing-intelligence
+          workspace_id: default
+        annotations:
+          summary: Filing extraction produced a blocking validation defect
+          description: Deterministic filing validation recorded a blocking defect.
+
+      - alert: LensFilingTelemetryExporterDown
+        expr: up{job="otel-collector"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: filing-intelligence
+          workspace_id: default
+        annotations:
+          summary: Filing telemetry exporter is unavailable
+          description: Prometheus cannot scrape the OpenTelemetry collector.

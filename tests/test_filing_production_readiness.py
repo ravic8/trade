@@ -13,6 +13,9 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
     golden = tmp_path / "evaluations/filings/infy_m1_golden.json"
     golden.parent.mkdir(parents=True)
     golden.write_text("{}", encoding="utf-8")
+    alert_token = tmp_path / "secrets/alertmanager-webhook-token"
+    alert_token.parent.mkdir(parents=True)
+    alert_token.write_text("a" * 64, encoding="utf-8")
     values: dict[str, object] = {
         "app_env": "production",
         "database_url": "postgresql+psycopg://trade:secret@postgres/trade",
@@ -32,6 +35,8 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
         "langfuse_secret_key": "secret-key",
         "otel_enabled": True,
         "otel_exporter_otlp_endpoint": "http://otel-collector:4318",
+        "filing_alertmanager_url": "http://alertmanager:9093",
+        "filing_alert_webhook_token_file": alert_token,
     }
     values.update(overrides)
     return Settings(**values)
@@ -44,6 +49,7 @@ def _passing_probes() -> dict[str, object]:
         "object_store": lambda: "object store verified",
         "filing_worker": lambda: "worker verified",
         "otel_collector": lambda: "collector verified",
+        "alertmanager": lambda: "Alertmanager verified",
     }
 
 
@@ -64,11 +70,13 @@ def test_readiness_passes_only_when_every_production_gate_passes(
         "source_manifest",
         "golden_dataset",
         "langfuse",
+        "alerting",
         "postgresql_migration",
         "redis",
         "object_store",
         "filing_worker",
         "otel_collector",
+        "alertmanager",
     }
 
 
@@ -121,3 +129,21 @@ def test_readiness_reports_missing_corpus_without_importing_it(
     assert report.passed is False
     failed = {check.name for check in report.checks if not check.passed}
     assert failed == {"source_manifest", "golden_dataset"}
+
+
+def test_readiness_fails_closed_without_alert_webhook_credential(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    assert settings.filing_alert_webhook_token_file is not None
+    settings.filing_alert_webhook_token_file.unlink()
+
+    report = verify_filing_production(
+        settings,
+        probes=_passing_probes(),
+        application_root=tmp_path,
+    )
+
+    assert report.passed is False
+    failed = {check.name for check in report.checks if not check.passed}
+    assert failed == {"alerting"}

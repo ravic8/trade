@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import boto3
+import httpx
 import redis
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -49,6 +50,7 @@ def verify_filing_production(
             _container_path(settings.filing_golden_dataset_path, root),
         ),
         _langfuse_check(settings),
+        _alerting_check(settings),
     ]
     active_probes = probes or _default_probes(
         settings,
@@ -61,6 +63,7 @@ def verify_filing_production(
         "object_store",
         "filing_worker",
         "otel_collector",
+        "alertmanager",
     ):
         probe = active_probes.get(name)
         if probe is None:
@@ -132,6 +135,33 @@ def _langfuse_check(settings: Settings) -> ProductionReadinessCheck:
     )
 
 
+def _alerting_check(settings: Settings) -> ProductionReadinessCheck:
+    defects: list[str] = []
+    endpoint = urlparse(settings.filing_alertmanager_url)
+    if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+        defects.append("Alertmanager URL is invalid")
+    token_file = settings.filing_alert_webhook_token_file
+    if token_file is None or not token_file.is_file():
+        defects.append("alert webhook token file is missing")
+    else:
+        try:
+            token = token_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            defects.append("alert webhook token file is unreadable")
+        else:
+            if len(token) < 32:
+                defects.append("alert webhook token is too short")
+    return ProductionReadinessCheck(
+        name="alerting",
+        passed=not defects,
+        detail=(
+            "; ".join(defects)
+            if defects
+            else "Alertmanager routing and webhook authentication are configured"
+        ),
+    )
+
+
 def _path_check(name: str, path: Path) -> ProductionReadinessCheck:
     return ProductionReadinessCheck(
         name=name,
@@ -170,6 +200,10 @@ def _default_probes(
         ),
         "filing_worker": lambda: _probe_worker(timeout_seconds=timeout_seconds),
         "otel_collector": lambda: _probe_otel(
+            settings,
+            timeout_seconds=timeout_seconds,
+        ),
+        "alertmanager": lambda: _probe_alertmanager(
             settings,
             timeout_seconds=timeout_seconds,
         ),
@@ -247,6 +281,15 @@ def _probe_otel(settings: Settings, *, timeout_seconds: float) -> str:
     ):
         pass
     return "OpenTelemetry collector endpoint is reachable"
+
+
+def _probe_alertmanager(settings: Settings, *, timeout_seconds: float) -> str:
+    endpoint = settings.filing_alertmanager_url.rstrip("/")
+    response = httpx.get(f"{endpoint}/-/ready", timeout=timeout_seconds)
+    response.raise_for_status()
+    if response.text.strip().upper() != "OK":
+        raise RuntimeError("Alertmanager readiness response was unexpected")
+    return "Alertmanager is ready to route notifications"
 
 
 def _container_path(path: Path, application_root: Path) -> Path:

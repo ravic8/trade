@@ -5,10 +5,18 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from trade_research.api.security import authenticated_email, require_admin_request
 from trade_research.config import Settings, get_settings
+from trade_research.filings.alerts import (
+    AlertmanagerWebhook,
+    AlertWebhookAuthenticationError,
+    AlertWebhookConfigurationError,
+    record_alertmanager_delivery,
+    verify_alert_webhook_token,
+)
 from trade_research.filings.analysis import FinancialAnalysisService
 from trade_research.filings.models import (
     AnalysisQueryRequest,
@@ -104,6 +112,42 @@ def filing_health(
         "otel_enabled": runtime.settings.otel_enabled,
         "extractor_version": runtime.settings.filing_extractor_version,
     }
+
+
+@router.post("/alerts/webhook", status_code=status.HTTP_202_ACCEPTED)
+async def receive_alertmanager_webhook(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> dict[str, Any]:
+    try:
+        verify_alert_webhook_token(
+            settings,
+            authorization=request.headers.get("authorization"),
+        )
+    except AlertWebhookAuthenticationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid alert webhook credentials",
+        ) from exc
+    except AlertWebhookConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="alert webhook is unavailable",
+        ) from exc
+    try:
+        webhook = AlertmanagerWebhook.model_validate(await request.json())
+        return record_alertmanager_delivery(runtime, webhook=webhook)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid Alertmanager webhook payload",
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="filing database unavailable",
+        ) from exc
 
 
 @router.post("/manifests/import", response_model=ManifestImportResponse)

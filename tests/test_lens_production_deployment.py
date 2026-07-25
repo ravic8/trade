@@ -40,6 +40,14 @@ def test_production_api_and_worker_use_durable_filing_runtime() -> None:
             "service_completed_successfully"
         )
 
+    assert api["environment"]["FILING_ALERTMANAGER_URL"] == "http://alertmanager:9093"
+    assert api["environment"]["FILING_ALERT_WEBHOOK_TOKEN_FILE"] == (
+        "/run/secrets/alertmanager_webhook_token"
+    )
+    assert any(
+        "/run/secrets/alertmanager_webhook_token:ro" in volume
+        for volume in api["volumes"]
+    )
     assert worker["image"] == api["image"]
     assert worker["command"][0:4] == [
         "celery",
@@ -80,6 +88,7 @@ def test_production_observability_is_internal_and_persistent() -> None:
     services = _production_compose()["services"]
     collector = services["otel-collector"]
     prometheus = services["prometheus"]
+    alertmanager = services["alertmanager"]
 
     assert "ports" not in collector
     assert collector["expose"] == ["4317", "4318", "9464"]
@@ -91,7 +100,23 @@ def test_production_observability_is_internal_and_persistent() -> None:
         "${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}:/prometheus"
         in prometheus["volumes"]
     )
+    assert (
+        "./ops/observability/filing-alerts.yaml:/etc/prometheus/rules/filing-alerts.yaml:ro"
+        in prometheus["volumes"]
+    )
     assert prometheus["depends_on"]["otel-collector"]["condition"] == ("service_started")
+    assert prometheus["depends_on"]["alertmanager"]["condition"] == ("service_started")
+    assert "ports" not in alertmanager
+    assert alertmanager["expose"] == ["9093"]
+    assert (
+        "./ops/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro"
+        in alertmanager["volumes"]
+    )
+    assert any(
+        "/run/secrets/alertmanager_webhook_token:ro" in volume
+        for volume in alertmanager["volumes"]
+    )
+    assert alertmanager["depends_on"]["api"]["condition"] == "service_healthy"
 
 
 def test_production_env_and_deploy_fail_closed_for_filing_secrets() -> None:
@@ -105,6 +130,9 @@ def test_production_env_and_deploy_fail_closed_for_filing_secrets() -> None:
         "PROD_MINIO_ROOT_PASSWORD",
         "PROD_RESILIENCE_REPORT_DIR=/opt/trade/resilience-reports",
         "PROD_HUMAN_REVIEW_REPORT_DIR=/opt/trade/human-review-reports",
+        "PROD_ALERT_REPORT_DIR=/opt/trade/alert-reports",
+        "PROD_ALERT_WEBHOOK_TOKEN_FILE=/opt/trade/secrets/alertmanager-webhook-token",
+        "PROD_ALERTMANAGER_DATA_DIR=/opt/trade/alertmanager",
         "PROD_FILING_REQUIRE_WORKSPACE_HEADER=true",
         "PROD_OTEL_ENABLED=true",
     ):
@@ -120,6 +148,9 @@ def test_production_env_and_deploy_fail_closed_for_filing_secrets() -> None:
     assert "ps --status running -q minio" in deploy
     assert "ps --status running -q otel-collector" in deploy
     assert "ps --status running -q prometheus" in deploy
+    assert "ps --status running -q alertmanager" in deploy
+    assert "openssl rand -hex 32" in deploy
+    assert "alert webhook token must contain at least 32 characters" in deploy
 
 
 def test_deploy_rejects_placeholder_filing_secrets_before_docker(
