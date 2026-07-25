@@ -103,6 +103,7 @@ def test_production_env_and_deploy_fail_closed_for_filing_secrets() -> None:
         "PROD_FILING_S3_SECRET_ACCESS_KEY",
         "PROD_MINIO_ROOT_USER",
         "PROD_MINIO_ROOT_PASSWORD",
+        "PROD_RESILIENCE_REPORT_DIR=/opt/trade/resilience-reports",
         "PROD_FILING_REQUIRE_WORKSPACE_HEADER=true",
         "PROD_OTEL_ENABLED=true",
     ):

@@ -184,6 +184,47 @@ successful drill also removes its restored data unless
 diagnosis. Every execution writes a secret-free JSON result under
 `/opt/trade/restore-reports`.
 
+## Worker-termination and stale-lease recovery drill
+
+Run the drill with the registered March 2026 consolidated XBRL filing:
+
+```bash
+TRADE_APP_DIR=/opt/trade/app \
+TRADE_ENV_FILE=/opt/trade/.env \
+PROD_RESILIENCE_REPORT_DIR=/opt/trade/resilience-reports \
+deploy/filing-resilience-drill.py \
+  739dea02-ef41-5b20-88e5-cfdf6bcb61fc \
+  --workspace-id default \
+  --expected-facts 59
+```
+
+The drill first requires the read-only production gate to pass. It dispatches
+a bounded diagnostic task with the same late-acknowledgement and
+reject-on-worker-loss settings as filing work. After the task records its exact
+Celery execution child and PID, the drill validates that the process belongs
+to the matched `filing-worker` container and terminates only that child. The
+Celery parent remains running. The gate requires the same task identifier to
+be redelivered to a replacement child, complete on its second attempt, and
+leave the worker responsive to `inspect ping`.
+
+The drill then creates a normal filing run using a unique idempotency key,
+claims it with a two-second lease without starting a heartbeat, and invokes
+the production stale-run recovery path after expiry. Recovery selection and
+the `running -> retrying` transition occur in one workspace-scoped atomic
+database statement. The recovered run must:
+
+- complete on exactly its second claim;
+- produce at least 59 candidates and approve every candidate;
+- produce no validation defects; and
+- contain exactly one unique approved fact ID per approved row.
+
+No production container is stopped, no host port is published, and the
+diagnostic Redis state expires automatically. Every execution writes a
+secret-free JSON report under `/opt/trade/resilience-reports`. Acceptance
+requires `status: passed`, `worker_termination.redelivered: true`,
+`worker_termination.worker_healthy: true`, and
+`stale_lease_recovery.recovered: true`.
+
 ## Canary and locked evaluation
 
 Only after the read-only gate passes:
