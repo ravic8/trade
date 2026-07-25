@@ -123,6 +123,7 @@ checksums_verified=false
 archive_names=""
 source_document_count=0
 source_verified_count=0
+source_failed_skipped_count=0
 migration_revision=""
 timescaledb_version=""
 filing_document_count=0
@@ -155,6 +156,7 @@ write_report() {
   REPORT_ARCHIVES="$archive_names" \
   REPORT_SOURCE_DOCUMENTS="$source_document_count" \
   REPORT_SOURCE_VERIFIED="$source_verified_count" \
+  REPORT_SOURCE_FAILED_SKIPPED="$source_failed_skipped_count" \
   REPORT_MIGRATION="$migration_revision" \
   REPORT_TIMESCALEDB_VERSION="$timescaledb_version" \
   REPORT_FILING_DOCUMENTS="$filing_document_count" \
@@ -209,6 +211,7 @@ payload = {
     "source_manifest": {
         "document_count": integer("REPORT_SOURCE_DOCUMENTS"),
         "verified_document_count": integer("REPORT_SOURCE_VERIFIED"),
+        "failed_skipped_count": integer("REPORT_SOURCE_FAILED_SKIPPED"),
     },
     "postgresql": {
         "migration_revision": os.environ["REPORT_MIGRATION"] or None,
@@ -367,15 +370,13 @@ manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 documents = manifest.get("documents")
 if not isinstance(documents, list):
     raise SystemExit("restored manifest documents are invalid")
-if len(documents) < minimum_documents:
-    raise SystemExit(
-        f"restored manifest has {len(documents)} documents; "
-        f"expected at least {minimum_documents}"
-    )
-
 verified = 0
+failed_skipped = 0
 manifest_root = manifest_path.parent
 for document in documents:
+    if document.get("acquisition_status") == "failed" or document.get("error"):
+        failed_skipped += 1
+        continue
     relative_path = document.get("relative_path")
     expected_hash = document.get("sha256")
     if not isinstance(relative_path, str) or not isinstance(expected_hash, str):
@@ -396,19 +397,60 @@ for document in documents:
         raise SystemExit(f"source document size mismatch: {relative_path}")
     verified += 1
 
-print(json.dumps({"document_count": len(documents), "verified_count": verified}))
+if verified < minimum_documents:
+    raise SystemExit(
+        f"restored manifest has {verified} valid documents; "
+        f"expected at least {minimum_documents}"
+    )
+declared_documents = manifest.get("document_count")
+if isinstance(declared_documents, int) and declared_documents != verified:
+    raise SystemExit(
+        f"manifest document count mismatch: declared {declared_documents}, "
+        f"verified {verified}"
+    )
+declared_failed = manifest.get("failed_download_count")
+if isinstance(declared_failed, int) and declared_failed != failed_skipped:
+    raise SystemExit(
+        f"manifest failed-download count mismatch: declared {declared_failed}, "
+        f"observed {failed_skipped}"
+    )
+declared_candidates = manifest.get("candidate_count")
+if isinstance(declared_candidates, int) and declared_candidates != len(documents):
+    raise SystemExit(
+        f"manifest candidate count mismatch: declared {declared_candidates}, "
+        f"observed {len(documents)}"
+    )
+
+print(
+    json.dumps(
+        {
+            "document_count": verified,
+            "verified_count": verified,
+            "failed_skipped_count": failed_skipped,
+        }
+    )
+)
 PY
 )"
-read -r source_document_count source_verified_count < <(
+read -r \
+  source_document_count \
+  source_verified_count \
+  source_failed_skipped_count < <(
   python3 - "$manifest_result" <<'PY'
 import json
 import sys
 
 payload = json.loads(sys.argv[1])
-print(payload["document_count"], payload["verified_count"])
+print(
+    payload["document_count"],
+    payload["verified_count"],
+    payload["failed_skipped_count"],
+)
 PY
 )
-log "verified $source_verified_count restored source documents"
+log \
+  "verified $source_verified_count restored source documents; " \
+  "skipped $source_failed_skipped_count failed manifest entries"
 
 postgres_image="${TRADE_RESTORE_POSTGRES_IMAGE:-timescale/timescaledb:latest-pg16}"
 api_image="${PROD_API_IMAGE:-trade-research-api:local}"
