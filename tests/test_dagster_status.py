@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from trade_research.dagster.status import (
+    _instigator_name,
     _readonly_sqlite,
     read_dagster_schedule_statuses,
 )
@@ -51,7 +52,12 @@ def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> No
                 json.dumps(
                     {
                         "origin": {
-                            "instigator_name": "yfinance_daily_work_worker_schedule"
+                            "__class__": "ExternalJobOrigin",
+                            "external_repository_origin": {
+                                "__class__": "ExternalRepositoryOrigin",
+                                "repository_name": "__repository__",
+                            },
+                            "job_name": "yfinance_daily_work_worker_schedule",
                         }
                     }
                 ),
@@ -142,6 +148,21 @@ def test_status_reader_returns_empty_when_storage_is_unavailable(
         tmp_path / "missing",
         {"schedule": "job"},
     ) == {}
+
+
+def test_instigator_name_supports_legacy_serialized_shape() -> None:
+    assert (
+        _instigator_name(
+            json.dumps(
+                {
+                    "origin": {
+                        "instigator_name": "legacy_schedule",
+                    }
+                }
+            )
+        )
+        == "legacy_schedule"
+    )
 
 
 def test_readonly_sqlite_opens_wal_database_on_readonly_mount(
