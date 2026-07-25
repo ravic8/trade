@@ -461,6 +461,23 @@ dump plus archives for `data/`, `artifacts/`, `qdrant/`, `dagster_home/`, and
 the CloudBeaver workspace when those directories exist. CloudBeaver is stopped
 briefly for a consistent workspace archive and restarted if it was running.
 
+The isolated restore drill is implemented as:
+
+```bash
+TRADE_APP_DIR=/opt/trade/app
+TRADE_ENV_FILE=/opt/trade/.env
+PROD_RESTORE_ROOT=/opt/trade/restore-drills
+PROD_RESTORE_REPORT_DIR=/opt/trade/restore-reports
+deploy/restore-drill.sh /opt/trade/backups/<timestamp>
+```
+
+It restores only into a unique directory and private, un-published Docker
+network. It validates source hashes, the TimescaleDB restore lifecycle,
+application migration head, filing row floors, MinIO versioning and objects,
+Qdrant startup, and the locked filing golden dataset. Successful drills clean
+their temporary state and retain a JSON report; failures retain isolated state
+for diagnosis.
+
 ## Implementation Phases
 
 ### Phase 1: Production Packaging
@@ -512,8 +529,9 @@ briefly for a consistent workspace archive and restarted if it was running.
 ### Phase 8: Backups
 
 - Implemented: first-pass backup script.
+- Implemented: isolated, report-producing restore drill.
 - Schedule backups.
-- Test restore on a non-production path before relying on backups.
+- Run and retain the first passing production-backup restore report.
 
 ### Phase 9: Browser Analytics Access
 

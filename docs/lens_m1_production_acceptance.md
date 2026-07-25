@@ -144,6 +144,42 @@ then atomically publishes the timestamped backup directory. A backup is not
 accepted until its checksums pass and a restore has been exercised on an
 isolated production-like host.
 
+## Isolated restore drill
+
+Run the drill against an atomically published backup, never an
+`.incomplete-*` directory:
+
+```bash
+TRADE_APP_DIR=/opt/trade/app \
+TRADE_ENV_FILE=/opt/trade/.env \
+PROD_RESTORE_ROOT=/opt/trade/restore-drills \
+PROD_RESTORE_REPORT_DIR=/opt/trade/restore-reports \
+deploy/restore-drill.sh /opt/trade/backups/<timestamp>
+```
+
+The drill does not invoke the production Compose project or publish host ports.
+It verifies the backup checksums, safely extracts every archive under a unique
+restore directory, and re-hashes every source document in the INFY manifest.
+It then:
+
+1. restores `postgres.dump` into a fresh TimescaleDB container using
+   `timescaledb_pre_restore()` and `timescaledb_post_restore()`;
+2. requires the restored migration to match the deployed API image;
+3. requires at least 26 INFY filing documents and 1,186 approved facts;
+4. boots the restored MinIO data, verifies bucket versioning through the
+   application credentials, and requires at least 26 parsed filing objects;
+5. boots restored Qdrant storage and verifies its API; and
+6. runs the locked 13-case, 52-fact golden evaluation against the restored
+   PostgreSQL and MinIO services.
+
+The supported TimescaleDB logical-restore sequence follows the
+[Timescale documentation](https://docs.timescale.com/self-hosted/latest/backup-and-restore/logical-backup/).
+Temporary containers and their private Docker network are always removed. A
+successful drill also removes its restored data unless
+`TRADE_RESTORE_KEEP=true`; a failed drill retains the isolated directory for
+diagnosis. Every execution writes a secret-free JSON result under
+`/opt/trade/restore-reports`.
+
 ## Canary and locked evaluation
 
 Only after the read-only gate passes:
