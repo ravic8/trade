@@ -87,5 +87,5 @@ def test_backup_stops_cloudbeaver_before_archiving_workspace() -> None:
 
     stop = script.index('stop cloudbeaver')
     archive = script.index('"cloudbeaver.tgz"')
-    restart = script.index("restart_cloudbeaver\n", archive)
+    restart = script.rindex("\nrestart_quiesced_services\n")
     assert stop < archive < restart
