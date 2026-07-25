@@ -155,6 +155,11 @@ def _instigator_name(serialized: str | bytes | None) -> str | None:
     except (json.JSONDecodeError, TypeError):
         return None
     value = _find_named_value(payload, "instigator_name")
+    if value is None and isinstance(payload, dict):
+        # Current Dagster serde names schedules through ExternalJobOrigin.
+        # Older releases used ``instigator_name`` elsewhere in the payload, so
+        # retain that lookup first and fall back to the production shape.
+        value = _find_named_value(payload.get("origin"), "job_name")
     return str(value) if value else None
 
 
