@@ -71,10 +71,11 @@ def read_dagster_schedule_statuses(
         active_rows = [row for row in rows if str(row["status"]) in RUNNING_STATUSES]
         if active_rows:
             actual_status = "running"
-        elif rows:
-            actual_status = "stopped"
         else:
-            actual_status = "unknown"
+            # All repository schedules are stopped by definition default. If a
+            # managed schedule has no stored instigator row, Dagster is using
+            # that stopped default rather than an unknown runtime state.
+            actual_status = "stopped"
         origin_health = _origin_health(
             rows,
             active_rows,
@@ -120,8 +121,13 @@ def read_dagster_schedule_statuses(
 
 
 def _readonly_sqlite(path: Path) -> sqlite3.Connection:
+    # Dagster configures these databases in WAL mode. Even a read-only SQLite
+    # connection otherwise tries to create a shared-memory sidecar, which fails
+    # when production mounts DAGSTER_HOME into the API container as read-only.
+    # Each API request opens a fresh connection, so immutable mode still observes
+    # the latest checkpointed database snapshot without weakening the mount.
     connection = sqlite3.connect(
-        f"file:{path.resolve()}?mode=ro",
+        f"file:{path.resolve()}?mode=ro&immutable=1",
         uri=True,
         timeout=1,
     )
@@ -187,8 +193,12 @@ def _origin_health(
     active_rows: list[sqlite3.Row],
     current_repository_origin_id: str | None,
 ) -> str:
-    if not rows or current_repository_origin_id is None:
+    if current_repository_origin_id is None:
         return "unknown"
+    if not rows:
+        # No stored state means the current definition's stopped default is in
+        # effect and there is no stale origin capable of launching ticks.
+        return "current"
     relevant = active_rows or rows
     origins = {str(row["repository_origin_id"]) for row in relevant}
     if origins == {current_repository_origin_id}:
