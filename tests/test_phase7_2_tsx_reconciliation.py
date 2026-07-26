@@ -274,7 +274,7 @@ def test_phase7_2_1_migration_adds_columns_and_cancels_prelisting_work(
         "official_security_type",
         "official_source_updated_at",
     }.issubset(columns)
-    assert revision == "20260724_0010"
+    assert revision == "20260726_0011"
     assert work["AAUC.TO"] == ("cancelled", "outside_listing_window")
     assert work["ABXX.TO"] == ("queued", None)
 

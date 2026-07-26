@@ -202,15 +202,12 @@ def announcement_categories(row: dict[str, Any]) -> list[str]:
     ):
         categories.append("earnings_transcripts")
 
-    if (
-        re.search(r"\bagm\b|annual general meeting|postal ballot", text)
-        and (
-            "shareholders meeting" in desc
-            or "transcript" in text
-            or "notice" in text
-            or "voting result" in text
-            or "scrutinizer" in text
-        )
+    if re.search(r"\bagm\b|annual general meeting|postal ballot", text) and (
+        "shareholders meeting" in desc
+        or "transcript" in text
+        or "notice" in text
+        or "voting result" in text
+        or "scrutinizer" in text
     ):
         categories.append("shareholder_meetings")
 
@@ -268,9 +265,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
     documents_dir.mkdir(parents=True, exist_ok=True)
 
     endpoints = {
-        "annual_reports": (
-            f"{NSE_BASE}/api/annual-reports?index=equities&symbol={args.symbol}"
-        ),
+        "annual_reports": (f"{NSE_BASE}/api/annual-reports?index=equities&symbol={args.symbol}"),
         "announcements": (
             f"{NSE_BASE}/api/corporate-announcements?index=equities"
             f"&symbol={args.symbol}&from_date={args.from_date}&to_date={args.to_date}"
@@ -297,9 +292,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as temp_dir:
         cookie_path = Path(temp_dir) / "nse.cookies"
         bootstrap_cookie(cookie_path)
-        payloads = {
-            name: fetch_json(url, cookie_path) for name, url in endpoints.items()
-        }
+        payloads = {name: fetch_json(url, cookie_path) for name, url in endpoints.items()}
 
     for name, payload in payloads.items():
         (metadata_dir / f"{name}.json").write_text(
@@ -351,10 +344,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
                 candidates,
                 url=row.get("xbrl"),
                 category="xbrl_financial",
-                title=(
-                    f"{row.get('relatingTo')} financial XBRL "
-                    f"({row.get('consolidated')})"
-                ),
+                title=(f"{row.get('relatingTo')} financial XBRL ({row.get('consolidated')})"),
                 source_api=endpoints["legacy_financial_xbrl"],
                 filing_date=row.get("broadCastDate"),
                 period_end=period_end.isoformat(),
@@ -386,9 +376,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
         }
         add_candidate(candidates, url=row.get("xbrl"), category=xbrl_category, **common)
         if args.include_ixbrl:
-            add_candidate(
-                candidates, url=row.get("ixbrl"), category=ixbrl_category, **common
-            )
+            add_candidate(candidates, url=row.get("ixbrl"), category=ixbrl_category, **common)
 
     for row in payloads["postal_ballot"].get("data", []):
         add_candidate(
@@ -425,6 +413,11 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
             **common,
         )
 
+    if args.financial_only:
+        candidates = {
+            url: item for url, item in candidates.items() if "xbrl_financial" in item["categories"]
+        }
+
     records: list[dict[str, Any]] = []
     for url, item in sorted(candidates.items()):
         categories = set(item["categories"])
@@ -446,36 +439,30 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
                     partial.unlink()
 
         record = {
-                "symbol": args.symbol,
-                "company": args.company,
-                "url": url,
-                "categories": sorted(categories),
-                "titles": item["titles"],
-                "source_apis": item["source_apis"],
-                "filing_date": item.get("filing_date"),
-                "period_end": item.get("period_end"),
-                "scope": item.get("scope"),
-                "audited": item.get("audited"),
-                "submission_type": item.get("submission_type"),
-                "relative_path": str(destination.relative_to(root)),
-                "filename": filename,
-                "bytes": destination.stat().st_size if destination.exists() else None,
-                "sha256": sha256_file(destination) if destination.exists() else None,
-                "detected_content_type": (
-                    sniff_type(destination) if destination.exists() else None
-                ),
-                "acquisition_status": acquisition_status,
-                "error": error,
-                "source_metadata": item["metadata"],
-            }
+            "symbol": args.symbol,
+            "company": args.company,
+            "url": url,
+            "categories": sorted(categories),
+            "titles": item["titles"],
+            "source_apis": item["source_apis"],
+            "filing_date": item.get("filing_date"),
+            "period_end": item.get("period_end"),
+            "scope": item.get("scope"),
+            "audited": item.get("audited"),
+            "submission_type": item.get("submission_type"),
+            "relative_path": str(destination.relative_to(root)),
+            "filename": filename,
+            "bytes": destination.stat().st_size if destination.exists() else None,
+            "sha256": sha256_file(destination) if destination.exists() else None,
+            "detected_content_type": (sniff_type(destination) if destination.exists() else None),
+            "acquisition_status": acquisition_status,
+            "error": error,
+            "source_metadata": item["metadata"],
+        }
         records.append(record)
 
-    acquired_records = [
-        record for record in records if record["acquisition_status"] != "failed"
-    ]
-    failed_records = [
-        record for record in records if record["acquisition_status"] == "failed"
-    ]
+    acquired_records = [record for record in records if record["acquisition_status"] != "failed"]
+    failed_records = [record for record in records if record["acquisition_status"] == "failed"]
     manifest = {
         "schema_version": 1,
         "generated_at": datetime.now().astimezone().isoformat(),
@@ -497,9 +484,7 @@ def build_pack(args: argparse.Namespace) -> dict[str, Any]:
         "document_count": len(acquired_records),
         "failed_download_count": len(failed_records),
         "category_counts": dict(
-            sorted(
-                Counter(c for r in acquired_records for c in r["categories"]).items()
-            )
+            sorted(Counter(c for r in acquired_records for c in r["categories"]).items())
         ),
         "total_bytes": sum(r["bytes"] for r in acquired_records),
         "documents": records,
@@ -565,6 +550,11 @@ def main() -> None:
         "--include-ixbrl",
         action="store_true",
         help="Also download rendered iXBRL HTML alongside source XBRL XML.",
+    )
+    parser.add_argument(
+        "--financial-only",
+        action="store_true",
+        help="Download only source financial XBRL objects in the requested date range.",
     )
     args = parser.parse_args()
     manifest = build_pack(args)

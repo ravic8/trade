@@ -8,6 +8,7 @@ import { DataPipelinePage } from "./pages/DataPipelinePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FactorResearchPage } from "./pages/FactorResearchPage";
 import { JobsPage } from "./pages/JobsPage";
+import { LensAgentPage } from "./pages/LensAgentPage";
 import { MLResearchPage } from "./pages/MLResearchPage";
 import { OpportunitiesPage } from "./pages/OpportunitiesPage";
 import { ProviderSettingsPage } from "./pages/ProviderSettingsPage";
@@ -38,6 +39,7 @@ const router = createBrowserRouter([
       { path: "/screeners", element: <Navigate to="/opportunities" replace /> },
       { path: "/symbols/:ticker", element: <SymbolPage /> },
       { path: "/research", element: <ResearchPage /> },
+      { path: "/lens", element: <LensAgentPage /> },
       { path: "/research/progress", element: <ResearchProgressPage /> },
       { path: "/research/factors", element: <FactorResearchPage /> },
       { path: "/research/models", element: <MLResearchPage /> },

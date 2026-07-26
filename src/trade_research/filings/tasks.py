@@ -106,6 +106,26 @@ def worker_recovery_probe(
     return complete_worker_probe(settings, probe_id=probe_id)
 
 
+@celery_app.task(
+    bind=True,
+    name="filings.process_investigation",
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def process_filing_investigation(
+    self,
+    analysis_id: str,
+) -> dict[str, Any]:
+    from trade_research.filings.agent_runtime import run_investigation_once
+
+    run = run_investigation_once(get_filing_runtime(), analysis_id)
+    return {
+        "analysis_id": run.analysis_id,
+        "status": run.status.value,
+        "current_node": run.current_node,
+    }
+
+
 def dispatch_filing_run(
     run_id: str,
     *,
@@ -122,4 +142,30 @@ def dispatch_filing_run(
         kwargs={"resume_payload": resume_payload},
         queue=runtime.settings.filing_queue_name,
         task_id=f"filing-{run_id}-{uuid4()}",
+    )
+
+
+def dispatch_filing_investigation(
+    analysis_id: str,
+    *,
+    runtime=None,
+) -> None:
+    from trade_research.filings.agent_runtime import run_investigation_once
+    from trade_research.filings.models import InvestigationStatus
+
+    runtime = runtime or get_filing_runtime()
+    runtime.store.transition_investigation(
+        analysis_id,
+        status=InvestigationStatus.QUEUED,
+        current_node="queued",
+        progress=0.01,
+        detail={"queue": runtime.settings.filing_queue_name},
+    )
+    if runtime.settings.filing_queue_mode == "inline":
+        run_investigation_once(runtime, analysis_id)
+        return
+    process_filing_investigation.apply_async(
+        args=[analysis_id],
+        queue=runtime.settings.filing_queue_name,
+        task_id=f"filing-investigation-{analysis_id}-{uuid4()}",
     )

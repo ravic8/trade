@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import ValidationError
@@ -10,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from trade_research.api.security import authenticated_email, require_admin_request
 from trade_research.config import Settings, get_settings
+from trade_research.filings.agent_tools import InvestigationToolGateway
 from trade_research.filings.alerts import (
     AlertmanagerWebhook,
     AlertWebhookAuthenticationError,
@@ -27,7 +29,14 @@ from trade_research.filings.models import (
     FilingRunRequest,
     FilingRunResponse,
     FilingRunStatus,
+    FilingUniverseCoverage,
+    FilingUniverseSnapshot,
+    FilingUniverseSnapshotRequest,
     FinancialFact,
+    InvestigationEvent,
+    InvestigationRequest,
+    InvestigationRun,
+    InvestigationSubmission,
     ManifestImportRequest,
     ManifestImportResponse,
     ReviewDecisionRequest,
@@ -40,7 +49,10 @@ from trade_research.filings.review import (
     validate_review_decision,
 )
 from trade_research.filings.runtime import FilingRuntime, get_filing_runtime
-from trade_research.filings.tasks import dispatch_filing_run
+from trade_research.filings.tasks import (
+    dispatch_filing_investigation,
+    dispatch_filing_run,
+)
 from trade_research.filings.telemetry import filing_metrics
 
 router = APIRouter(prefix="/api/filings", tags=["filing-intelligence"])
@@ -99,15 +111,14 @@ def filing_health(
         "status": "ok",
         "queue_mode": runtime.settings.filing_queue_mode,
         "checkpoint_backend": (
-            "memory"
-            if runtime.settings.database_url.startswith("sqlite")
-            else "postgresql"
+            "memory" if runtime.settings.database_url.startswith("sqlite") else "postgresql"
         ),
         "artifact_backend": runtime.settings.filing_artifact_backend,
-        "workspace_header_required": (
-            runtime.settings.filing_require_workspace_header
-        ),
+        "workspace_header_required": (runtime.settings.filing_require_workspace_header),
         "index_enabled": runtime.settings.filing_index_enabled,
+        "agent_llm_enabled": runtime.settings.filing_agent_llm_enabled,
+        "agent_llm_provider": runtime.settings.filing_agent_llm_provider,
+        "agent_prompt_version": runtime.settings.filing_agent_prompt_version,
         "langfuse_enabled": runtime.settings.langfuse_enabled,
         "otel_enabled": runtime.settings.otel_enabled,
         "extractor_version": runtime.settings.filing_extractor_version,
@@ -250,9 +261,7 @@ def submit_filing_run(
         run=run,
         accepted=created,
         status_url=f"/api/filings/runs/{run.run_id}",
-        review_url=(
-            f"/api/filings/reviews/{review.review_id}" if review is not None else None
-        ),
+        review_url=(f"/api/filings/reviews/{review.review_id}" if review is not None else None),
     )
 
 
@@ -311,9 +320,7 @@ def cancel_filing_run(
 def list_filing_reviews(
     workspace_id: Annotated[str, Depends(workspace_dependency)],
     runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
-    review_status: Annotated[
-        ReviewStatus | None, Query(alias="status")
-    ] = ReviewStatus.PENDING,
+    review_status: Annotated[ReviewStatus | None, Query(alias="status")] = ReviewStatus.PENDING,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[ReviewRequest]:
     return runtime.store.reviews(
@@ -360,9 +367,7 @@ def decide_filing_review(
             decision=body.decision,
             reviewer_id=actor_id,
             reason=body.reason,
-            candidate_decisions=serialized_item_decisions(
-                body.candidate_decisions
-            ),
+            candidate_decisions=serialized_item_decisions(body.candidate_decisions),
             object_decisions=serialized_item_decisions(body.object_decisions),
         )
     except ValueError as exc:
@@ -415,6 +420,139 @@ def approved_fact_evidence(
             detail="approved fact has unresolved evidence",
         )
     return evidence
+
+
+@router.post(
+    "/universes/snapshots",
+    response_model=FilingUniverseSnapshot,
+)
+def register_filing_universe_snapshot(
+    body: FilingUniverseSnapshotRequest,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    actor_id: Annotated[str, Depends(admin_or_local_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> FilingUniverseSnapshot:
+    snapshot = runtime.store.record_universe_snapshot(
+        workspace_id=workspace_id,
+        universe_id=body.universe_id,
+        effective_date=body.effective_date,
+        source_url=body.source_url,
+        source_hash=body.source_hash,
+        members=body.members,
+    )
+    runtime.store.record_audit_event(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        action="filing_universe.snapshot_registered",
+        target_type="filing_universe_snapshot",
+        target_id=snapshot.snapshot_id,
+        after_payload={
+            "universe_id": snapshot.universe_id,
+            "effective_date": snapshot.effective_date.isoformat(),
+            "source_hash": snapshot.source_hash,
+            "member_count": snapshot.member_count,
+        },
+        reason="versioned filing universe snapshot registered",
+    )
+    return snapshot
+
+
+@router.get(
+    "/universes/{universe_id}/coverage",
+    response_model=FilingUniverseCoverage,
+)
+def filing_universe_coverage(
+    universe_id: str,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> FilingUniverseCoverage:
+    if not _WORKSPACE_PATTERN.fullmatch(universe_id):
+        raise HTTPException(status_code=400, detail="invalid universe identifier")
+    return InvestigationToolGateway(store=runtime.store).coverage(
+        workspace_id=workspace_id,
+        universe_id=universe_id,
+    )
+
+
+@router.post(
+    "/investigations",
+    response_model=InvestigationSubmission,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def submit_filing_investigation(
+    body: InvestigationRequest,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    actor_id: Annotated[str, Depends(actor_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> InvestigationSubmission:
+    idempotency_key = body.idempotency_key or f"ui-{uuid4()}"
+    try:
+        run, created = runtime.store.create_investigation(
+            workspace_id=workspace_id,
+            universe_id=body.universe_id,
+            question=body.question,
+            request_payload={
+                **body.model_dump(mode="json"),
+                "submitted_by": actor_id,
+            },
+            idempotency_key=idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if created:
+        runtime.store.record_audit_event(
+            workspace_id=workspace_id,
+            actor_id=actor_id,
+            action="filing_investigation.submitted",
+            target_type="filing_investigation",
+            target_id=run.analysis_id,
+            after_payload={
+                "universe_id": run.universe_id,
+                "strict_evidence": body.strict_evidence,
+                "max_tool_calls": body.max_tool_calls,
+            },
+            reason="bounded filing investigation requested",
+        )
+        dispatch_filing_investigation(run.analysis_id, runtime=runtime)
+        run = runtime.store.investigation(run.analysis_id, workspace_id) or run
+    return InvestigationSubmission(
+        run=run,
+        accepted=created,
+        status_url=f"/api/filings/investigations/{run.analysis_id}",
+        events_url=f"/api/filings/investigations/{run.analysis_id}/events",
+    )
+
+
+@router.get(
+    "/investigations/{analysis_id}",
+    response_model=InvestigationRun,
+)
+def filing_investigation_status(
+    analysis_id: str,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> InvestigationRun:
+    run = runtime.store.investigation(analysis_id, workspace_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="filing investigation not found")
+    return run
+
+
+@router.get(
+    "/investigations/{analysis_id}/events",
+    response_model=list[InvestigationEvent],
+)
+def filing_investigation_events(
+    analysis_id: str,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> list[InvestigationEvent]:
+    if not runtime.store.investigation(analysis_id, workspace_id):
+        raise HTTPException(status_code=404, detail="filing investigation not found")
+    return runtime.store.investigation_events(
+        analysis_id=analysis_id,
+        workspace_id=workspace_id,
+    )
 
 
 @router.post("/analysis/query", response_model=AnalysisQueryResponse)

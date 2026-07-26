@@ -16,6 +16,9 @@ import {
   getDailyOpportunities,
   getFactorIC,
   getFactorSummary,
+  getFilingInvestigation,
+  getFilingInvestigationEvents,
+  getFilingUniverseCoverage,
   getJobRuns,
   getMLBacktests,
   getMLCandidates,
@@ -42,6 +45,7 @@ import {
   postChatQuery,
   saveUpstoxCredential,
   searchDataInstruments,
+  submitFilingInvestigation,
   testUpstoxCredential,
 } from "./client";
 import type {
@@ -51,6 +55,7 @@ import type {
   DataCoveragePreviewRequest,
   DataInstrumentSearchParams,
   DataPipelineRequest,
+  FilingInvestigationRequest,
   MLConcreteRunId,
   MLRunId,
   OperationsExchange,
@@ -369,5 +374,47 @@ export function useChatAudit(responseId: string | null) {
     queryKey: ["chat-audit", responseId],
     queryFn: () => getChatAudit(responseId as string),
     enabled: Boolean(responseId),
+  });
+}
+
+export function useFilingUniverseCoverage() {
+  return useQuery({
+    queryKey: ["filing-universe-coverage", "NIFTY50"],
+    queryFn: () => getFilingUniverseCoverage("NIFTY50"),
+    staleTime: 30_000,
+  });
+}
+
+export function useSubmitFilingInvestigation() {
+  return useMutation({
+    mutationFn: (payload: FilingInvestigationRequest) =>
+      submitFilingInvestigation(payload),
+  });
+}
+
+export function useFilingInvestigation(analysisId: string | null) {
+  return useQuery({
+    queryKey: ["filing-investigation", analysisId],
+    queryFn: () => getFilingInvestigation(analysisId as string),
+    enabled: Boolean(analysisId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status &&
+        ["completed", "partial", "abstained", "failed"].includes(status)
+        ? false
+        : 1_000;
+    },
+  });
+}
+
+export function useFilingInvestigationEvents(
+  analysisId: string | null,
+  terminal = false,
+) {
+  return useQuery({
+    queryKey: ["filing-investigation-events", analysisId, terminal],
+    queryFn: () => getFilingInvestigationEvents(analysisId as string),
+    enabled: Boolean(analysisId),
+    refetchInterval: terminal ? false : 1_000,
   });
 }

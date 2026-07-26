@@ -806,6 +806,168 @@ export type ChatAuditResponse = {
   response: Record<string, unknown>;
 };
 
+export type FilingInvestigationStatus =
+  | "accepted"
+  | "queued"
+  | "running"
+  | "completed"
+  | "partial"
+  | "abstained"
+  | "failed";
+
+export type FilingInvestigationRequest = {
+  question: string;
+  universe_id: "NIFTY50";
+  strict_evidence: boolean;
+  max_tool_calls: number;
+  comparison: "auto" | "yoy" | "qoq";
+};
+
+export type FilingCoverageCompany = {
+  company_id: string;
+  symbol: string;
+  name: string;
+  status: "eligible" | "insufficient_history" | "no_approved_facts";
+  approved_fact_count: number;
+  available_periods: string[];
+  available_metrics: string[];
+  reason_codes: string[];
+};
+
+export type FilingUniverseCoverage = {
+  universe_id: string;
+  snapshot_id?: string | null;
+  member_count: number;
+  represented_company_count: number;
+  eligible_company_count: number;
+  excluded_company_count: number;
+  companies: FilingCoverageCompany[];
+};
+
+export type FilingInvestigationRankingRow = {
+  company_id: string;
+  symbol: string;
+  name: string;
+  metric: string;
+  comparison: "yoy" | "qoq";
+  current_period: string;
+  comparison_period: string;
+  current_value: string;
+  comparison_value: string;
+  currency?: string | null;
+  percent_change: string;
+  fact_ids: string[];
+  citation_ids: string[];
+};
+
+export type FilingEvidence = {
+  evidence_id: string;
+  company_id: string;
+  filing_id: string;
+  filing_version: number;
+  page?: number | null;
+  section_path?: string | null;
+  row_label?: string | null;
+  xbrl_concept?: string | null;
+  context_ref?: string | null;
+  source_hash: string;
+  snippet?: string | null;
+  effective_date?: string | null;
+};
+
+export type FilingInvestigationCitation = {
+  citation_id: string;
+  fact_id: string;
+  evidence_ids: string[];
+  label: string;
+  company_id: string;
+  filing_id: string;
+  filing_version: number;
+  period_end: string;
+  evidence: FilingEvidence[];
+};
+
+export type FilingInvestigationResult = {
+  plan: {
+    intent: string;
+    metric: string;
+    comparison: "yoy" | "qoq";
+    limit: number;
+    scope: string;
+    rationale: string;
+  };
+  coverage: FilingUniverseCoverage;
+  ranking: {
+    rows: FilingInvestigationRankingRow[];
+    eligible_count: number;
+    ranked_count: number;
+    excluded_count: number;
+    exclusions: Array<{
+      company_id: string;
+      symbol: string;
+      name: string;
+      reason_code: string;
+    }>;
+  };
+  synthesis: {
+    title: string;
+    summary: string;
+    claims: Array<{ text: string; citation_ids: string[] }>;
+    limitations: string[];
+    model_used: boolean;
+    provider?: string | null;
+    model?: string | null;
+    usage: Record<string, number>;
+  };
+  citations: FilingInvestigationCitation[];
+  claim_validation: {
+    passed: boolean;
+    valid_claim_count: number;
+    rejected_claim_count: number;
+    complete_row_count: number;
+  };
+  tool_calls: Array<Record<string, unknown>>;
+  prompt_version: string;
+};
+
+export type FilingInvestigationRun = {
+  analysis_id: string;
+  thread_id: string;
+  workspace_id: string;
+  universe_id: string;
+  universe_snapshot_id?: string | null;
+  question: string;
+  status: FilingInvestigationStatus;
+  current_node: string;
+  progress: number;
+  request_payload: Record<string, unknown>;
+  plan_payload: Record<string, unknown>;
+  result_payload: Partial<FilingInvestigationResult>;
+  error_code?: string | null;
+  error_message?: string | null;
+  trace_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+};
+
+export type FilingInvestigationSubmission = {
+  run: FilingInvestigationRun;
+  accepted: boolean;
+  status_url: string;
+  events_url: string;
+};
+
+export type FilingInvestigationEvent = {
+  event_id: string;
+  analysis_id: string;
+  sequence: number;
+  node: string;
+  status: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+};
+
 export type ResearchArtifact = {
   path: string;
   kind: string;

@@ -30,6 +30,11 @@ import type {
   PipelineScheduleStatusRow,
   FactorICResponse,
   FactorSummaryResponse,
+  FilingInvestigationEvent,
+  FilingInvestigationRequest,
+  FilingInvestigationRun,
+  FilingInvestigationSubmission,
+  FilingUniverseCoverage,
   JobRun,
   MLBacktestsResponse,
   MLCandidatesResponse,
@@ -544,4 +549,46 @@ export async function getChatAudit(responseId: string): Promise<ChatAuditRespons
     throw new Error("Failed to load chat audit");
   }
   return (await response.json()) as ChatAuditResponse;
+}
+
+const filingHeaders = {
+  "Content-Type": "application/json",
+  "X-Workspace-ID": "default",
+};
+
+export function getFilingUniverseCoverage(
+  universeId = "NIFTY50",
+): Promise<FilingUniverseCoverage> {
+  return strictFetchJson(
+    `/api/filings/universes/${encodeURIComponent(universeId)}/coverage`,
+    { headers: filingHeaders },
+  );
+}
+
+export function submitFilingInvestigation(
+  payload: FilingInvestigationRequest,
+): Promise<FilingInvestigationSubmission> {
+  return strictFetchJson("/api/filings/investigations", {
+    method: "POST",
+    headers: filingHeaders,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getFilingInvestigation(
+  analysisId: string,
+): Promise<FilingInvestigationRun> {
+  return strictFetchJson(
+    `/api/filings/investigations/${encodeURIComponent(analysisId)}`,
+    { headers: filingHeaders },
+  );
+}
+
+export function getFilingInvestigationEvents(
+  analysisId: string,
+): Promise<FilingInvestigationEvent[]> {
+  return strictFetchJson(
+    `/api/filings/investigations/${encodeURIComponent(analysisId)}/events`,
+    { headers: filingHeaders },
+  );
 }
