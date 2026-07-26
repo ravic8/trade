@@ -128,6 +128,8 @@ services:
       APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
       ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
       ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
+      FILING_ALERTMANAGER_URL: http://alertmanager:9093
+      FILING_ALERT_WEBHOOK_TOKEN_FILE: /run/secrets/alertmanager_webhook_token
       CHAT_ENABLED: ${PROD_CHAT_ENABLED:-true}
       CHAT_STRICT_CITATION_REQUIRED: ${PROD_CHAT_STRICT_CITATION_REQUIRED:-true}
       CHAT_USE_LLM_ANSWER: ${PROD_CHAT_USE_LLM_ANSWER:-true}
@@ -196,6 +198,7 @@ services:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
       - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_readonly:ro
+      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -615,10 +618,34 @@ services:
       ]
     volumes:
       - ./ops/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./ops/observability/filing-alerts.yaml:/etc/prometheus/rules/filing-alerts.yaml:ro
       - ${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}:/prometheus
     depends_on:
       otel-collector:
         condition: service_started
+      alertmanager:
+        condition: service_started
+    restart: unless-stopped
+
+  alertmanager:
+    image: ${PROD_ALERTMANAGER_IMAGE:-prom/alertmanager:latest}
+    user: ${PROD_ALERTMANAGER_UID:-1000}:${PROD_ALERTMANAGER_GID:-1000}
+    command:
+      [
+        "--config.file=/etc/alertmanager/alertmanager.yaml",
+        "--storage.path=/alertmanager",
+        "--web.listen-address=0.0.0.0:9093",
+        "--cluster.listen-address=",
+      ]
+    volumes:
+      - ./ops/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro
+      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
+      - ${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}:/alertmanager
+    expose:
+      - "9093"
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
 networks:

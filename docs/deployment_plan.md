@@ -123,6 +123,7 @@ minio             private, versioned filing-artifact object store
 minio-init        one-shot bucket, policy, and application-user bootstrap
 otel-collector    private OpenTelemetry receiver and processor
 prometheus        private filing/runtime metrics store
+alertmanager      private alert router with authenticated durable delivery
 dagster-daemon    internal scheduled job runner
 dagster-webserver private admin UI, reachable only over Tailscale
 ```
@@ -419,6 +420,8 @@ Use stable server-owned paths outside the git checkout:
 /opt/trade/qdrant
 /opt/trade/minio
 /opt/trade/prometheus
+/opt/trade/alertmanager
+/opt/trade/secrets
 /opt/trade/dagster_home
 /opt/trade/cloudbeaver
 /opt/trade/backups

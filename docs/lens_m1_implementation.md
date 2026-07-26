@@ -240,6 +240,13 @@ interrupt, verifies the complete evidence packet and released lease, records
 an approval through the authenticated production API, validates the audit
 event, and requires the resumed run to persist reviewer-attributed facts. Its
 machine-readable report is written under `/opt/trade/human-review-reports`.
+Prometheus loads three filing alert rules and sends them to a private
+Alertmanager. Alertmanager authenticates to a private API webhook with a
+file-backed credential generated once during deployment. The receiver records
+firing and resolved notifications as durable audit events. The alert-delivery
+drill verifies the loaded rules, rejects unauthenticated webhook traffic,
+injects a uniquely labelled critical probe, and requires durable firing and
+resolution receipts under `/opt/trade/alert-reports`.
 
 The telemetry contract records:
 

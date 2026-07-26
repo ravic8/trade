@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_service_name: str = "trade-research"
     otel_exporter_otlp_endpoint: str | None = None
+    filing_alertmanager_url: str = "http://localhost:9093"
+    filing_alert_webhook_token_file: Path | None = None
 
     bigquery_enabled: bool = False
     bigquery_canary_enabled: bool = False

@@ -79,6 +79,38 @@ if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
     printf '[trade-deploy] production filing workspace enforcement must remain enabled\n' >&2
     exit 1
   fi
+  require_command openssl
+  alert_token_file="${PROD_ALERT_WEBHOOK_TOKEN_FILE:-$(dirname "$ENV_FILE")/secrets/alertmanager-webhook-token}"
+  alert_token_dir="$(dirname "$alert_token_file")"
+  mkdir -p "$alert_token_dir"
+  chmod 0700 "$alert_token_dir"
+  if [[ -L "$alert_token_file" ]]; then
+    printf '[trade-deploy] alert webhook token file must not be a symbolic link\n' >&2
+    exit 1
+  fi
+  if [[ ! -e "$alert_token_file" ]]; then
+    alert_token_temporary="$(mktemp "$alert_token_dir/.alertmanager-token.XXXXXX")"
+    chmod 0600 "$alert_token_temporary"
+    if ! openssl rand -hex 32 | tr -d '\r\n' > "$alert_token_temporary"; then
+      rm -f "$alert_token_temporary"
+      printf '[trade-deploy] unable to generate alert webhook token\n' >&2
+      exit 1
+    fi
+    mv "$alert_token_temporary" "$alert_token_file"
+    log "generated private Alertmanager webhook credential"
+  fi
+  if [[ ! -f "$alert_token_file" || ! -s "$alert_token_file" ]]; then
+    printf '[trade-deploy] alert webhook token file is missing or empty\n' >&2
+    exit 1
+  fi
+  chmod 0600 "$alert_token_file"
+  alert_token_value="$(tr -d '\r\n' < "$alert_token_file")"
+  if [[ "${#alert_token_value}" -lt 32 ]]; then
+    printf '[trade-deploy] alert webhook token must contain at least 32 characters\n' >&2
+    exit 1
+  fi
+  unset alert_token_value
+  export PROD_ALERT_WEBHOOK_TOKEN_FILE="$alert_token_file"
 fi
 
 if [[ "${PROD_LANGFUSE_ENABLED:-false}" == "true" ]]; then
@@ -112,6 +144,7 @@ if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
 fi
 if [[ "${PROD_OTEL_ENABLED:-true}" == "true" ]]; then
   mkdir_from_var "${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}"
+  mkdir_from_var "${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}"
 fi
 mkdir_from_var "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}"
 cloudbeaver_workspace="${PROD_CLOUDBEAVER_WORKSPACE_DIR:-/opt/trade/cloudbeaver}"
@@ -254,7 +287,8 @@ for attempt in {1..30}; do
       && -n "$("${compose[@]}" ps --status running -q filing-worker)" \
       && -n "$("${compose[@]}" ps --status running -q minio)" \
       && -n "$("${compose[@]}" ps --status running -q otel-collector)" \
-      && -n "$("${compose[@]}" ps --status running -q prometheus)" ]]; then
+      && -n "$("${compose[@]}" ps --status running -q prometheus)" \
+      && -n "$("${compose[@]}" ps --status running -q alertmanager)" ]]; then
       filing_health_ok=true
     fi
   fi
@@ -283,7 +317,17 @@ done
 
 log "health check failed; recent service state follows"
 "${compose[@]}" ps >&2
-log_services=(api web cloudbeaver filing-worker minio minio-init otel-collector prometheus)
+log_services=(
+  api
+  web
+  cloudbeaver
+  filing-worker
+  minio
+  minio-init
+  otel-collector
+  prometheus
+  alertmanager
+)
 if [[ "$dagster_webserver_was_running" == true ]]; then
   log_services+=(dagster-webserver)
 fi
