@@ -421,6 +421,7 @@ Use stable server-owned paths outside the git checkout:
 /opt/trade/minio
 /opt/trade/prometheus
 /opt/trade/alertmanager
+/opt/trade/alertmanager-secrets
 /opt/trade/secrets
 /opt/trade/dagster_home
 /opt/trade/cloudbeaver

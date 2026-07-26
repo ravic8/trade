@@ -131,7 +131,7 @@ def test_production_env_and_deploy_fail_closed_for_filing_secrets() -> None:
         "PROD_RESILIENCE_REPORT_DIR=/opt/trade/resilience-reports",
         "PROD_HUMAN_REVIEW_REPORT_DIR=/opt/trade/human-review-reports",
         "PROD_ALERT_REPORT_DIR=/opt/trade/alert-reports",
-        "PROD_ALERT_WEBHOOK_TOKEN_FILE=/opt/trade/secrets/alertmanager-webhook-token",
+        "PROD_ALERT_WEBHOOK_TOKEN_FILE=/opt/trade/alertmanager-secrets/alertmanager-webhook-token",
         "PROD_ALERTMANAGER_DATA_DIR=/opt/trade/alertmanager",
         "PROD_FILING_REQUIRE_WORKSPACE_HEADER=true",
         "PROD_OTEL_ENABLED=true",
@@ -151,6 +151,13 @@ def test_production_env_and_deploy_fail_closed_for_filing_secrets() -> None:
     assert "ps --status running -q alertmanager" in deploy
     assert "openssl rand -hex 32" in deploy
     assert "alert webhook token must contain at least 32 characters" in deploy
+    assert 'chmod 0700 "$alert_token_dir"' not in deploy
+    assert (
+        "PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/"
+        "alertmanager-secrets/alertmanager-webhook-token"
+    ) in deploy
+    assert "umask 077" in deploy
+    assert "alert webhook token directory is not writable" in deploy
 
 
 def test_deploy_rejects_placeholder_filing_secrets_before_docker(

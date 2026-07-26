@@ -198,7 +198,7 @@ services:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
       - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_readonly:ro
-      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
+      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/alertmanager-secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -639,7 +639,7 @@ services:
       ]
     volumes:
       - ./ops/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro
-      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
+      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/alertmanager-secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
       - ${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}:/alertmanager
     expose:
       - "9093"
