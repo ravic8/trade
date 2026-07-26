@@ -309,14 +309,10 @@ def test_investigation_api_exposes_run_events_and_coverage(tmp_path: Path) -> No
         "claim_validation",
     }
     assert evaluation.status_code == 201
-    assert evaluation.json()["dataset_id"] == "nifty50-investigation-v2"
-    assert evaluation.json()["evaluator_version"] == (
-        "filing-investigation-evaluator-v2"
-    )
+    assert evaluation.json()["dataset_id"] == "nifty50-investigation-v3"
+    assert evaluation.json()["evaluator_version"] == ("filing-investigation-evaluator-v3")
     assert latest_evaluation.status_code == 200
-    assert latest_evaluation.json()["evaluation_id"] == (
-        evaluation.json()["evaluation_id"]
-    )
+    assert latest_evaluation.json()["evaluation_id"] == (evaluation.json()["evaluation_id"])
     assert runtime.store.audit_events(
         workspace_id="alpha",
         action="filing_investigation.evaluated",
@@ -363,9 +359,7 @@ def test_validation_report_detects_tool_policy_tampering(tmp_path: Path) -> None
     report = build_validation_report(tampered)
 
     assert report.status == "failed"
-    tool_check = next(
-        item for item in report.checks if item.check_id == "tool_policy"
-    )
+    tool_check = next(item for item in report.checks if item.check_id == "tool_policy")
     assert tool_check.status == "failed"
     assert "unapproved.web_search" in tool_check.metrics["called_tools"]
 
@@ -418,14 +412,8 @@ def test_investigation_evaluation_passes_all_available_hard_gates(
 
     assert report.status == "passed"
     assert report.score == 100
-    assert all(
-        suite.status == "passed"
-        for suite in report.suites
-        if suite.hard_gate
-    )
-    golden = next(
-        suite for suite in report.suites if suite.suite_id == "extraction_golden"
-    )
+    assert all(suite.status == "passed" for suite in report.suites if suite.hard_gate)
+    golden = next(suite for suite in report.suites if suite.suite_id == "extraction_golden")
     assert golden.status == "not_evaluated"
     assert golden.hard_gate is False
 
@@ -607,6 +595,10 @@ def test_top_ten_model_claims_are_validated_against_all_ranked_rows(
     ("question", "expected"),
     [
         ("For which stocks do you have data?", "coverage"),
+        (
+            "For which Nifty 50 stocks do you currently have approved filing data?",
+            "coverage",
+        ),
         ("What universe stocks do you have data for?", "coverage"),
         ("What are your capabilities and limitations?", "capabilities"),
         ("What are your capabilites?", "capabilities"),
@@ -627,6 +619,11 @@ def test_question_intent_classifier(question: str, expected: str) -> None:
     [
         (
             "For which stocks do you have data?",
+            "coverage",
+            ["filings.get_coverage"],
+        ),
+        (
+            "For which Nifty 50 stocks do you currently have approved filing data?",
             "coverage",
             ["filings.get_coverage"],
         ),
@@ -679,12 +676,12 @@ def test_system_questions_take_non_financial_graph_route(
     assert result["answer_validation"]["passed"] is True
     assert [item["tool"] for item in result["tool_calls"]] == expected_tools
     if answer_type == "coverage":
-        assert [
-            item["symbol"] for item in result["system_answer"]["available_companies"]
-        ] == ["INFY"]
-        assert [
-            item["symbol"] for item in result["system_answer"]["unavailable_companies"]
-        ] == ["TCS"]
+        assert [item["symbol"] for item in result["system_answer"]["available_companies"]] == [
+            "INFY"
+        ]
+        assert [item["symbol"] for item in result["system_answer"]["unavailable_companies"]] == [
+            "TCS"
+        ]
     else:
         assert result["system_answer"]["capabilities"]
         assert result["system_answer"]["limitations"]
@@ -716,14 +713,10 @@ def test_semantically_wrong_legacy_answer_fails_quality_gates(tmp_path: Path) ->
         idempotency_key="wrong-answer-quality",
     )
     completed = run_investigation_once(runtime, run.analysis_id)
-    wrong_result = {
-        **completed.result_payload,
-        "plan": {**completed.result_payload["plan"], "intent": "coverage"},
-    }
     legacy_wrong = completed.model_copy(
         update={
-            "question": "What are your capabilities and limitations?",
-            "result_payload": wrong_result,
+            "question": ("For which Nifty 50 stocks do you currently have approved filing data?"),
+            "result_payload": completed.result_payload,
         }
     )
 

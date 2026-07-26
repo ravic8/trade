@@ -905,6 +905,10 @@ export type FilingInvestigationResult = {
     repair_attempted?: boolean;
     repair_succeeded?: boolean;
     initial_failure?: string;
+    policy_intent?: string | null;
+    policy_confidence?: "high" | "low";
+    policy_rule_id?: string;
+    policy_enforced?: boolean;
     latency_ms?: number;
     usage?: Record<string, number>;
   };

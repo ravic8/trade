@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -23,6 +24,15 @@ InvestigationIntent = Literal[
 SYSTEM_INTENTS = {"coverage", "capabilities", "limitations"}
 
 
+class IntentPolicyDecision(BaseModel):
+    """High-confidence deterministic routing evidence, not an answer oracle."""
+
+    intent: InvestigationIntent | None
+    confidence: Literal["high", "low"]
+    rule_id: str
+    enforce: bool
+
+
 class InvestigationPlan(BaseModel):
     intent: InvestigationIntent
     metric: str
@@ -40,8 +50,13 @@ class InvestigationPlan(BaseModel):
         return normalized
 
 
-def classify_investigation_intent(question: str) -> InvestigationIntent:
-    """Deterministic semantic oracle used independently of the LLM planner."""
+def decide_investigation_intent(question: str) -> IntentPolicyDecision:
+    """Return a conservative routing decision for unambiguous objectives.
+
+    The policy is deliberately allowed to return no intent. Low-confidence text
+    must be interpreted by the structured planner instead of being coerced into
+    the financial ranking route.
+    """
     normalized = " ".join(question.lower().replace("’", "'").split())
     capability_terms = (
         "capabilities",
@@ -51,6 +66,9 @@ def classify_investigation_intent(question: str) -> InvestigationIntent:
         "how can you help",
         "what do you support",
         "what is supported",
+        "what analysis do you support",
+        "what can this filing agent do",
+        "what can the filing agent do",
     )
     limitation_terms = (
         "limitations",
@@ -60,45 +78,84 @@ def classify_investigation_intent(question: str) -> InvestigationIntent:
         "what can you not do",
         "unsupported",
     )
-    coverage_terms = (
-        "coverage",
-        "which stocks",
-        "what stocks",
-        "which companies",
-        "what companies",
-        "stocks do you have data",
-        "companies do you have data",
-        "data do you have",
-        "data available",
-        "what universe",
-        "which universe",
-    )
-    financial_terms = (
-        "rank",
-        "ranking",
-        "leader",
-        "growth",
-        "momentum",
-        "strongest",
-        "top ",
-        "compare",
-        "comparison",
-        "year-over-year",
-        "quarter-over-quarter",
-        "yoy",
-        "qoq",
-    )
     if any(term in normalized for term in capability_terms):
-        return "capabilities"
+        return IntentPolicyDecision(
+            intent="capabilities",
+            confidence="high",
+            rule_id="system.capabilities",
+            enforce=True,
+        )
     if any(term in normalized for term in limitation_terms):
-        return "limitations"
-    if any(term in normalized for term in financial_terms):
-        if "compare" in normalized and "rank" not in normalized:
-            return "compare_companies"
-        return "rank_growth"
-    if any(term in normalized for term in coverage_terms):
-        return "coverage"
-    return "rank_growth"
+        return IntentPolicyDecision(
+            intent="limitations",
+            confidence="high",
+            rule_id="system.limitations",
+            enforce=True,
+        )
+
+    # Explicit analytical verbs take precedence over a secondary request to
+    # explain coverage (for example, "rank ... and explain coverage").
+    financial_action = re.search(
+        r"\b(rank(?:ing|ed)?|leaders?|growth|momentum|strongest|top|"
+        r"compare|comparison|year[- ]over[- ]year|quarter[- ]over[- ]quarter|"
+        r"yoy|qoq)\b",
+        normalized,
+    )
+    if financial_action:
+        compare_only = bool(re.search(r"\bcompar(?:e|ison)\b", normalized)) and not bool(
+            re.search(r"\b(rank(?:ing|ed)?|leaders?|growth|momentum|top)\b", normalized)
+        )
+        return IntentPolicyDecision(
+            intent="compare_companies" if compare_only else "rank_growth",
+            confidence="high",
+            rule_id=("financial.compare_companies" if compare_only else "financial.rank_growth"),
+            enforce=True,
+        )
+
+    has_subject = bool(
+        re.search(r"\b(stocks?|companies|members?|constituents?|universe)\b", normalized)
+    )
+    has_data_object = bool(
+        re.search(r"\b(data|facts?|filings?|filing data|financial data)\b", normalized)
+    )
+    has_availability = bool(
+        re.search(
+            r"\b(have|has|available|availability|covered|coverage|represented|support)\b",
+            normalized,
+        )
+    )
+    coverage_question = (
+        "coverage" in normalized
+        or "approved filing data" in normalized
+        or "data do you have" in normalized
+        or "data is available" in normalized
+        or "data are available" in normalized
+        or (has_subject and has_availability and (has_data_object or "covered" in normalized))
+    )
+    if coverage_question:
+        return IntentPolicyDecision(
+            intent="coverage",
+            confidence="high",
+            rule_id="system.data_availability",
+            enforce=True,
+        )
+
+    return IntentPolicyDecision(
+        intent=None,
+        confidence="low",
+        rule_id="policy.no_high_confidence_match",
+        enforce=False,
+    )
+
+
+def classify_investigation_intent(question: str) -> InvestigationIntent:
+    """Backward-compatible deterministic fallback classification.
+
+    New runtime code should use :func:`decide_investigation_intent` so an
+    ambiguous objective can remain unclassified instead of silently becoming a
+    ranking request.
+    """
+    return decide_investigation_intent(question).intent or "rank_growth"
 
 
 class SynthesisClaim(BaseModel):

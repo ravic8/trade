@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 
 from trade_research.config import Settings
+from trade_research.filings.intent_evaluation import load_intent_evaluation_dataset
 
 Probe = Callable[[], str]
 
@@ -48,6 +49,9 @@ def verify_filing_production(
         _path_check(
             "golden_dataset",
             _container_path(settings.filing_golden_dataset_path, root),
+        ),
+        _intent_dataset_check(
+            _container_path(settings.filing_intent_evaluation_dataset_path, root)
         ),
         _langfuse_check(settings),
         _alerting_check(settings),
@@ -167,6 +171,25 @@ def _path_check(name: str, path: Path) -> ProductionReadinessCheck:
         name=name,
         passed=path.is_file(),
         detail="file is present" if path.is_file() else "required file is missing",
+    )
+
+
+def _intent_dataset_check(path: Path) -> ProductionReadinessCheck:
+    try:
+        dataset = load_intent_evaluation_dataset(path)
+    except (OSError, ValueError):
+        return ProductionReadinessCheck(
+            name="intent_evaluation_dataset",
+            passed=False,
+            detail="required intent dataset is missing or invalid",
+        )
+    return ProductionReadinessCheck(
+        name="intent_evaluation_dataset",
+        passed=True,
+        detail=(
+            f"versioned intent dataset {dataset.dataset_id} contains "
+            f"{len(dataset.cases)} labeled cases"
+        ),
     )
 
 

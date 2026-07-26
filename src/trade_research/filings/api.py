@@ -574,7 +574,10 @@ def filing_investigation_validation(
     run = runtime.store.investigation(analysis_id, workspace_id)
     if not run:
         raise HTTPException(status_code=404, detail="filing investigation not found")
-    return build_validation_report(run)
+    return build_validation_report(
+        run,
+        intent_dataset_path=runtime.settings.filing_intent_evaluation_dataset_path,
+    )
 
 
 @router.post(
@@ -601,9 +604,7 @@ def evaluate_filing_investigation(
             status_code=409,
             detail="filing investigation must be terminal before evaluation",
         )
-    report = runtime.store.record_investigation_evaluation(
-        evaluate_investigation(runtime, run=run)
-    )
+    report = runtime.store.record_investigation_evaluation(evaluate_investigation(runtime, run=run))
     runtime.store.record_audit_event(
         workspace_id=workspace_id,
         actor_id=actor_id,

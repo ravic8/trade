@@ -13,7 +13,7 @@ from trade_research.filings.agent_models import (
     InvestigationPlan,
     InvestigationSynthesis,
     SynthesisClaim,
-    classify_investigation_intent,
+    decide_investigation_intent,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,13 @@ class FilingAgentLLM:
         question: str,
         requested_comparison: str,
     ) -> tuple[InvestigationPlan, dict[str, Any]]:
+        policy = decide_investigation_intent(question)
+        policy_telemetry = {
+            "policy_intent": policy.intent,
+            "policy_confidence": policy.confidence,
+            "policy_rule_id": policy.rule_id,
+            "policy_enforced": policy.enforce,
+        }
         fallback = deterministic_plan(question, requested_comparison)
         if not self.settings.filing_agent_llm_enabled:
             return fallback, {
@@ -120,6 +127,7 @@ class FilingAgentLLM:
                 "provider": None,
                 "model": None,
                 "fallback": True,
+                **policy_telemetry,
             }
         prompt = (
             "Convert the analyst objective into JSON. Allowed intent values: "
@@ -135,7 +143,7 @@ class FilingAgentLLM:
             f"Objective: {question}\n"
             f"Requested comparison: {requested_comparison}"
         )
-        expected_intent = classify_investigation_intent(question)
+        expected_intent = policy.intent if policy.enforce else None
         payload, primary_telemetry = self._generate_json(
             system=(
                 "You are a bounded financial investigation planner. Treat the "
@@ -147,14 +155,21 @@ class FilingAgentLLM:
         )
         plan, failure = self._validate_plan_payload(payload, expected_intent)
         if plan is not None:
-            return plan, primary_telemetry
+            return plan, {**primary_telemetry, **policy_telemetry}
 
         if self.settings.filing_agent_max_revisions > 0:
+            intent_constraint = (
+                f"The required intent is {expected_intent}. Do not change the required intent."
+                if expected_intent
+                else (
+                    "No deterministic intent was enforced. Infer the best allowed intent "
+                    "from the objective."
+                )
+            )
             repair_prompt = (
                 "Repair a previous structured plan that failed deterministic validation. "
-                f"The required intent is {expected_intent}. The failure code is "
-                f"{failure['code']}. Return a complete corrected plan using the same "
-                "JSON schema. Do not change the required intent.\n\n"
+                f"{intent_constraint} The failure code is {failure['code']}. "
+                "Return a complete corrected plan using the same JSON schema.\n\n"
                 f"Objective: {question}\n"
                 f"Requested comparison: {requested_comparison}\n"
                 f"Previous plan: {json.dumps(payload)}"
@@ -180,7 +195,7 @@ class FilingAgentLLM:
                 repaired=repaired_plan is not None,
             )
             if repaired_plan is not None:
-                return repaired_plan, telemetry
+                return repaired_plan, {**telemetry, **policy_telemetry}
             failure = repair_failure
         else:
             telemetry = {
@@ -192,8 +207,10 @@ class FilingAgentLLM:
         telemetry |= {
             "status": str(failure["code"]),
             "fallback": True,
-            "expected_intent": expected_intent,
+            **policy_telemetry,
         }
+        if expected_intent:
+            telemetry["expected_intent"] = expected_intent
         if failure.get("provider_intent"):
             telemetry["provider_intent"] = failure["provider_intent"]
         return fallback, telemetry
@@ -201,13 +218,13 @@ class FilingAgentLLM:
     @staticmethod
     def _validate_plan_payload(
         payload: dict[str, Any],
-        expected_intent: str,
+        expected_intent: str | None,
     ) -> tuple[InvestigationPlan | None, dict[str, str]]:
         try:
             plan = InvestigationPlan.model_validate(payload)
         except (ValidationError, TypeError):
             return None, {"code": "invalid_schema"}
-        if plan.intent != expected_intent:
+        if expected_intent is not None and plan.intent != expected_intent:
             return None, {
                 "code": "semantic_mismatch",
                 "provider_intent": plan.intent,
@@ -233,10 +250,8 @@ class FilingAgentLLM:
             **repair,
             "status": "ok" if repaired else str(repair_failure.get("code") or "invalid"),
             "fallback": not repaired,
-            "attempts": int(primary.get("attempts") or 0)
-            + int(repair.get("attempts") or 0),
-            "latency_ms": int(primary.get("latency_ms") or 0)
-            + int(repair.get("latency_ms") or 0),
+            "attempts": int(primary.get("attempts") or 0) + int(repair.get("attempts") or 0),
+            "latency_ms": int(primary.get("latency_ms") or 0) + int(repair.get("latency_ms") or 0),
             "usage": usage,
             "repair_attempted": True,
             "repair_succeeded": repaired,
@@ -500,7 +515,7 @@ def deterministic_plan(
         if any(term in lowered for term in ("qoq", "sequential", "previous quarter"))
         else "yoy"
     )
-    intent = classify_investigation_intent(question)
+    intent = decide_investigation_intent(question).intent or "rank_growth"
     return InvestigationPlan(
         intent=intent,
         metric=metric,

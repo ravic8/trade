@@ -304,7 +304,7 @@ export function LensAgentPage() {
               )}
             </article>
             <article>
-              <span>Planner</span>
+              <span>Planner and routing policy</span>
               <strong>
                 {result.planner_telemetry?.provider ?? "deterministic"} ·{" "}
                 {result.planner_telemetry?.model ?? "safe fallback"}
@@ -317,6 +317,9 @@ export function LensAgentPage() {
                     : "Provider plan accepted"}
                 {result.planner_telemetry?.latency_ms
                   ? ` · ${result.planner_telemetry.latency_ms} ms`
+                  : ""}
+                {result.planner_telemetry?.policy_rule_id
+                  ? ` · policy ${result.planner_telemetry.policy_intent ?? "deferred to model"} (${result.planner_telemetry.policy_confidence ?? "unknown"}, ${result.planner_telemetry.policy_rule_id})`
                   : ""}
               </small>
             </article>
