@@ -22,6 +22,7 @@ from trade_research.filings.models import (
     FilingUniverseSnapshot,
     FinancialFact,
     IntelligenceObject,
+    InvestigationEvaluationReport,
     InvestigationEvent,
     InvestigationRun,
     InvestigationStatus,
@@ -41,6 +42,7 @@ from trade_research.filings.tables import (
     filing_evidence_table,
     filing_index_runs_table,
     filing_intelligence_objects_table,
+    filing_investigation_evaluations_table,
     filing_investigation_events_table,
     filing_investigation_runs_table,
     filing_metadata,
@@ -1436,6 +1438,49 @@ class FilingStore:
         with self.engine.connect() as connection:
             rows = connection.execute(query).mappings().all()
         return [InvestigationEvent.model_validate(dict(row)) for row in rows]
+
+    def record_investigation_evaluation(
+        self,
+        report: InvestigationEvaluationReport,
+    ) -> InvestigationEvaluationReport:
+        row = {
+            "evaluation_id": report.evaluation_id,
+            "analysis_id": report.analysis_id,
+            "workspace_id": report.workspace_id,
+            "dataset_id": report.dataset_id,
+            "evaluator_version": report.evaluator_version,
+            "status": report.status,
+            "score": report.score,
+            "report_payload": report.model_dump(mode="json"),
+            "trace_id": report.trace_id,
+            "created_at": report.created_at,
+        }
+        with self.engine.begin() as connection:
+            connection.execute(filing_investigation_evaluations_table.insert(), row)
+        return report
+
+    def latest_investigation_evaluation(
+        self,
+        *,
+        analysis_id: str,
+        workspace_id: str,
+    ) -> InvestigationEvaluationReport | None:
+        query = (
+            select(filing_investigation_evaluations_table.c.report_payload)
+            .where(
+                filing_investigation_evaluations_table.c.analysis_id == analysis_id,
+                filing_investigation_evaluations_table.c.workspace_id == workspace_id,
+            )
+            .order_by(filing_investigation_evaluations_table.c.created_at.desc())
+            .limit(1)
+        )
+        with self.engine.connect() as connection:
+            payload = connection.execute(query).scalar_one_or_none()
+        return (
+            InvestigationEvaluationReport.model_validate(payload)
+            if payload is not None
+            else None
+        )
 
     def _append_investigation_event(
         self,

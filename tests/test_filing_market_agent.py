@@ -19,6 +19,10 @@ from trade_research.filings.models import (
     EvidenceReference,
     InvestigationStatus,
 )
+from trade_research.filings.quality import (
+    build_validation_report,
+    evaluate_investigation,
+)
 from trade_research.filings.runtime import FilingRuntime
 from trade_research.filings.store import stable_id, utc_now
 from trade_research.filings.tables import filing_approved_facts_table
@@ -264,6 +268,21 @@ def test_investigation_api_exposes_run_events_and_coverage(tmp_path: Path) -> No
                 f"/api/filings/investigations/{analysis_id}/events",
                 headers={"X-Workspace-ID": "alpha"},
             )
+            validation = client.get(
+                f"/api/filings/investigations/{analysis_id}/validation",
+                headers={"X-Workspace-ID": "alpha"},
+            )
+            evaluation = client.post(
+                f"/api/filings/investigations/{analysis_id}/evaluations",
+                headers={
+                    "X-Workspace-ID": "alpha",
+                    "X-Actor-ID": "analyst@example.test",
+                },
+            )
+            latest_evaluation = client.get(
+                f"/api/filings/investigations/{analysis_id}/evaluations/latest",
+                headers={"X-Workspace-ID": "alpha"},
+            )
     finally:
         app.dependency_overrides.clear()
 
@@ -274,6 +293,138 @@ def test_investigation_api_exposes_run_events_and_coverage(tmp_path: Path) -> No
     assert submitted.json()["run"]["result_payload"]["ranking"]["ranked_count"] == 1
     assert events.status_code == 200
     assert events.json()[-1]["node"] == "completed"
+    assert validation.status_code == 200
+    assert validation.json()["status"] == "passed"
+    assert validation.json()["retrieval_mode"] == "structured_financial_retrieval"
+    assert {item["check_id"] for item in validation.json()["checks"]} == {
+        "execution",
+        "plan_schema",
+        "universe_coverage",
+        "tool_policy",
+        "structured_retrieval",
+        "evidence_resolution",
+        "claim_validation",
+    }
+    assert evaluation.status_code == 201
+    assert evaluation.json()["dataset_id"] == "nifty50-investigation-v1"
+    assert evaluation.json()["evaluator_version"] == (
+        "filing-investigation-evaluator-v1"
+    )
+    assert latest_evaluation.status_code == 200
+    assert latest_evaluation.json()["evaluation_id"] == (
+        evaluation.json()["evaluation_id"]
+    )
+    assert runtime.store.audit_events(
+        workspace_id="alpha",
+        action="filing_investigation.evaluated",
+    )
+
+
+def test_validation_report_detects_tool_policy_tampering(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.store.record_universe_snapshot(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        effective_date=date(2026, 7, 26),
+        source_url="https://nsearchives.nseindia.com/nifty50.csv",
+        source_hash="9" * 64,
+        members=[
+            {"company_id": "NSE:INFY", "symbol": "INFY", "name": "Infosys"},
+        ],
+    )
+    for period_end, value in (
+        (date(2026, 6, 30), "120"),
+        (date(2025, 6, 30), "100"),
+    ):
+        _seed_fact(
+            runtime,
+            company_id="NSE:INFY",
+            period_end=period_end,
+            value=value,
+        )
+    run, _ = runtime.store.create_investigation(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        question="Rank Nifty 50 companies by year-over-year net profit growth.",
+        request_payload={
+            "strict_evidence": True,
+            "comparison": "yoy",
+            "max_tool_calls": 8,
+        },
+        idempotency_key="quality-tamper-test",
+    )
+    completed = run_investigation_once(runtime, run.analysis_id)
+    tampered = completed.model_copy(deep=True)
+    tampered.result_payload["tool_calls"][1]["tool"] = "unapproved.web_search"
+
+    report = build_validation_report(tampered)
+
+    assert report.status == "failed"
+    tool_check = next(
+        item for item in report.checks if item.check_id == "tool_policy"
+    )
+    assert tool_check.status == "failed"
+    assert "unapproved.web_search" in tool_check.metrics["called_tools"]
+
+
+def test_investigation_evaluation_passes_all_available_hard_gates(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.settings.filing_golden_dataset_path = tmp_path / "not-installed.json"
+    runtime.store.record_universe_snapshot(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        effective_date=date(2026, 7, 26),
+        source_url="https://nsearchives.nseindia.com/nifty50.csv",
+        source_hash="8" * 64,
+        members=[
+            {"company_id": "NSE:INFY", "symbol": "INFY", "name": "Infosys"},
+        ],
+    )
+    for period_end, value in (
+        (date(2026, 6, 30), "120"),
+        (date(2025, 6, 30), "100"),
+    ):
+        _seed_fact(
+            runtime,
+            company_id="NSE:INFY",
+            period_end=period_end,
+            value=value,
+        )
+    run, _ = runtime.store.create_investigation(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        question="Rank Nifty 50 companies by year-over-year net profit growth.",
+        request_payload={
+            "strict_evidence": True,
+            "comparison": "yoy",
+            "max_tool_calls": 8,
+        },
+        idempotency_key="quality-pass-test",
+    )
+    completed = run_investigation_once(runtime, run.analysis_id).model_copy(deep=True)
+    completed.result_payload["planner_telemetry"] = {
+        "status": "ok",
+        "provider": "openai",
+        "model": "test-model",
+        "fallback": False,
+    }
+
+    report = evaluate_investigation(runtime, run=completed)
+
+    assert report.status == "passed"
+    assert report.score == 100
+    assert all(
+        suite.status == "passed"
+        for suite in report.suites
+        if suite.hard_gate
+    )
+    golden = next(
+        suite for suite in report.suites if suite.suite_id == "extraction_golden"
+    )
+    assert golden.status == "not_evaluated"
+    assert golden.hard_gate is False
 
 
 def test_model_prose_is_canonicalized_from_cited_rows(

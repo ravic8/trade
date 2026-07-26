@@ -501,6 +501,51 @@ class InvestigationSubmission(BaseModel):
     events_url: str
 
 
+class InvestigationQualityCheck(BaseModel):
+    check_id: str
+    label: str
+    status: Literal["passed", "failed", "warning", "not_evaluated"]
+    detail: str
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationValidationReport(BaseModel):
+    analysis_id: str
+    status: Literal["passed", "failed", "partial"]
+    retrieval_mode: Literal["structured_financial_retrieval"] = (
+        "structured_financial_retrieval"
+    )
+    checks: list[InvestigationQualityCheck]
+    generated_at: datetime
+
+
+class InvestigationEvaluationSuite(BaseModel):
+    suite_id: str
+    label: str
+    status: Literal["passed", "failed", "not_evaluated"]
+    score: float = Field(ge=0, le=100)
+    hard_gate: bool = True
+    summary: str
+    checks: list[InvestigationQualityCheck] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationEvaluationReport(BaseModel):
+    evaluation_id: str
+    analysis_id: str
+    workspace_id: str
+    dataset_id: str
+    evaluator_version: str
+    status: Literal["passed", "failed"]
+    score: float = Field(ge=0, le=100)
+    retrieval_mode: Literal["structured_financial_retrieval"] = (
+        "structured_financial_retrieval"
+    )
+    suites: list[InvestigationEvaluationSuite]
+    trace_id: str | None = None
+    created_at: datetime
+
+
 class FilingUniverseSnapshot(BaseModel):
     snapshot_id: str
     workspace_id: str

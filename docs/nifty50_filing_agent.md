@@ -152,9 +152,12 @@ The user-facing route is `/lens`. It includes:
 - bounded investigation presets and a question composer;
 - live Nifty 50 coverage and exclusion counts;
 - durable LangGraph node progress;
+- the typed LLM plan and exact bounded tool trajectory;
 - cited synthesis and deterministic ranking;
 - an evidence drawer with filing ID/version, XBRL concept, context, source
-  hash, and source snippet.
+  hash, and source snippet;
+- explicit exclusions with machine-readable reasons;
+- seven validation gates and a persisted five-suite evaluation scorecard.
 
 API endpoints:
 
@@ -165,6 +168,9 @@ API endpoints:
 | `POST` | `/api/filings/investigations` | Idempotent investigation submission |
 | `GET` | `/api/filings/investigations/{id}` | Durable run and result |
 | `GET` | `/api/filings/investigations/{id}/events` | Node event timeline |
+| `GET` | `/api/filings/investigations/{id}/validation` | Recomputed runtime gates |
+| `POST` | `/api/filings/investigations/{id}/evaluations` | Persisted quality evaluation |
+| `GET` | `/api/filings/investigations/{id}/evaluations/latest` | Latest scorecard |
 
 CLI can submit the same workflow:
 
@@ -193,7 +199,8 @@ During the demo:
 3. let the graph timeline demonstrate planning and tool use;
 4. show the ranking and explain excluded companies;
 5. open a citation and show its XBRL concept, period, source hash, and snippet;
-6. open Langfuse and correlate the trace without exposing raw filing text.
+6. show all validation gates and run the persisted quality scorecard;
+7. open Langfuse and correlate the trace without exposing raw filing text.
 
 The honest claim is: this is a production-architected, evidence-grounded agent
 running over the subset of Nifty 50 companies whose filing packs have been
@@ -204,7 +211,7 @@ coverage gate reports it.
 
 The feature is demo-ready when:
 
-- migration `20260726_0011` is at head;
+- migration `20260726_0012` is at head;
 - the Nifty 50 snapshot contains exactly 50 unique symbols;
 - acquisition/import reports enumerate successes and failures;
 - the coverage endpoint reports represented and eligible companies;

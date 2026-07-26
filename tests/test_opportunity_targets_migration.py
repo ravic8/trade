@@ -44,8 +44,23 @@ def test_opportunity_target_migration_creates_durable_table(
         "date",
         "target_version",
     }
+    assert {
+        "evaluation_id",
+        "analysis_id",
+        "workspace_id",
+        "dataset_id",
+        "evaluator_version",
+        "status",
+        "score",
+        "report_payload",
+        "trace_id",
+        "created_at",
+    } == {
+        column["name"]
+        for column in inspector.get_columns("filing_investigation_evaluations")
+    }
     with engine.begin() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "20260726_0011"
+            == "20260726_0012"
         )
