@@ -426,7 +426,11 @@ def deterministic_synthesis(
             ),
             citation_ids=list(row["citation_ids"]),
         )
-        for row in rows[:5]
+        # The comparison tool already applies the bounded investigation limit.
+        # Keep the canonical claim inventory aligned with the structured
+        # synthesis schema so valid lower-ranked claims are not rejected merely
+        # because the deterministic reference set was truncated earlier.
+        for row in rows[: min(plan.limit, 12)]
     ]
     represented = int(coverage.get("represented_company_count") or 0)
     members = int(coverage.get("member_count") or 0)
