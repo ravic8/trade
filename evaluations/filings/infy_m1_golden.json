@@ -2,8 +2,8 @@
   "schema_version": 1,
   "dataset_id": "infy-m1-13q-core-v1",
   "company_id": "NSE:INFY",
-  "source_manifest": "data/filings/nse/INFY/manifest.json",
-  "source_manifest_sha256": "df6cfa1561de902f27fe80025b2c4416c1b6ac517a8f8001f80b1ce9d617721f",
+  "source_manifest": "evaluations/filings/infy_m1_locked_sources.json",
+  "source_manifest_sha256": "e8d952259ec9f235987e97782fd582dd43561955725b2c31af1961b97a85526f",
   "locked_at": "2026-07-24T00:00:00+05:30",
   "review_status": "seeded_from_exact_nse_xbrl_pending_dual_analyst_signoff",
   "cases": [

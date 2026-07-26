@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 
 from trade_research.config import Settings
-from trade_research.filings.agent_llm import FilingAgentLLM
+from trade_research.filings.agent_llm import FilingAgentLLM, deterministic_synthesis
 from trade_research.filings.agent_models import InvestigationPlan
 
 
@@ -287,8 +287,10 @@ def test_provider_error_telemetry_excludes_message_and_request_data() -> None:
     )
     http_client.close()
 
-    assert telemetry["status"] == "invalid"
+    assert telemetry["status"] == "invalid_schema"
     assert telemetry["fallback"] is True
+    assert telemetry["repair_attempted"] is True
+    assert telemetry["repair_succeeded"] is False
     assert telemetry["http_status"] == 400
     assert telemetry["provider_error_type"] == "invalid_request_error"
     assert telemetry["provider_error_param"] == "max_tokens"
@@ -339,3 +341,85 @@ def test_semantically_wrong_provider_intent_is_recorded_and_safely_corrected() -
     assert telemetry["fallback"] is True
     assert telemetry["provider_intent"] == "coverage"
     assert telemetry["expected_intent"] == "capabilities"
+
+
+def test_invalid_provider_plan_is_repaired_within_bounded_revision() -> None:
+    responses = [
+        {
+            "intent": "rank_growth",
+            "metric": "net_profit",
+            "comparison": "yoy",
+            "limit": "Nifty 50",
+            "scope": "consolidated",
+            "rationale": None,
+        },
+        {
+            "intent": "rank_growth",
+            "metric": "net_profit",
+            "comparison": "yoy",
+            "limit": 10,
+            "scope": "consolidated",
+            "rationale": "Rank comparable approved facts.",
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps(responses.pop(0))}}],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                },
+            },
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = FilingAgentLLM(
+        _settings(provider="openai", model="gpt-5.4-nano"),
+        http_client=http_client,
+    )
+
+    plan, telemetry = client.plan(
+        question="Rank Nifty 50 companies by year-over-year net-profit growth.",
+        requested_comparison="yoy",
+    )
+    http_client.close()
+
+    assert plan.intent == "rank_growth"
+    assert plan.limit == 10
+    assert telemetry["status"] == "ok"
+    assert telemetry["fallback"] is False
+    assert telemetry["repair_attempted"] is True
+    assert telemetry["repair_succeeded"] is True
+    assert telemetry["initial_failure"] == "invalid_schema"
+    assert telemetry["usage"]["total_tokens"] == 240
+
+
+def test_deterministic_summary_distinguishes_eligible_from_displayed_rows() -> None:
+    synthesis = deterministic_synthesis(
+        plan=InvestigationPlan(
+            intent="rank_growth",
+            metric="net_profit",
+            comparison="yoy",
+            limit=10,
+        ),
+        comparison={
+            "eligible_count": 39,
+            "rows": [
+                {
+                    "name": "Infosys",
+                    "symbol": "INFY",
+                    "percent_change": "10.00",
+                    "citation_ids": ["c1", "c2"],
+                }
+            ],
+        },
+        coverage={"represented_company_count": 40, "member_count": 50},
+    )
+
+    assert "Found 39 companies" in synthesis.summary
+    assert "displaying the top 1" in synthesis.summary
+    assert "Ranked 39 companies" not in synthesis.summary

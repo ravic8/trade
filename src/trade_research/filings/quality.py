@@ -180,6 +180,26 @@ def evaluate_investigation(
                 else "The deterministic safety fallback was used."
             ),
         ),
+        _check(
+            "planner_repair",
+            "Bounded planner repair",
+            planner.get("repair_attempted") is not True
+            or planner.get("repair_succeeded") is True,
+            (
+                "The initial provider plan passed without repair."
+                if planner.get("repair_attempted") is not True
+                else "The provider repaired its structured plan within one revision."
+                if planner.get("repair_succeeded") is True
+                else "The bounded provider repair failed; deterministic fallback was used."
+            ),
+            metrics={
+                "repair_attempted": planner.get("repair_attempted", False),
+                "repair_succeeded": planner.get("repair_succeeded", False),
+                "initial_failure": planner.get("initial_failure"),
+                "primary_status": planner.get("primary_status"),
+                "repair_status": planner.get("repair_status"),
+            },
+        ),
     ]
     expected_intent = classify_investigation_intent(run.question)
     suites = [

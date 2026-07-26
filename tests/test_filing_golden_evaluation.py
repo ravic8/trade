@@ -15,12 +15,14 @@ from trade_research.filings.runtime import FilingRuntime
 
 INFY_MANIFEST = Path("data/filings/nse/INFY/manifest.json")
 INFY_GOLDEN = Path("evaluations/filings/infy_m1_golden.json")
+INFY_LOCKED_SOURCES = Path("evaluations/filings/infy_m1_locked_sources.json")
 
 
 def test_infy_golden_dataset_contract_is_locked() -> None:
-    dataset = load_golden_dataset(INFY_GOLDEN, verify_manifest=False)
+    dataset = load_golden_dataset(INFY_GOLDEN)
 
     assert dataset.dataset_id == "infy-m1-13q-core-v1"
+    assert dataset.source_manifest == str(INFY_LOCKED_SOURCES)
     assert len(dataset.cases) == 13
     assert sum(len(case.expected_facts) for case in dataset.cases) == 52
     assert dataset.review_status.endswith("pending_dual_analyst_signoff")
@@ -94,12 +96,8 @@ def test_infy_13_quarter_golden_dataset_passes_end_to_end(tmp_path: Path) -> Non
     assert report.defects == []
 
 
-@pytest.mark.skipif(
-    not INFY_MANIFEST.is_file(),
-    reason="local licensed/downloaded INFY filing pack is not present",
-)
 def test_golden_lock_allows_additive_manifest_evolution(tmp_path: Path) -> None:
-    manifest_payload = json.loads(INFY_MANIFEST.read_text(encoding="utf-8"))
+    manifest_payload = json.loads(INFY_LOCKED_SOURCES.read_text(encoding="utf-8"))
     manifest_payload["documents"].append(
         {
             "filename": "future-additive-document.xml",
@@ -107,7 +105,7 @@ def test_golden_lock_allows_additive_manifest_evolution(tmp_path: Path) -> None:
             "acquisition_status": "success",
         }
     )
-    manifest = tmp_path / "data/filings/nse/INFY/manifest.json"
+    manifest = tmp_path / INFY_LOCKED_SOURCES
     manifest.parent.mkdir(parents=True)
     manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
 
@@ -116,20 +114,16 @@ def test_golden_lock_allows_additive_manifest_evolution(tmp_path: Path) -> None:
     assert len(dataset.cases) == 13
 
 
-@pytest.mark.skipif(
-    not INFY_MANIFEST.is_file(),
-    reason="local licensed/downloaded INFY filing pack is not present",
-)
 def test_golden_lock_rejects_missing_locked_source(tmp_path: Path) -> None:
     dataset = load_golden_dataset(INFY_GOLDEN, verify_manifest=False)
     missing_case = dataset.cases[0]
-    manifest_payload = json.loads(INFY_MANIFEST.read_text(encoding="utf-8"))
+    manifest_payload = json.loads(INFY_LOCKED_SOURCES.read_text(encoding="utf-8"))
     manifest_payload["documents"] = [
         item
         for item in manifest_payload["documents"]
         if item.get("sha256") != missing_case.source_sha256
     ]
-    manifest = tmp_path / "data/filings/nse/INFY/manifest.json"
+    manifest = tmp_path / INFY_LOCKED_SOURCES
     manifest.parent.mkdir(parents=True)
     manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
 

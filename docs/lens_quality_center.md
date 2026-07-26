@@ -50,9 +50,17 @@ hidden behind an aggregate score.
   questions;
 - the locked 13-quarter INFY extraction baseline (52 values and evidence links).
 
-The locked extraction suite accepts additive operational-manifest evolution only
-when every locked filename and SHA-256 source remains present. It still fails if
-any locked source disappears or changes.
+The extraction baseline references the immutable
+`evaluations/filings/infy_m1_locked_sources.json` provenance index instead of the
+mutable acquisition manifest. Its exact hash is locked by the golden dataset;
+additive compatibility remains supported for controlled fixture evolution, while
+a missing or changed locked source still fails.
+
+The planner may perform one bounded structured repair when its first response is
+schema-invalid or selects the wrong intent. Repair attempts, original failure
+codes, provider statuses, latency, and combined token usage are retained in
+planner telemetry and exposed by the UI. A failed repair remains a release-gate
+failure and uses the deterministic safety plan.
 
 `GET /api/filings/investigations/{analysis_id}/evaluations/latest` returns the
 latest immutable scorecard. Hard-gate failure makes the evaluation fail even when

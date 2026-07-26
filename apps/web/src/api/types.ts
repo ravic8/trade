@@ -902,6 +902,9 @@ export type FilingInvestigationResult = {
     model?: string;
     status?: string;
     fallback?: boolean;
+    repair_attempted?: boolean;
+    repair_succeeded?: boolean;
+    initial_failure?: string;
     latency_ms?: number;
     usage?: Record<string, number>;
   };
