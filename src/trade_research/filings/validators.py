@@ -87,9 +87,7 @@ class FilingFactValidator:
             defect.severity in {ValidationSeverity.BLOCKING, ValidationSeverity.ERROR}
             for defect in defects
         )
-        requires_review = any(
-            status == ValidationStatus.REVIEW for status in statuses.values()
-        )
+        requires_review = any(status == ValidationStatus.REVIEW for status in statuses.values())
         return ValidationResult(
             defects=defects,
             candidate_statuses=statuses,
@@ -97,9 +95,7 @@ class FilingFactValidator:
             requires_review=requires_review,
         )
 
-    def _candidate_defects(
-        self, run_id: str, candidate: dict[str, Any]
-    ) -> list[ValidationDefect]:
+    def _candidate_defects(self, run_id: str, candidate: dict[str, Any]) -> list[ValidationDefect]:
         candidate_id = str(candidate["candidate_id"])
         defects: list[ValidationDefect] = []
 
@@ -194,11 +190,12 @@ class FilingFactValidator:
         self, run_id: str, candidates: list[dict[str, Any]]
     ) -> list[ValidationDefect]:
         grouped: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = defaultdict(dict)
-        duplicate_values: dict[
-            tuple[Any, ...], dict[str, list[dict[str, Any]]]
-        ] = defaultdict(lambda: defaultdict(list))
+        duplicate_values: dict[tuple[Any, ...], dict[str, list[dict[str, Any]]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         for candidate in candidates:
             key = (
+                candidate.get("period_start"),
                 candidate.get("period_end"),
                 candidate.get("period_type"),
                 candidate.get("consolidation_scope"),
@@ -246,28 +243,63 @@ class FilingFactValidator:
                 right_positive=("total_expenses", "profit_before_exceptional_items_and_tax"),
                 tolerance_ratio=Decimal("0.005"),
             )
-            if all(name in metrics for name in ("profit_before_tax", "tax_expense", "net_profit")):
-                pbt = _value(metrics["profit_before_tax"])
-                tax = _value(metrics["tax_expense"])
-                net = _value(metrics["net_profit"])
-                expected = pbt - tax
-                if not _close(expected, net, Decimal("0.01")):
-                    defects.append(
-                        self._defect(
-                            run_id,
-                            str(metrics["net_profit"]["candidate_id"]),
-                            "accounting.profit_after_tax",
-                            ValidationSeverity.WARNING,
-                            "net profit does not reconcile to profit before tax less tax expense",
-                            {
-                                "profit_before_tax": str(pbt),
-                                "tax_expense": str(tax),
-                                "net_profit": str(net),
-                                "expected": str(expected),
-                            },
-                        )
-                    )
+            self._profit_after_tax_defect(run_id, metrics, defects)
         return defects
+
+    def _profit_after_tax_defect(
+        self,
+        run_id: str,
+        metrics: dict[str, dict[str, Any]],
+        defects: list[ValidationDefect],
+    ) -> None:
+        if not all(name in metrics for name in ("profit_before_tax", "tax_expense")):
+            return
+
+        # ProfitLossForPeriod may include discontinued operations. The tax
+        # reconciliation therefore targets continuing operations when the NSE
+        # XBRL instance reports that concept, and only falls back to total
+        # profit when no continuing-operations fact is available.
+        target_metric = next(
+            (name for name in ("net_profit_continuing", "net_profit") if name in metrics),
+            None,
+        )
+        if target_metric is None:
+            return
+
+        pbt = _value(metrics["profit_before_tax"])
+        tax = _value(metrics["tax_expense"])
+        profit_after_tax = _value(metrics[target_metric])
+        subtractive_expected = pbt - tax
+        additive_expected = pbt + tax
+
+        # NSE instances use both positive-expense and signed-line-item
+        # presentation for TaxExpense. Accept either deterministic identity;
+        # values matching neither continue to require human review.
+        if _close(subtractive_expected, profit_after_tax, Decimal("0.01")) or _close(
+            additive_expected, profit_after_tax, Decimal("0.01")
+        ):
+            return
+
+        defects.append(
+            self._defect(
+                run_id,
+                str(metrics[target_metric]["candidate_id"]),
+                "accounting.profit_after_tax",
+                ValidationSeverity.WARNING,
+                (f"{target_metric} does not reconcile to profit before tax and tax expense"),
+                {
+                    "profit_before_tax": str(pbt),
+                    "tax_expense": str(tax),
+                    "target_metric": target_metric,
+                    "profit_after_tax": str(profit_after_tax),
+                    # Retain the original key for operational tooling that
+                    # consumed this context before target selection existed.
+                    "net_profit": str(profit_after_tax),
+                    "expected": str(subtractive_expected),
+                    "alternate_expected": str(additive_expected),
+                },
+            )
+        )
 
     def _equation(
         self,
