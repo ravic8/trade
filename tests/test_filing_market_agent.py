@@ -351,9 +351,99 @@ def test_model_prose_is_canonicalized_from_cited_rows(
     synthesis = completed.result_payload["synthesis"]
     assert synthesis["model_used"] is True
     assert synthesis["title"] == "Nifty 50 Net Profit YOY Comparison"
-    assert synthesis["claims"][0]["text"] == (
-        "TCS (TCS) reported 30.00% YOY change in net profit."
-    )
+    assert synthesis["claims"][0]["text"] == ("TCS (TCS) reported 30.00% YOY change in net profit.")
     assert "999" not in str(synthesis)
     assert "investment advice" not in str(synthesis)
     assert completed.result_payload["claim_validation"]["canonicalized_claims"] == 1
+
+
+def test_top_ten_model_claims_are_validated_against_all_ranked_rows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime = _runtime(tmp_path, agent_enabled=True)
+    members = [
+        {
+            "company_id": f"NSE:COMPANY{index}",
+            "symbol": f"COMPANY{index}",
+            "name": f"Company {index}",
+        }
+        for index in range(1, 11)
+    ]
+    runtime.store.record_universe_snapshot(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        effective_date=date(2026, 7, 26),
+        source_url="https://nsearchives.nseindia.com/nifty50.csv",
+        source_hash="e" * 64,
+        members=members,
+    )
+    for index, member in enumerate(members, start=1):
+        _seed_fact(
+            runtime,
+            company_id=member["company_id"],
+            period_end=date(2026, 6, 30),
+            value=str(100 + index),
+        )
+        _seed_fact(
+            runtime,
+            company_id=member["company_id"],
+            period_end=date(2025, 6, 30),
+            value="100",
+        )
+
+    def fake_plan(self, **_):
+        return (
+            InvestigationPlan(
+                intent="rank_growth",
+                metric="net_profit",
+                comparison="yoy",
+                limit=10,
+            ),
+            {"status": "ok", "provider": "openai", "model": "test-model"},
+        )
+
+    def fake_synthesis(self, **kwargs):
+        rows = kwargs["comparison"]["rows"]
+        return InvestigationSynthesis(
+            title="Model title",
+            summary="Model summary",
+            claims=[
+                SynthesisClaim(
+                    text=f"Model-authored claim {index}",
+                    citation_ids=list(row["citation_ids"]),
+                )
+                for index, row in enumerate(rows, start=1)
+            ],
+            limitations=[],
+            model_used=True,
+            provider="openai",
+            model="test-model",
+        )
+
+    monkeypatch.setattr(
+        "trade_research.filings.agent_llm.FilingAgentLLM.plan",
+        fake_plan,
+    )
+    monkeypatch.setattr(
+        "trade_research.filings.agent_llm.FilingAgentLLM.synthesize",
+        fake_synthesis,
+    )
+    run, _ = runtime.store.create_investigation(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        question="Rank Nifty 50 companies by year-over-year net profit growth.",
+        request_payload={"strict_evidence": True, "comparison": "yoy", "max_tool_calls": 8},
+        idempotency_key="top-ten-canonical-claims-test",
+    )
+
+    completed = run_investigation_once(runtime, run.analysis_id)
+
+    validation = completed.result_payload["claim_validation"]
+    synthesis = completed.result_payload["synthesis"]
+    assert completed.status == InvestigationStatus.COMPLETED
+    assert validation["passed"] is True
+    assert validation["valid_claim_count"] == 10
+    assert validation["rejected_claim_count"] == 0
+    assert validation["canonicalized_claims"] == 10
+    assert len(synthesis["claims"]) == 10
