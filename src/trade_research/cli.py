@@ -4,7 +4,7 @@ import sys
 from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 import pandas as pd
@@ -31,12 +31,15 @@ from trade_research.filings.evaluation import (
     evaluate_golden_dataset,
     load_golden_dataset,
 )
-from trade_research.filings.models import ReviewDecision
+from trade_research.filings.models import InvestigationRequest, ReviewDecision
 from trade_research.filings.production import verify_filing_production
 from trade_research.filings.registry import import_manifest
 from trade_research.filings.runtime import get_filing_runtime
-from trade_research.filings.store import FilingStore
-from trade_research.filings.tasks import dispatch_filing_run
+from trade_research.filings.store import FilingStore, stable_id
+from trade_research.filings.tasks import (
+    dispatch_filing_investigation,
+    dispatch_filing_run,
+)
 from trade_research.market_calendar import session_decision
 from trade_research.modeling.backtest import BacktestConfig
 from trade_research.modeling.baselines import BaselineRunConfig
@@ -336,6 +339,132 @@ def import_filing_manifest_command(
     console.print(f"Company: {result.company_id}")
 
 
+@app.command("import-filing-universe")
+def import_filing_universe_command(
+    snapshot_path: Annotated[
+        Path,
+        typer.Argument(help="Versioned filing-universe snapshot JSON."),
+    ],
+    workspace_id: Annotated[str, typer.Option()] = "default",
+) -> None:
+    runtime = get_filing_runtime()
+    payload = json.loads(snapshot_path.expanduser().resolve().read_text(encoding="utf-8"))
+    snapshot = runtime.store.record_universe_snapshot(
+        workspace_id=workspace_id,
+        universe_id=str(payload["universe_id"]),
+        effective_date=date.fromisoformat(str(payload["effective_date"])),
+        source_url=str(payload["source_url"]),
+        source_hash=str(payload["source_hash"]),
+        members=list(payload["members"]),
+    )
+    console.print(
+        f"Filing universe {snapshot.universe_id} imported: "
+        f"members={snapshot.member_count} snapshot={snapshot.snapshot_id}"
+    )
+
+
+@app.command("import-filing-universe-pack")
+def import_filing_universe_pack_command(
+    snapshot_path: Annotated[
+        Path,
+        typer.Argument(help="Versioned filing-universe snapshot JSON."),
+    ],
+    filing_root: Annotated[
+        Path,
+        typer.Option(help="Directory containing one filing-pack directory per symbol."),
+    ] = Path("data/filings/nse"),
+    workspace_id: Annotated[str, typer.Option()] = "default",
+    verify_hashes: Annotated[
+        bool,
+        typer.Option("--verify-hashes/--skip-hash-verification"),
+    ] = True,
+    enqueue: Annotated[
+        bool,
+        typer.Option(
+            "--enqueue/--import-only",
+            help="Queue current quarterly XBRL documents after importing them.",
+        ),
+    ] = False,
+    documents_per_company: Annotated[
+        int,
+        typer.Option(min=1, max=12, help="Maximum current XBRL documents to enqueue per company."),
+    ] = 5,
+) -> None:
+    """Import a locked universe and its company manifests as one bounded operation."""
+    runtime = get_filing_runtime()
+    resolved_snapshot = snapshot_path.expanduser().resolve()
+    payload = json.loads(resolved_snapshot.read_text(encoding="utf-8"))
+    members = list(payload["members"])
+    snapshot = runtime.store.record_universe_snapshot(
+        workspace_id=workspace_id,
+        universe_id=str(payload["universe_id"]),
+        effective_date=date.fromisoformat(str(payload["effective_date"])),
+        source_url=str(payload["source_url"]),
+        source_hash=str(payload["source_hash"]),
+        members=members,
+    )
+    resolved_root = filing_root.expanduser().resolve()
+    imported_documents = 0
+    skipped_members: list[str] = []
+    queued_runs = 0
+    existing_runs = 0
+    for member in members:
+        symbol = str(member["symbol"]).strip().upper()
+        manifest_path = resolved_root / symbol / "manifest.json"
+        if not manifest_path.is_file():
+            skipped_members.append(symbol)
+            continue
+        imported = import_manifest(
+            runtime.store,
+            manifest_path=manifest_path,
+            workspace_id=workspace_id,
+            verify_hashes=verify_hashes,
+        )
+        imported_documents += imported.registered + imported.existing
+        if not enqueue:
+            continue
+        documents = runtime.store.documents(
+            workspace_id=workspace_id,
+            company_id=f"NSE:{symbol}",
+            category="xbrl_financial",
+            current_only=True,
+            limit=500,
+        )
+        for document in documents[:documents_per_company]:
+            run, created = runtime.store.create_run(
+                workspace_id=workspace_id,
+                company_id=document.company_id,
+                filing_id=document.filing_id,
+                idempotency_key=stable_id(
+                    "filing-universe-import",
+                    workspace_id,
+                    snapshot.snapshot_id,
+                    document.filing_id,
+                ),
+                max_attempts=3,
+                input_payload={
+                    "force_review": False,
+                    "submitted_by": "filing-universe-import",
+                    "universe_snapshot_id": snapshot.snapshot_id,
+                },
+            )
+            if created:
+                dispatch_filing_run(run.run_id, runtime=runtime)
+                queued_runs += 1
+            else:
+                existing_runs += 1
+    console.print(
+        f"Filing universe pack imported: universe={snapshot.universe_id} "
+        f"members={snapshot.member_count} documents={imported_documents} "
+        f"queued={queued_runs} existing_runs={existing_runs}"
+    )
+    if skipped_members:
+        console.print(
+            f"[yellow]Missing manifests ({len(skipped_members)}): "
+            f"{', '.join(skipped_members)}[/yellow]"
+        )
+
+
 @app.command("run-filing-intelligence")
 def run_filing_intelligence_command(
     filing_id: Annotated[str, typer.Argument(help="Registered filing identifier.")],
@@ -365,6 +494,38 @@ def run_filing_intelligence_command(
     )
     if latest.output_payload:
         console.print_json(data=latest.output_payload)
+
+
+@app.command("run-filing-investigation")
+def run_filing_investigation_command(
+    question: Annotated[str, typer.Argument(help="Bounded filing investigation objective.")],
+    workspace_id: Annotated[str, typer.Option()] = "default",
+    universe_id: Annotated[str, typer.Option()] = "NIFTY50",
+    comparison: Annotated[Literal["auto", "yoy", "qoq"], typer.Option()] = "auto",
+) -> None:
+    runtime = get_filing_runtime()
+    request = InvestigationRequest(
+        question=question,
+        universe_id=universe_id,
+        comparison=comparison,
+    )
+    run, created = runtime.store.create_investigation(
+        workspace_id=workspace_id,
+        universe_id=request.universe_id,
+        question=request.question,
+        request_payload={**request.model_dump(mode="json"), "submitted_by": "cli"},
+        idempotency_key=request.idempotency_key or f"cli-{uuid4()}",
+    )
+    if created:
+        dispatch_filing_investigation(run.analysis_id, runtime=runtime)
+    latest = runtime.store.investigation(run.analysis_id, workspace_id)
+    assert latest is not None
+    console.print(
+        f"Filing investigation {latest.analysis_id}: {latest.status.value} "
+        f"node={latest.current_node} progress={latest.progress:.0%}"
+    )
+    if latest.result_payload:
+        console.print_json(data=latest.result_payload)
 
 
 @app.command("review-filing-intelligence")
@@ -462,9 +623,7 @@ def verify_bigquery_environment() -> None:
 def bigquery_canary_readiness() -> None:
     """Evaluate the mandatory pair of TSX canary runs from durable state."""
     settings = get_settings()
-    readiness = evaluate_bigquery_tsx_canary_readiness(
-        TimescaleStore(settings.database_url)
-    )
+    readiness = evaluate_bigquery_tsx_canary_readiness(TimescaleStore(settings.database_url))
     console.print(
         f"TSX {readiness.year}: {readiness.reason} "
         f"runs={','.join(readiness.successful_run_ids) or 'none'}"
@@ -540,8 +699,7 @@ def verify_bigquery_backfill(
         for year in verification.years:
             row_counts = (
                 f"{year.source_row_count:,} → {year.destination_row_count:,}"
-                if year.source_row_count is not None
-                and year.destination_row_count is not None
+                if year.source_row_count is not None and year.destination_row_count is not None
                 else "—"
             )
             source_dates = (
@@ -556,9 +714,7 @@ def verify_bigquery_backfill(
                 run_and_job += f"\ncompared: {year.compared_run_id}"
             table.add_row(
                 str(year.year),
-                "[green]reconciled[/green]"
-                if year.reconciled
-                else "[red]review required[/red]",
+                "[green]reconciled[/green]" if year.reconciled else "[red]review required[/red]",
                 row_counts,
                 source_dates,
                 run_and_job,
@@ -1280,9 +1436,7 @@ def plan_yfinance_tsx_canary(
     quarantined = tsx.get("provider_quarantined_symbols", [])
     if quarantined:
         console.print(
-            "[yellow]Provider-history quarantine: "
-            + ", ".join(quarantined)
-            + "[/yellow]"
+            "[yellow]Provider-history quarantine: " + ", ".join(quarantined) + "[/yellow]"
         )
     console.print(
         f"Durable work: {result.metrics['work_generated']} generated, "
@@ -1328,9 +1482,7 @@ def plan_yfinance_nse_canary(
     quarantined = nse.get("provider_quarantined_symbols", [])
     if quarantined:
         console.print(
-            "[yellow]Provider-history quarantine: "
-            + ", ".join(quarantined)
-            + "[/yellow]"
+            "[yellow]Provider-history quarantine: " + ", ".join(quarantined) + "[/yellow]"
         )
     console.print(
         f"Durable work: {result.metrics['work_generated']} generated, "
@@ -1395,9 +1547,7 @@ def refresh_yfinance_history_evidence(
     ] = None,
 ) -> None:
     selected_symbols = (
-        [value.strip() for value in symbols.split(",") if value.strip()]
-        if symbols
-        else None
+        [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
     )
     try:
         result = run_yfinance_provider_history_evidence_bootstrap(

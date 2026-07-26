@@ -19,8 +19,12 @@ from trade_research.filings.models import (
     FilingDocumentStatus,
     FilingRun,
     FilingRunStatus,
+    FilingUniverseSnapshot,
     FinancialFact,
     IntelligenceObject,
+    InvestigationEvent,
+    InvestigationRun,
+    InvestigationStatus,
     ReviewDecision,
     ReviewItemAction,
     ReviewRequest,
@@ -37,9 +41,12 @@ from trade_research.filings.tables import (
     filing_evidence_table,
     filing_index_runs_table,
     filing_intelligence_objects_table,
+    filing_investigation_events_table,
+    filing_investigation_runs_table,
     filing_metadata,
     filing_review_requests_table,
     filing_runs_table,
+    filing_universe_snapshots_table,
     filing_validation_defects_table,
 )
 
@@ -79,25 +86,33 @@ class FilingStore:
     def register_document(self, document: FilingDocument) -> tuple[FilingDocument, bool, bool]:
         now = utc_now()
         with self.engine.begin() as connection:
-            existing_row = connection.execute(
-                select(filing_documents_table).where(
-                    filing_documents_table.c.workspace_id == document.workspace_id,
-                    filing_documents_table.c.company_id == document.company_id,
-                    filing_documents_table.c.sha256 == document.sha256,
+            existing_row = (
+                connection.execute(
+                    select(filing_documents_table).where(
+                        filing_documents_table.c.workspace_id == document.workspace_id,
+                        filing_documents_table.c.company_id == document.company_id,
+                        filing_documents_table.c.sha256 == document.sha256,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if existing_row:
                 return self._document_model(existing_row), False, False
 
-            latest = connection.execute(
-                select(filing_documents_table)
-                .where(
-                    filing_documents_table.c.workspace_id == document.workspace_id,
-                    filing_documents_table.c.document_key == document.document_key,
+            latest = (
+                connection.execute(
+                    select(filing_documents_table)
+                    .where(
+                        filing_documents_table.c.workspace_id == document.workspace_id,
+                        filing_documents_table.c.document_key == document.document_key,
+                    )
+                    .order_by(filing_documents_table.c.version.desc())
+                    .limit(1)
                 )
-                .order_by(filing_documents_table.c.version.desc())
-                .limit(1)
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             version = int(latest["version"]) + 1 if latest else 1
             supersedes = str(latest["filing_id"]) if latest else None
             if latest:
@@ -124,21 +139,29 @@ class FilingStore:
                 }
             )
             connection.execute(filing_documents_table.insert(), row)
-            inserted = connection.execute(
-                select(filing_documents_table).where(
-                    filing_documents_table.c.filing_id == document.filing_id
+            inserted = (
+                connection.execute(
+                    select(filing_documents_table).where(
+                        filing_documents_table.c.filing_id == document.filing_id
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             return self._document_model(inserted), True, latest is not None
 
     def document(self, filing_id: str, workspace_id: str) -> FilingDocument | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                select(filing_documents_table).where(
-                    filing_documents_table.c.filing_id == filing_id,
-                    filing_documents_table.c.workspace_id == workspace_id,
+            row = (
+                connection.execute(
+                    select(filing_documents_table).where(
+                        filing_documents_table.c.filing_id == filing_id,
+                        filing_documents_table.c.workspace_id == workspace_id,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return self._document_model(row) if row else None
 
     def documents(
@@ -198,12 +221,16 @@ class FilingStore:
     ) -> tuple[FilingRun, bool]:
         now = utc_now()
         with self.engine.begin() as connection:
-            existing = connection.execute(
-                select(filing_runs_table).where(
-                    filing_runs_table.c.workspace_id == workspace_id,
-                    filing_runs_table.c.idempotency_key == idempotency_key,
+            existing = (
+                connection.execute(
+                    select(filing_runs_table).where(
+                        filing_runs_table.c.workspace_id == workspace_id,
+                        filing_runs_table.c.idempotency_key == idempotency_key,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if existing:
                 if existing["filing_id"] != filing_id:
                     raise ValueError("idempotency key is already bound to another filing")
@@ -347,9 +374,7 @@ class FilingStore:
         status: FilingRunStatus | None = None,
         limit: int = 100,
     ) -> list[FilingRun]:
-        query = select(filing_runs_table).where(
-            filing_runs_table.c.workspace_id == workspace_id
-        )
+        query = select(filing_runs_table).where(filing_runs_table.c.workspace_id == workspace_id)
         if status:
             query = query.where(filing_runs_table.c.status == status.value)
         query = query.order_by(filing_runs_table.c.created_at.desc()).limit(limit)
@@ -452,21 +477,25 @@ class FilingStore:
                 .order_by(filing_runs_table.c.lease_expires_at)
                 .limit(limit)
             )
-            rows = connection.execute(
-                update(filing_runs_table)
-                .where(
-                    filing_runs_table.c.run_id.in_(eligible),
-                    *conditions,
+            rows = (
+                connection.execute(
+                    update(filing_runs_table)
+                    .where(
+                        filing_runs_table.c.run_id.in_(eligible),
+                        *conditions,
+                    )
+                    .values(
+                        status=FilingRunStatus.RETRYING.value,
+                        current_node="lease_expired",
+                        worker_id=None,
+                        lease_expires_at=None,
+                        updated_at=now,
+                    )
+                    .returning(filing_runs_table.c.run_id)
                 )
-                .values(
-                    status=FilingRunStatus.RETRYING.value,
-                    current_node="lease_expired",
-                    worker_id=None,
-                    lease_expires_at=None,
-                    updated_at=now,
-                )
-                .returning(filing_runs_table.c.run_id)
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         return list(rows)
 
     def upsert_evidence(self, evidence: Iterable[EvidenceReference]) -> list[str]:
@@ -565,9 +594,7 @@ class FilingStore:
                 ).mappings()
             ]
 
-    def upsert_intelligence_objects(
-        self, objects: Iterable[IntelligenceObject]
-    ) -> list[str]:
+    def upsert_intelligence_objects(self, objects: Iterable[IntelligenceObject]) -> list[str]:
         now = utc_now()
         rows = []
         for item in objects:
@@ -612,9 +639,7 @@ class FilingStore:
         if run_id:
             query = query.where(filing_intelligence_objects_table.c.run_id == run_id)
         if workspace_id:
-            query = query.where(
-                filing_intelligence_objects_table.c.workspace_id == workspace_id
-            )
+            query = query.where(filing_intelligence_objects_table.c.workspace_id == workspace_id)
         with self.engine.connect() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 
@@ -650,18 +675,20 @@ class FilingStore:
         counts = {"approved": 0, "edited": 0, "rejected": 0}
         now = utc_now()
         with self.engine.begin() as connection:
-            objects = connection.execute(
-                select(filing_intelligence_objects_table).where(
-                    filing_intelligence_objects_table.c.run_id == run_id
+            objects = (
+                connection.execute(
+                    select(filing_intelligence_objects_table).where(
+                        filing_intelligence_objects_table.c.run_id == run_id
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
             for item in objects:
                 object_id = str(item["object_id"])
                 decision = decisions.get(object_id)
                 if decision is None:
-                    raise ValueError(
-                        f"missing intelligence object decision: {object_id}"
-                    )
+                    raise ValueError(f"missing intelligence object decision: {object_id}")
                 action = ReviewItemAction(str(decision["action"]))
                 values: dict[str, Any] = {"updated_at": now}
                 if action == ReviewItemAction.REJECT:
@@ -675,8 +702,7 @@ class FilingStore:
                     unsupported = sorted(set(edits) - allowed_edits)
                     if unsupported:
                         raise ValueError(
-                            "unsupported intelligence object edit fields: "
-                            + ", ".join(unsupported)
+                            "unsupported intelligence object edit fields: " + ", ".join(unsupported)
                         )
                     for key in ("period_start", "period_end"):
                         if isinstance(edits.get(key), str):
@@ -705,8 +731,7 @@ class FilingStore:
     ) -> None:
         now = utc_now()
         rows = [
-            item.model_dump(mode="python")
-            | {"severity": item.severity.value, "created_at": now}
+            item.model_dump(mode="python") | {"severity": item.severity.value, "created_at": now}
             for item in defects
         ]
         with self.engine.begin() as connection:
@@ -726,11 +751,15 @@ class FilingStore:
 
     def validation_defects(self, run_id: str) -> list[ValidationDefect]:
         with self.engine.connect() as connection:
-            rows = connection.execute(
-                select(filing_validation_defects_table).where(
-                    filing_validation_defects_table.c.run_id == run_id
+            rows = (
+                connection.execute(
+                    select(filing_validation_defects_table).where(
+                        filing_validation_defects_table.c.run_id == run_id
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [ValidationDefect.model_validate(dict(row)) for row in rows]
 
     def create_review_request(
@@ -742,12 +771,16 @@ class FilingStore:
     ) -> ReviewRequest:
         now = utc_now()
         with self.engine.begin() as connection:
-            existing = connection.execute(
-                select(filing_review_requests_table)
-                .where(filing_review_requests_table.c.run_id == run_id)
-                .order_by(filing_review_requests_table.c.created_at.desc())
-                .limit(1)
-            ).mappings().first()
+            existing = (
+                connection.execute(
+                    select(filing_review_requests_table)
+                    .where(filing_review_requests_table.c.run_id == run_id)
+                    .order_by(filing_review_requests_table.c.created_at.desc())
+                    .limit(1)
+                )
+                .mappings()
+                .first()
+            )
             if existing:
                 return self._review_model(existing)
             row = {
@@ -767,22 +800,30 @@ class FilingStore:
 
     def pending_review_for_run(self, run_id: str) -> ReviewRequest | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                select(filing_review_requests_table).where(
-                    filing_review_requests_table.c.run_id == run_id,
-                    filing_review_requests_table.c.status == ReviewStatus.PENDING.value,
+            row = (
+                connection.execute(
+                    select(filing_review_requests_table).where(
+                        filing_review_requests_table.c.run_id == run_id,
+                        filing_review_requests_table.c.status == ReviewStatus.PENDING.value,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return self._review_model(row) if row else None
 
     def review(self, review_id: str, workspace_id: str) -> ReviewRequest | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                select(filing_review_requests_table).where(
-                    filing_review_requests_table.c.review_id == review_id,
-                    filing_review_requests_table.c.workspace_id == workspace_id,
+            row = (
+                connection.execute(
+                    select(filing_review_requests_table).where(
+                        filing_review_requests_table.c.review_id == review_id,
+                        filing_review_requests_table.c.workspace_id == workspace_id,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return self._review_model(row) if row else None
 
     def reviews(
@@ -821,12 +862,16 @@ class FilingStore:
             ReviewDecision.REJECT: ReviewStatus.REJECTED,
         }[decision]
         with self.engine.begin() as connection:
-            before = connection.execute(
-                select(filing_review_requests_table).where(
-                    filing_review_requests_table.c.review_id == review_id,
-                    filing_review_requests_table.c.workspace_id == workspace_id,
+            before = (
+                connection.execute(
+                    select(filing_review_requests_table).where(
+                        filing_review_requests_table.c.review_id == review_id,
+                        filing_review_requests_table.c.workspace_id == workspace_id,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if not before:
                 raise KeyError("review not found")
             if before["status"] != ReviewStatus.PENDING.value:
@@ -852,11 +897,15 @@ class FilingStore:
             )
             if not result.rowcount:
                 raise ValueError("review decision lost an optimistic-concurrency race")
-            after = connection.execute(
-                select(filing_review_requests_table).where(
-                    filing_review_requests_table.c.review_id == review_id
+            after = (
+                connection.execute(
+                    select(filing_review_requests_table).where(
+                        filing_review_requests_table.c.review_id == review_id
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             self._insert_audit_event(
                 connection,
                 workspace_id=workspace_id,
@@ -882,26 +931,26 @@ class FilingStore:
         now = utc_now()
         facts: list[str] = []
         with self.engine.begin() as connection:
-            candidates = connection.execute(
-                select(filing_candidate_facts_table).where(
-                    filing_candidate_facts_table.c.run_id == run_id,
-                    filing_candidate_facts_table.c.status == CandidateStatus.CANDIDATE.value,
-                    filing_candidate_facts_table.c.validation_status.in_(
-                        [ValidationStatus.PASSED.value, ValidationStatus.REVIEW.value]
-                    ),
+            candidates = (
+                connection.execute(
+                    select(filing_candidate_facts_table).where(
+                        filing_candidate_facts_table.c.run_id == run_id,
+                        filing_candidate_facts_table.c.status == CandidateStatus.CANDIDATE.value,
+                        filing_candidate_facts_table.c.validation_status.in_(
+                            [ValidationStatus.PASSED.value, ValidationStatus.REVIEW.value]
+                        ),
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
             for candidate in candidates:
                 row = dict(candidate)
                 item_decision = (
-                    decisions.get(str(candidate["candidate_id"]))
-                    if decisions is not None
-                    else None
+                    decisions.get(str(candidate["candidate_id"])) if decisions is not None else None
                 )
                 if decisions is not None and item_decision is None:
-                    raise ValueError(
-                        f"missing candidate decision: {candidate['candidate_id']}"
-                    )
+                    raise ValueError(f"missing candidate decision: {candidate['candidate_id']}")
                 action = (
                     ReviewItemAction(str(item_decision["action"]))
                     if item_decision is not None
@@ -910,10 +959,7 @@ class FilingStore:
                 if action == ReviewItemAction.REJECT:
                     connection.execute(
                         update(filing_candidate_facts_table)
-                        .where(
-                            filing_candidate_facts_table.c.candidate_id
-                            == row["candidate_id"]
-                        )
+                        .where(filing_candidate_facts_table.c.candidate_id == row["candidate_id"])
                         .values(
                             status=CandidateStatus.REJECTED.value,
                             updated_at=now,
@@ -945,18 +991,14 @@ class FilingStore:
                 Decimal(str(row["value_decimal"]))
                 existing_fact_id = connection.execute(
                     select(filing_approved_facts_table.c.fact_id).where(
-                        filing_approved_facts_table.c.workspace_id
-                        == row["workspace_id"],
-                        filing_approved_facts_table.c.company_id
-                        == row["company_id"],
-                        filing_approved_facts_table.c.canonical_metric
-                        == row["canonical_metric"],
+                        filing_approved_facts_table.c.workspace_id == row["workspace_id"],
+                        filing_approved_facts_table.c.company_id == row["company_id"],
+                        filing_approved_facts_table.c.canonical_metric == row["canonical_metric"],
                         filing_approved_facts_table.c.period_end == row["period_end"],
                         filing_approved_facts_table.c.period_type == row["period_type"],
                         filing_approved_facts_table.c.consolidation_scope
                         == row["consolidation_scope"],
-                        filing_approved_facts_table.c.source_filing_id
-                        == row["source_filing_id"],
+                        filing_approved_facts_table.c.source_filing_id == row["source_filing_id"],
                         filing_approved_facts_table.c.source_filing_version
                         == row["source_filing_version"],
                     )
@@ -981,15 +1023,13 @@ class FilingStore:
                     .where(
                         filing_approved_facts_table.c.workspace_id == row["workspace_id"],
                         filing_approved_facts_table.c.company_id == row["company_id"],
-                        filing_approved_facts_table.c.canonical_metric
-                        == row["canonical_metric"],
+                        filing_approved_facts_table.c.canonical_metric == row["canonical_metric"],
                         filing_approved_facts_table.c.period_end == row["period_end"],
                         filing_approved_facts_table.c.period_type == row["period_type"],
                         filing_approved_facts_table.c.consolidation_scope
                         == row["consolidation_scope"],
                         filing_approved_facts_table.c.is_current.is_(True),
-                        filing_approved_facts_table.c.source_filing_id
-                        != row["source_filing_id"],
+                        filing_approved_facts_table.c.source_filing_id != row["source_filing_id"],
                     )
                     .values(is_current=False)
                 )
@@ -1051,17 +1091,19 @@ class FilingStore:
                 )
                 connection.execute(
                     update(filing_candidate_facts_table)
-                    .where(
-                        filing_candidate_facts_table.c.candidate_id == row["candidate_id"]
-                    )
+                    .where(filing_candidate_facts_table.c.candidate_id == row["candidate_id"])
                     .values(status=CandidateStatus.APPROVED.value, updated_at=now)
                 )
                 facts.append(fact_id)
-            persisted = connection.execute(
-                select(filing_approved_facts_table.c.fact_id).where(
-                    filing_approved_facts_table.c.run_id == run_id
+            persisted = (
+                connection.execute(
+                    select(filing_approved_facts_table.c.fact_id).where(
+                        filing_approved_facts_table.c.run_id == run_id
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             facts = list(dict.fromkeys([*facts, *(str(value) for value in persisted)]))
         return facts
 
@@ -1091,9 +1133,7 @@ class FilingStore:
             filing_approved_facts_table.c.company_id == company_id,
         )
         if metrics:
-            query = query.where(
-                filing_approved_facts_table.c.canonical_metric.in_(list(metrics))
-            )
+            query = query.where(filing_approved_facts_table.c.canonical_metric.in_(list(metrics)))
         if current_only:
             query = query.where(filing_approved_facts_table.c.is_current.is_(True))
         query = query.order_by(
@@ -1104,14 +1144,340 @@ class FilingStore:
             rows = connection.execute(query).mappings().all()
         return [self._fact_model(row) for row in rows]
 
+    def approved_facts_for_companies(
+        self,
+        *,
+        workspace_id: str,
+        company_ids: Sequence[str],
+        metrics: Sequence[str],
+        current_only: bool = True,
+        limit: int = 10_000,
+    ) -> list[FinancialFact]:
+        if not company_ids or not metrics:
+            return []
+        query = select(filing_approved_facts_table).where(
+            filing_approved_facts_table.c.workspace_id == workspace_id,
+            filing_approved_facts_table.c.company_id.in_(list(company_ids)),
+            filing_approved_facts_table.c.canonical_metric.in_(list(metrics)),
+        )
+        if current_only:
+            query = query.where(filing_approved_facts_table.c.is_current.is_(True))
+        query = query.order_by(
+            filing_approved_facts_table.c.company_id,
+            filing_approved_facts_table.c.period_end.desc(),
+            filing_approved_facts_table.c.canonical_metric,
+        ).limit(limit)
+        with self.engine.connect() as connection:
+            rows = connection.execute(query).mappings().all()
+        return [self._fact_model(row) for row in rows]
+
+    def filing_company_directory(self, *, workspace_id: str) -> dict[str, dict[str, str]]:
+        query = (
+            select(
+                filing_documents_table.c.company_id,
+                filing_documents_table.c.symbol,
+                filing_documents_table.c.company_name,
+            )
+            .where(filing_documents_table.c.workspace_id == workspace_id)
+            .distinct()
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query).mappings().all()
+        return {
+            str(row["company_id"]): {
+                "company_id": str(row["company_id"]),
+                "symbol": str(row["symbol"]),
+                "name": str(row["company_name"]),
+            }
+            for row in rows
+        }
+
+    def record_universe_snapshot(
+        self,
+        *,
+        workspace_id: str,
+        universe_id: str,
+        effective_date: date,
+        source_url: str,
+        source_hash: str,
+        members: Sequence[Mapping[str, str]],
+    ) -> FilingUniverseSnapshot:
+        normalized_members = [
+            {
+                "company_id": str(item["company_id"]),
+                "symbol": str(item["symbol"]).upper(),
+                "name": str(item["name"]),
+            }
+            for item in members
+        ]
+        snapshot_id = stable_id(
+            "filing-universe-snapshot",
+            workspace_id,
+            universe_id,
+            source_hash,
+        )
+        row = {
+            "snapshot_id": snapshot_id,
+            "workspace_id": workspace_id,
+            "universe_id": universe_id,
+            "effective_date": effective_date,
+            "source_url": source_url,
+            "source_hash": source_hash,
+            "members": normalized_members,
+            "member_count": len(normalized_members),
+            "created_at": utc_now(),
+        }
+        with self.engine.begin() as connection:
+            self._execute_upsert(
+                connection,
+                filing_universe_snapshots_table,
+                row,
+                index_elements=["snapshot_id"],
+                update_columns=[
+                    "effective_date",
+                    "source_url",
+                    "members",
+                    "member_count",
+                ],
+            )
+        return FilingUniverseSnapshot.model_validate(row)
+
+    def latest_universe_snapshot(
+        self,
+        *,
+        workspace_id: str,
+        universe_id: str,
+    ) -> FilingUniverseSnapshot | None:
+        query = (
+            select(filing_universe_snapshots_table)
+            .where(
+                filing_universe_snapshots_table.c.workspace_id == workspace_id,
+                filing_universe_snapshots_table.c.universe_id == universe_id,
+            )
+            .order_by(
+                filing_universe_snapshots_table.c.effective_date.desc(),
+                filing_universe_snapshots_table.c.created_at.desc(),
+            )
+            .limit(1)
+        )
+        with self.engine.connect() as connection:
+            row = connection.execute(query).mappings().first()
+        return FilingUniverseSnapshot.model_validate(dict(row)) if row else None
+
+    def create_investigation(
+        self,
+        *,
+        workspace_id: str,
+        universe_id: str,
+        question: str,
+        request_payload: Mapping[str, Any],
+        idempotency_key: str,
+    ) -> tuple[InvestigationRun, bool]:
+        analysis_id = stable_id(
+            "filing-investigation",
+            workspace_id,
+            idempotency_key,
+        )
+        with self.engine.begin() as connection:
+            existing = (
+                connection.execute(
+                    select(filing_investigation_runs_table).where(
+                        filing_investigation_runs_table.c.analysis_id == analysis_id,
+                        filing_investigation_runs_table.c.workspace_id == workspace_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if existing:
+                semantic_keys = ("strict_evidence", "comparison", "max_tool_calls")
+                existing_request = dict(existing["request_payload"] or {})
+                incoming_request = dict(request_payload)
+                semantic_request_changed = any(
+                    existing_request.get(key) != incoming_request.get(key)
+                    for key in semantic_keys
+                )
+                if (
+                    existing["question"] != question
+                    or existing["universe_id"] != universe_id
+                    or semantic_request_changed
+                ):
+                    raise ValueError(
+                        "investigation idempotency key is bound to another request"
+                    )
+                return InvestigationRun.model_validate(dict(existing)), False
+            now = utc_now()
+            row = {
+                "analysis_id": analysis_id,
+                "thread_id": stable_id("filing-investigation-thread", workspace_id, analysis_id),
+                "workspace_id": workspace_id,
+                "universe_id": universe_id,
+                "universe_snapshot_id": None,
+                "question": question,
+                "status": InvestigationStatus.ACCEPTED.value,
+                "current_node": "accepted",
+                "progress": 0.0,
+                "request_payload": self._json_safe(dict(request_payload)),
+                "plan_payload": {},
+                "result_payload": {},
+                "error_code": None,
+                "error_message": None,
+                "trace_id": None,
+                "created_at": now,
+                "updated_at": now,
+                "finished_at": None,
+            }
+            connection.execute(filing_investigation_runs_table.insert(), row)
+            self._append_investigation_event(
+                connection,
+                analysis_id=analysis_id,
+                workspace_id=workspace_id,
+                node="accepted",
+                status="completed",
+                detail={"universe_id": universe_id},
+            )
+        return InvestigationRun.model_validate(row), True
+
+    def investigation(
+        self,
+        analysis_id: str,
+        workspace_id: str | None = None,
+    ) -> InvestigationRun | None:
+        query = select(filing_investigation_runs_table).where(
+            filing_investigation_runs_table.c.analysis_id == analysis_id
+        )
+        if workspace_id:
+            query = query.where(filing_investigation_runs_table.c.workspace_id == workspace_id)
+        with self.engine.connect() as connection:
+            row = connection.execute(query).mappings().first()
+        return InvestigationRun.model_validate(dict(row)) if row else None
+
+    def transition_investigation(
+        self,
+        analysis_id: str,
+        *,
+        status: InvestigationStatus | None = None,
+        current_node: str,
+        progress: float,
+        detail: Mapping[str, Any] | None = None,
+        universe_snapshot_id: str | None = None,
+        plan_payload: Mapping[str, Any] | None = None,
+        result_payload: Mapping[str, Any] | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        values: dict[str, Any] = {
+            "current_node": current_node,
+            "progress": min(max(progress, 0.0), 1.0),
+            "updated_at": utc_now(),
+        }
+        if status is not None:
+            values["status"] = status.value
+            if status in {
+                InvestigationStatus.COMPLETED,
+                InvestigationStatus.PARTIAL,
+                InvestigationStatus.ABSTAINED,
+                InvestigationStatus.FAILED,
+            }:
+                values["finished_at"] = utc_now()
+        if universe_snapshot_id is not None:
+            values["universe_snapshot_id"] = universe_snapshot_id
+        if plan_payload is not None:
+            values["plan_payload"] = self._json_safe(dict(plan_payload))
+        if result_payload is not None:
+            values["result_payload"] = self._json_safe(dict(result_payload))
+        if error_code is not None:
+            values["error_code"] = error_code
+        if error_message is not None:
+            values["error_message"] = error_message[:2_000]
+        if trace_id is not None:
+            values["trace_id"] = trace_id
+        with self.engine.begin() as connection:
+            run = (
+                connection.execute(
+                    select(
+                        filing_investigation_runs_table.c.workspace_id,
+                    ).where(filing_investigation_runs_table.c.analysis_id == analysis_id)
+                )
+                .mappings()
+                .first()
+            )
+            if not run:
+                raise KeyError(f"filing investigation not found: {analysis_id}")
+            connection.execute(
+                update(filing_investigation_runs_table)
+                .where(filing_investigation_runs_table.c.analysis_id == analysis_id)
+                .values(**values)
+            )
+            self._append_investigation_event(
+                connection,
+                analysis_id=analysis_id,
+                workspace_id=str(run["workspace_id"]),
+                node=current_node,
+                status=(status.value if status is not None else "completed"),
+                detail=detail or {},
+            )
+
+    def investigation_events(
+        self,
+        *,
+        analysis_id: str,
+        workspace_id: str,
+    ) -> list[InvestigationEvent]:
+        query = (
+            select(filing_investigation_events_table)
+            .where(
+                filing_investigation_events_table.c.analysis_id == analysis_id,
+                filing_investigation_events_table.c.workspace_id == workspace_id,
+            )
+            .order_by(filing_investigation_events_table.c.sequence)
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query).mappings().all()
+        return [InvestigationEvent.model_validate(dict(row)) for row in rows]
+
+    def _append_investigation_event(
+        self,
+        connection: Connection,
+        *,
+        analysis_id: str,
+        workspace_id: str,
+        node: str,
+        status: str,
+        detail: Mapping[str, Any],
+    ) -> None:
+        latest = connection.execute(
+            select(func.max(filing_investigation_events_table.c.sequence)).where(
+                filing_investigation_events_table.c.analysis_id == analysis_id
+            )
+        ).scalar_one_or_none()
+        connection.execute(
+            filing_investigation_events_table.insert(),
+            {
+                "event_id": str(uuid4()),
+                "analysis_id": analysis_id,
+                "workspace_id": workspace_id,
+                "sequence": int(latest or 0) + 1,
+                "node": node,
+                "status": status,
+                "detail": self._json_safe(dict(detail)),
+                "created_at": utc_now(),
+            },
+        )
+
     def fact(self, fact_id: str, workspace_id: str) -> FinancialFact | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                select(filing_approved_facts_table).where(
-                    filing_approved_facts_table.c.fact_id == fact_id,
-                    filing_approved_facts_table.c.workspace_id == workspace_id,
+            row = (
+                connection.execute(
+                    select(filing_approved_facts_table).where(
+                        filing_approved_facts_table.c.fact_id == fact_id,
+                        filing_approved_facts_table.c.workspace_id == workspace_id,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return self._fact_model(row) if row else None
 
     def record_analysis(
@@ -1241,14 +1607,10 @@ class FilingStore:
         if action is not None:
             query = query.where(filing_audit_events_table.c.action == action)
         if target_type is not None:
-            query = query.where(
-                filing_audit_events_table.c.target_type == target_type
-            )
+            query = query.where(filing_audit_events_table.c.target_type == target_type)
         if target_id is not None:
             query = query.where(filing_audit_events_table.c.target_id == target_id)
-        query = query.order_by(
-            filing_audit_events_table.c.created_at.desc()
-        ).limit(limit)
+        query = query.order_by(filing_audit_events_table.c.created_at.desc()).limit(limit)
         with self.engine.connect() as connection:
             return [dict(row) for row in connection.execute(query).mappings()]
 
@@ -1312,9 +1674,7 @@ class FilingStore:
             connection.execute(statement)
             return
         existing = connection.execute(
-            select(table).where(
-                *[table.c[name] == row[name] for name in index_elements]
-            )
+            select(table).where(*[table.c[name] == row[name] for name in index_elements])
         ).first()
         if existing:
             connection.execute(

@@ -189,4 +189,4 @@ def test_upgrade_reconciles_create_all_tables_with_legacy_symbols(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260724_0010"
+    assert revision == "20260726_0011"

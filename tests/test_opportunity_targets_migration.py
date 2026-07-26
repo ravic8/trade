@@ -47,5 +47,5 @@ def test_opportunity_target_migration_creates_durable_table(
     with engine.begin() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "20260724_0010"
+            == "20260726_0011"
         )

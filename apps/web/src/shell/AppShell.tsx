@@ -1,6 +1,7 @@
 import {
   Activity,
   BarChart3,
+  Bot,
   BriefcaseBusiness,
   BrainCircuit,
   Database,
@@ -17,6 +18,7 @@ const navItems = [
   { to: "/data", label: "Data", icon: DatabaseZap },
   { to: "/opportunities", label: "Opportunities", icon: Crosshair },
   { to: "/research", label: "Research", icon: Search },
+  { to: "/lens", label: "Lens Agent", icon: Bot },
   { to: "/research/progress", label: "Progress", icon: GitBranch },
   { to: "/research/factors", label: "Factors", icon: BarChart3 },
   { to: "/research/models", label: "Models", icon: BrainCircuit },

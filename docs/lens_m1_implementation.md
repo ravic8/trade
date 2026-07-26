@@ -53,6 +53,7 @@ material, not authoritative numeric facts.
 | Runtime/queue | `src/trade_research/filings/runtime.py`, `tasks.py` | Claims, leases, heartbeat, cancellation, retry, recovery, and Celery dispatch |
 | Retrieval | `src/trade_research/filings/indexing.py` | Versioned chunks, embeddings, Qdrant filters, and index lineage |
 | Analysis | `src/trade_research/filings/analysis.py` | Read-only approved-fact tools, calculations, citations, and abstention |
+| Market agent | `src/trade_research/filings/agent_*.py` | Nifty 50 planning, deterministic comparison, LLM synthesis, claim validation, and durable investigation state |
 | API | `src/trade_research/filings/api.py` | Import, processing, status, cancellation, reviews, facts, evidence, and analysis |
 | Telemetry | `src/trade_research/filings/telemetry.py` | Langfuse observations and OpenTelemetry traces/metrics |
 
@@ -215,6 +216,10 @@ The production stack uses the corresponding `PROD_FILING_*`,
 [`lens_m1_production_acceptance.md`](lens_m1_production_acceptance.md) for
 server configuration, the read-only readiness gate, corpus canary, locked
 evaluation, backup, and M1 sign-off.
+
+The cross-company Nifty 50 investigation vertical slice, including its
+bounded LLM role, data-acquisition commands, API, Lens UI, and demo runbook, is
+documented in [`nifty50_filing_agent.md`](nifty50_filing_agent.md).
 
 ## Operational behavior
 

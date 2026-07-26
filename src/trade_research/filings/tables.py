@@ -281,6 +281,70 @@ filing_analysis_runs_table = Table(
 )
 
 
+filing_universe_snapshots_table = Table(
+    "filing_universe_snapshots",
+    filing_metadata,
+    Column("snapshot_id", String, primary_key=True),
+    Column("workspace_id", String, nullable=False),
+    Column("universe_id", String, nullable=False),
+    Column("effective_date", Date, nullable=False),
+    Column("source_url", Text, nullable=False),
+    Column("source_hash", String(64), nullable=False),
+    Column("members", JSON, nullable=False),
+    Column("member_count", BigInteger, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "workspace_id",
+        "universe_id",
+        "source_hash",
+        name="uq_filing_universe_snapshot_source",
+    ),
+)
+
+
+filing_investigation_runs_table = Table(
+    "filing_investigation_runs",
+    filing_metadata,
+    Column("analysis_id", String, primary_key=True),
+    Column("thread_id", String, nullable=False),
+    Column("workspace_id", String, nullable=False),
+    Column("universe_id", String, nullable=False),
+    Column("universe_snapshot_id", String),
+    Column("question", Text, nullable=False),
+    Column("status", String, nullable=False),
+    Column("current_node", String, nullable=False),
+    Column("progress", Float, nullable=False),
+    Column("request_payload", JSON, nullable=False),
+    Column("plan_payload", JSON, nullable=False),
+    Column("result_payload", JSON, nullable=False),
+    Column("error_code", String),
+    Column("error_message", Text),
+    Column("trace_id", String),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("finished_at", DateTime(timezone=True)),
+)
+
+
+filing_investigation_events_table = Table(
+    "filing_investigation_events",
+    filing_metadata,
+    Column("event_id", String, primary_key=True),
+    Column("analysis_id", String, nullable=False),
+    Column("workspace_id", String, nullable=False),
+    Column("sequence", BigInteger, nullable=False),
+    Column("node", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("detail", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "analysis_id",
+        "sequence",
+        name="uq_filing_investigation_event_sequence",
+    ),
+)
+
+
 filing_index_runs_table = Table(
     "filing_index_runs",
     filing_metadata,
@@ -376,4 +440,21 @@ Index(
     filing_review_requests_table.c.workspace_id,
     filing_review_requests_table.c.status,
     filing_review_requests_table.c.created_at,
+)
+Index(
+    "idx_filing_universe_workspace_effective",
+    filing_universe_snapshots_table.c.workspace_id,
+    filing_universe_snapshots_table.c.universe_id,
+    filing_universe_snapshots_table.c.effective_date,
+)
+Index(
+    "idx_filing_investigation_workspace_status",
+    filing_investigation_runs_table.c.workspace_id,
+    filing_investigation_runs_table.c.status,
+    filing_investigation_runs_table.c.updated_at,
+)
+Index(
+    "idx_filing_investigation_events",
+    filing_investigation_events_table.c.analysis_id,
+    filing_investigation_events_table.c.sequence,
 )

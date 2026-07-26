@@ -110,13 +110,13 @@ fi
 if [[ "$call" == *"SELECT extversion FROM pg_extension"* ]]; then
   printf '%s\n' '2.17.2'
 elif [[ "$call" == *"SELECT version_num FROM alembic_version"* ]]; then
-  printf '%s\n' '20260724_0010'
+  printf '%s\n' '20260726_0011'
 elif [[ "$call" == *"COUNT(*) FROM filing_documents"* ]]; then
   printf '%s\n' '123'
 elif [[ "$call" == *"COUNT(*) FROM filing_approved_facts"* ]]; then
   printf '%s\n' '1186'
 elif [[ "$call" == *"alembic heads"* ]]; then
-  printf '%s\n' '20260724_0010 (head)'
+  printf '%s\n' '20260726_0011 (head)'
 elif [[ "$call" == *"trade_research.filings.restore_validation"* ]]; then
   printf '%s\n' '{"versioning_status":"Enabled","object_count":26}'
 elif [[ "$call" == *"evaluate-filing-golden"* ]]; then
@@ -208,7 +208,7 @@ def test_restore_drill_is_isolated_and_emits_passing_report(tmp_path: Path) -> N
         "verified_document_count": 1,
         "failed_skipped_count": 1,
     }
-    assert report["postgresql"]["migration_revision"] == "20260724_0010"
+    assert report["postgresql"]["migration_revision"] == "20260726_0011"
     assert report["postgresql"]["timescaledb_version"] == "2.17.2"
     assert report["postgresql"]["approved_fact_count"] == 1186
     assert report["object_store"] == {

@@ -427,3 +427,133 @@ class AnalysisQueryResponse(BaseModel):
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     trace_id: str
+
+
+class InvestigationStatus(StrEnum):
+    ACCEPTED = "accepted"
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    ABSTAINED = "abstained"
+    FAILED = "failed"
+
+
+class InvestigationRequest(BaseModel):
+    question: str = Field(min_length=8, max_length=4_000)
+    universe_id: str = Field(default="NIFTY50", pattern=r"^[A-Z0-9_.:-]{2,64}$")
+    strict_evidence: bool = True
+    max_tool_calls: int = Field(default=8, ge=3, le=12)
+    comparison: Literal["auto", "yoy", "qoq"] = "auto"
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=200)
+
+    @field_validator("question")
+    @classmethod
+    def reject_prompt_control(cls, value: str) -> str:
+        normalized = value.strip()
+        lowered = normalized.lower()
+        forbidden = (
+            "ignore previous instructions",
+            "reveal system prompt",
+            "show hidden prompt",
+            "exfiltrate",
+        )
+        if any(item in lowered for item in forbidden):
+            raise ValueError("question contains a disallowed prompt-control instruction")
+        return normalized
+
+
+class InvestigationEvent(BaseModel):
+    event_id: str
+    analysis_id: str
+    sequence: int = Field(ge=1)
+    node: str
+    status: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class InvestigationRun(BaseModel):
+    analysis_id: str
+    thread_id: str
+    workspace_id: str
+    universe_id: str
+    universe_snapshot_id: str | None = None
+    question: str
+    status: InvestigationStatus
+    current_node: str
+    progress: float = Field(ge=0, le=1)
+    request_payload: dict[str, Any] = Field(default_factory=dict)
+    plan_payload: dict[str, Any] = Field(default_factory=dict)
+    result_payload: dict[str, Any] = Field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+    trace_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+
+
+class InvestigationSubmission(BaseModel):
+    run: InvestigationRun
+    accepted: bool
+    status_url: str
+    events_url: str
+
+
+class FilingUniverseSnapshot(BaseModel):
+    snapshot_id: str
+    workspace_id: str
+    universe_id: str
+    effective_date: date
+    source_url: str
+    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    members: list[dict[str, str]]
+    member_count: int = Field(ge=1)
+    created_at: datetime
+
+
+class FilingUniverseSnapshotRequest(BaseModel):
+    universe_id: str = Field(default="NIFTY50", pattern=r"^[A-Z0-9_.:-]{2,64}$")
+    effective_date: date
+    source_url: str = Field(min_length=8, max_length=2_000)
+    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    members: list[dict[str, str]] = Field(min_length=1, max_length=500)
+
+    @field_validator("members")
+    @classmethod
+    def validate_members(cls, value: list[dict[str, str]]) -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in value:
+            symbol = str(item.get("symbol") or "").strip().upper()
+            name = str(item.get("name") or "").strip()
+            company_id = str(item.get("company_id") or f"NSE:{symbol}").strip()
+            if not symbol or not name or not company_id.startswith("NSE:"):
+                raise ValueError("each member requires an NSE company_id, symbol, and name")
+            if company_id in seen:
+                raise ValueError(f"duplicate universe member: {company_id}")
+            seen.add(company_id)
+            normalized.append({"company_id": company_id, "symbol": symbol, "name": name})
+        return normalized
+
+
+class FilingCoverageCompany(BaseModel):
+    company_id: str
+    symbol: str
+    name: str
+    status: Literal["eligible", "insufficient_history", "no_approved_facts"]
+    approved_fact_count: int = Field(ge=0)
+    available_periods: list[date] = Field(default_factory=list)
+    available_metrics: list[str] = Field(default_factory=list)
+    reason_codes: list[str] = Field(default_factory=list)
+
+
+class FilingUniverseCoverage(BaseModel):
+    universe_id: str
+    snapshot_id: str | None = None
+    member_count: int = Field(ge=0)
+    represented_company_count: int = Field(ge=0)
+    eligible_company_count: int = Field(ge=0)
+    excluded_company_count: int = Field(ge=0)
+    companies: list[FilingCoverageCompany] = Field(default_factory=list)

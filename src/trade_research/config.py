@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     filing_embedding_batch_size: int = Field(default=64, ge=1, le=256)
     filing_embedding_vector_size: int = Field(default=1_536, ge=128, le=8_192)
     filing_index_max_chunks: int = Field(default=1_500, ge=1, le=20_000)
+    filing_agent_llm_enabled: bool = False
+    filing_agent_llm_provider: Literal["openai", "gemini"] = "openai"
+    filing_agent_llm_model: str = "gpt-4o-mini"
+    filing_agent_prompt_version: str = "nifty50-investigation-v1"
+    filing_agent_max_output_tokens: int = Field(default=1_200, ge=128, le=8_192)
+    filing_agent_timeout_seconds: float = Field(default=20.0, ge=1, le=120)
+    filing_agent_retry_attempts: int = Field(default=2, ge=1, le=5)
+    filing_agent_max_revisions: int = Field(default=1, ge=0, le=2)
 
     langfuse_enabled: bool = False
     langfuse_public_key: str | None = None
@@ -309,6 +317,17 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OPENAI_API_KEY is required when FILING_INDEX_ENABLED=true"
             )
+        if self.filing_agent_llm_enabled:
+            credential = (
+                self.openai_api_key
+                if self.filing_agent_llm_provider == "openai"
+                else self.gemini_api_key
+            )
+            if not credential:
+                raise ValueError(
+                    f"{self.filing_agent_llm_provider.upper()}_API_KEY is required "
+                    "when FILING_AGENT_LLM_ENABLED=true"
+                )
         if self.filing_artifact_backend == "s3" and not (
             self.filing_s3_access_key_id and self.filing_s3_secret_access_key
         ):
