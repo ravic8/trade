@@ -295,3 +295,47 @@ def test_provider_error_telemetry_excludes_message_and_request_data() -> None:
     assert telemetry["provider_error_code"] == "unsupported_parameter"
     assert "message" not in telemetry
     assert plan.rationale.startswith("Deterministic safe plan")
+
+
+def test_semantically_wrong_provider_intent_is_recorded_and_safely_corrected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "intent": "coverage",
+                                    "metric": "revenue",
+                                    "comparison": "qoq",
+                                    "limit": 10,
+                                    "scope": "consolidated",
+                                    "rationale": "Incorrectly route to coverage.",
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            },
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = FilingAgentLLM(
+        _settings(provider="openai", model="gpt-5.4-nano"),
+        http_client=http_client,
+    )
+
+    plan, telemetry = client.plan(
+        question="What are your capabilities and limitations?",
+        requested_comparison="auto",
+    )
+    http_client.close()
+
+    assert plan.intent == "capabilities"
+    assert telemetry["status"] == "semantic_mismatch"
+    assert telemetry["fallback"] is True
+    assert telemetry["provider_intent"] == "coverage"
+    assert telemetry["expected_intent"] == "capabilities"

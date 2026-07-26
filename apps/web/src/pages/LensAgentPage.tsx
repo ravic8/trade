@@ -22,6 +22,7 @@ import {
   useSubmitFilingInvestigation,
 } from "../api/hooks";
 import type {
+  FilingCoverageCompany,
   FilingInvestigationCitation,
   FilingInvestigationRequest,
 } from "../api/types";
@@ -45,6 +46,14 @@ const PRESETS = [
     label: "EPS momentum",
     question:
       "Which Nifty 50 companies have the strongest quarter-over-quarter basic EPS growth in approved consolidated filings?",
+  },
+  {
+    label: "Data coverage",
+    question: "For which Nifty 50 stocks do you currently have approved filing data?",
+  },
+  {
+    label: "Capabilities",
+    question: "What are your current capabilities and limitations?",
   },
 ];
 
@@ -278,12 +287,21 @@ export function LensAgentPage() {
             </article>
             <article>
               <span>Typed objective</span>
-              <strong>
-                {result.plan.metric.replaceAll("_", " ")} · {result.plan.comparison}
-              </strong>
-              <small>
-                {result.plan.scope} · top {result.plan.limit}
-              </small>
+              {result.answer_type === "financial_analysis" ? (
+                <>
+                  <strong>
+                    {result.plan.metric.replaceAll("_", " ")} · {result.plan.comparison}
+                  </strong>
+                  <small>
+                    {result.plan.scope} · top {result.plan.limit}
+                  </small>
+                </>
+              ) : (
+                <>
+                  <strong>{(result.answer_type ?? "system_answer").replaceAll("_", " ")}</strong>
+                  <small>System contract route · no financial ranking</small>
+                </>
+              )}
             </article>
             <article>
               <span>Planner</span>
@@ -326,10 +344,15 @@ export function LensAgentPage() {
           <div className="lens-retrieval-disclosure">
             <FileSearch size={18} />
             <div>
-              <strong>Structured financial retrieval</strong>
+              <strong>
+                {result?.answer_type === "financial_analysis"
+                  ? "Structured financial retrieval"
+                  : "Live system-contract retrieval"}
+              </strong>
               <span>
-                Approved facts are queried through typed SQL tools. Semantic/vector retrieval is
-                not used or scored in this workflow.
+                {result?.answer_type === "financial_analysis"
+                  ? "Approved facts are queried through typed SQL tools. Semantic/vector retrieval is not used or scored in this workflow."
+                  : "Coverage and capabilities are answered from the versioned system contract and live universe state; comparison and evidence tools are not called."}
               </span>
             </div>
           </div>
@@ -361,8 +384,8 @@ export function LensAgentPage() {
             <div>
               <strong>Production scorecard</strong>
               <span>
-                Re-checks planning, tools, retrieval math, evidence, claims, and the locked
-                INFY extraction baseline.
+                Re-checks semantic intent, answer relevance, route-specific tools and
+                contracts, plus the locked INFY extraction baseline.
               </span>
             </div>
             <button
@@ -411,6 +434,76 @@ export function LensAgentPage() {
                 Evaluation {evaluationMutation.data.evaluation_id} · trace{" "}
                 {evaluationMutation.data.trace_id ?? "not available"}
               </p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {result?.system_answer ? (
+        <section className="panel lens-system-answer">
+          <div className="panel-header">
+            <div>
+              <h2>{result.system_answer.title}</h2>
+              <p>{result.system_answer.contract_version}</p>
+            </div>
+            <span
+              className={`status-pill ${
+                result.answer_validation?.passed ? "completed" : "warning"
+              }`}
+            >
+              {result.answer_validation?.passed ? "Answer verified" : "Validation failed"}
+            </span>
+          </div>
+          <p className="lens-summary">{result.system_answer.summary}</p>
+          {result.system_answer.capabilities?.length ? (
+            <div className="lens-capability-grid">
+              {result.system_answer.capabilities.map((capability) => (
+                <article key={capability.id}>
+                  <CheckCircle2 size={18} />
+                  <div>
+                    <strong>{capability.label}</strong>
+                    <span>{capability.detail}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+          {result.system_answer.supported_analysis ? (
+            <div className="lens-supported-analysis">
+              <strong>Supported financial analysis</strong>
+              <span>
+                Metrics: {result.system_answer.supported_analysis.metrics
+                  .map((metric) => metric.replaceAll("_", " "))
+                  .join(", ")}
+              </span>
+              <span>
+                Comparisons: {result.system_answer.supported_analysis.comparisons
+                  .map((item) => item.toUpperCase())
+                  .join(", ")} · consolidated quarterly scope
+              </span>
+            </div>
+          ) : null}
+          {result.system_answer.available_companies ? (
+            <CompanyCoverageList
+              title="Companies with approved filing data"
+              companies={result.system_answer.available_companies}
+              positive
+            />
+          ) : null}
+          {result.system_answer.unavailable_companies?.length ? (
+            <CompanyCoverageList
+              title="Companies without approved core facts"
+              companies={result.system_answer.unavailable_companies}
+            />
+          ) : null}
+          {result.system_answer.limitations?.length ? (
+            <div className="lens-limitations">
+              <strong>Current limitations</strong>
+              <ul>
+                {result.system_answer.limitations.map((limitation) => (
+                  <li key={limitation}>{limitation}</li>
+                ))}
+              </ul>
             </div>
           ) : null}
         </section>
@@ -602,6 +695,39 @@ export function LensAgentPage() {
           ))}
         </aside>
       ) : null}
+    </div>
+  );
+}
+
+function CompanyCoverageList({
+  title,
+  companies,
+  positive = false,
+}: {
+  title: string;
+  companies: FilingCoverageCompany[];
+  positive?: boolean;
+}) {
+  return (
+    <div className="lens-company-coverage">
+      <div>
+        <strong>{title}</strong>
+        <span>{companies.length} companies</span>
+      </div>
+      <div className="lens-company-coverage-grid">
+        {companies.map((company) => (
+          <article key={company.company_id} className={positive ? "positive" : "warning"}>
+            <strong>{company.symbol}</strong>
+            <span>{company.name}</span>
+            <small>
+              {company.approved_fact_count} facts · {company.available_periods.length} periods
+              {company.available_metrics.length
+                ? ` · ${company.available_metrics.join(", ").replaceAll("_", " ")}`
+                : ""}
+            </small>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }

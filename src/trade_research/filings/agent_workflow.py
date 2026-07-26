@@ -8,10 +8,15 @@ from langgraph.graph import END, START, StateGraph
 from trade_research.config import Settings
 from trade_research.filings.agent_llm import FilingAgentLLM, deterministic_synthesis
 from trade_research.filings.agent_models import (
+    SYSTEM_INTENTS,
     InvestigationPlan,
     InvestigationSynthesis,
 )
 from trade_research.filings.agent_tools import InvestigationToolGateway
+from trade_research.filings.capabilities import (
+    build_system_answer,
+    validate_system_answer,
+)
 from trade_research.filings.models import InvestigationStatus
 from trade_research.filings.store import FilingStore
 from trade_research.filings.telemetry import current_trace_id, operation_span
@@ -35,6 +40,8 @@ class InvestigationGraphState(TypedDict, total=False):
     evidence: dict[str, Any]
     synthesis: dict[str, Any]
     claim_validation: dict[str, Any]
+    system_answer: dict[str, Any]
+    answer_validation: dict[str, Any]
     tool_calls: list[dict[str, Any]]
     final_status: str
     result: dict[str, Any]
@@ -96,15 +103,33 @@ class InvestigationWorkflow:
         builder.add_node("synthesize", self._synthesize)
         builder.add_node("validate_claims", self._validate_claims)
         builder.add_node("finalize", self._finalize)
+        builder.add_node("answer_system_question", self._answer_system_question)
+        builder.add_node("validate_system_answer", self._validate_system_answer)
+        builder.add_node("finalize_system_answer", self._finalize_system_answer)
         builder.add_edge(START, "plan")
         builder.add_edge("plan", "resolve_universe")
-        builder.add_edge("resolve_universe", "compare")
+        builder.add_conditional_edges(
+            "resolve_universe",
+            self._route_after_universe,
+            {
+                "financial": "compare",
+                "system": "answer_system_question",
+            },
+        )
         builder.add_edge("compare", "resolve_evidence")
         builder.add_edge("resolve_evidence", "synthesize")
         builder.add_edge("synthesize", "validate_claims")
         builder.add_edge("validate_claims", "finalize")
         builder.add_edge("finalize", END)
+        builder.add_edge("answer_system_question", "validate_system_answer")
+        builder.add_edge("validate_system_answer", "finalize_system_answer")
+        builder.add_edge("finalize_system_answer", END)
         return builder
+
+    @staticmethod
+    def _route_after_universe(state: InvestigationGraphState) -> str:
+        intent = str(state.get("plan", {}).get("intent") or "")
+        return "system" if intent in SYSTEM_INTENTS else "financial"
 
     def _plan(self, state: InvestigationGraphState) -> dict[str, Any]:
         self._progress(state, "plan", 0.12, {"status": "running"})
@@ -169,6 +194,92 @@ class InvestigationWorkflow:
             "tool_call_count": state.get("tool_call_count", 0) + 1,
             "tool_calls": tool_calls,
         }
+
+    def _answer_system_question(
+        self,
+        state: InvestigationGraphState,
+    ) -> dict[str, Any]:
+        plan = InvestigationPlan.model_validate(state["plan"])
+        tool_calls = list(state["tool_calls"])
+        tool_call_count = state["tool_call_count"]
+        if plan.intent != "coverage":
+            self._assert_tool_budget(state)
+            tool_calls.append(
+                {
+                    "tool": "agent.describe_capabilities",
+                    "arguments": {
+                        "contract": "live",
+                        "universe_id": state["universe_id"],
+                    },
+                    "result_count": 1,
+                }
+            )
+            tool_call_count += 1
+        answer = build_system_answer(
+            intent=plan.intent,
+            coverage=state["coverage"],
+            settings=self.services.settings,
+        )
+        self._progress(
+            state,
+            "answer_system_question",
+            0.76,
+            {
+                "intent": plan.intent,
+                "answer_type": answer["answer_type"],
+                "represented_company_count": state["coverage"].get(
+                    "represented_company_count", 0
+                ),
+            },
+        )
+        return {
+            "system_answer": answer,
+            "tool_calls": tool_calls,
+            "tool_call_count": tool_call_count,
+        }
+
+    def _validate_system_answer(
+        self,
+        state: InvestigationGraphState,
+    ) -> dict[str, Any]:
+        validation = validate_system_answer(
+            intent=str(state["plan"]["intent"]),
+            answer=state["system_answer"],
+            coverage=state["coverage"],
+        )
+        self._progress(state, "validate_system_answer", 0.92, validation)
+        return {"answer_validation": validation}
+
+    def _finalize_system_answer(
+        self,
+        state: InvestigationGraphState,
+    ) -> dict[str, Any]:
+        passed = state["answer_validation"]["passed"] is True
+        status = InvestigationStatus.COMPLETED if passed else InvestigationStatus.FAILED
+        result = {
+            "answer_type": state["system_answer"]["answer_type"],
+            "plan": state["plan"],
+            "planner_telemetry": state["planner_telemetry"],
+            "coverage": state["coverage"],
+            "system_answer": state["system_answer"],
+            "answer_validation": state["answer_validation"],
+            "tool_calls": state["tool_calls"],
+            "prompt_version": self.services.settings.filing_agent_prompt_version,
+        }
+        self.services.store.transition_investigation(
+            state["analysis_id"],
+            status=status,
+            current_node="completed",
+            progress=1.0,
+            detail={
+                "status": status.value,
+                "answer_type": result["answer_type"],
+                "answer_valid": passed,
+            },
+            result_payload=result,
+            trace_id=current_trace_id(),
+        )
+        return {"final_status": status.value, "result": result}
 
     def _compare(self, state: InvestigationGraphState) -> dict[str, Any]:
         self._assert_tool_budget(state)
@@ -352,6 +463,7 @@ class InvestigationWorkflow:
         else:
             status = InvestigationStatus.PARTIAL
         result = {
+            "answer_type": "financial_analysis",
             "plan": state["plan"],
             "planner_telemetry": state["planner_telemetry"],
             "coverage": state["coverage"],

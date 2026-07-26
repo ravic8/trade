@@ -12,6 +12,7 @@ from trade_research.filings.agent_models import (
     InvestigationPlan,
     InvestigationSynthesis,
     SynthesisClaim,
+    classify_investigation_intent,
 )
 from trade_research.filings.agent_runtime import run_investigation_once
 from trade_research.filings.api import filing_runtime_dependency
@@ -299,6 +300,8 @@ def test_investigation_api_exposes_run_events_and_coverage(tmp_path: Path) -> No
     assert {item["check_id"] for item in validation.json()["checks"]} == {
         "execution",
         "plan_schema",
+        "intent_alignment",
+        "answer_relevance",
         "universe_coverage",
         "tool_policy",
         "structured_retrieval",
@@ -306,9 +309,9 @@ def test_investigation_api_exposes_run_events_and_coverage(tmp_path: Path) -> No
         "claim_validation",
     }
     assert evaluation.status_code == 201
-    assert evaluation.json()["dataset_id"] == "nifty50-investigation-v1"
+    assert evaluation.json()["dataset_id"] == "nifty50-investigation-v2"
     assert evaluation.json()["evaluator_version"] == (
-        "filing-investigation-evaluator-v1"
+        "filing-investigation-evaluator-v2"
     )
     assert latest_evaluation.status_code == 200
     assert latest_evaluation.json()["evaluation_id"] == (
@@ -598,3 +601,137 @@ def test_top_ten_model_claims_are_validated_against_all_ranked_rows(
     assert validation["rejected_claim_count"] == 0
     assert validation["canonicalized_claims"] == 10
     assert len(synthesis["claims"]) == 10
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("For which stocks do you have data?", "coverage"),
+        ("What universe stocks do you have data for?", "coverage"),
+        ("What are your capabilities and limitations?", "capabilities"),
+        ("What are your capabilites?", "capabilities"),
+        ("What can you not do?", "limitations"),
+        ("Compare INFY and TCS revenue", "compare_companies"),
+    ],
+)
+def test_question_intent_classifier(question: str, expected: str) -> None:
+    assert classify_investigation_intent(question) == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "answer_type", "expected_tools"),
+    [
+        (
+            "For which stocks do you have data?",
+            "coverage",
+            ["filings.get_coverage"],
+        ),
+        (
+            "What are your capabilities and limitations?",
+            "capabilities",
+            ["filings.get_coverage", "agent.describe_capabilities"],
+        ),
+    ],
+)
+def test_system_questions_take_non_financial_graph_route(
+    tmp_path: Path,
+    question: str,
+    answer_type: str,
+    expected_tools: list[str],
+) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.store.record_universe_snapshot(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        effective_date=date(2026, 7, 26),
+        source_url="https://nsearchives.nseindia.com/nifty50.csv",
+        source_hash="f" * 64,
+        members=[
+            {"company_id": "NSE:INFY", "symbol": "INFY", "name": "Infosys"},
+            {"company_id": "NSE:TCS", "symbol": "TCS", "name": "TCS"},
+        ],
+    )
+    _seed_fact(
+        runtime,
+        company_id="NSE:INFY",
+        period_end=date(2026, 6, 30),
+        value="120",
+    )
+    run, _ = runtime.store.create_investigation(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        question=question,
+        request_payload={"strict_evidence": True, "comparison": "auto", "max_tool_calls": 8},
+        idempotency_key=f"system-route-{answer_type}",
+    )
+
+    completed = run_investigation_once(runtime, run.analysis_id)
+
+    result = completed.result_payload
+    assert completed.status == InvestigationStatus.COMPLETED
+    assert result["answer_type"] == answer_type
+    assert "ranking" not in result
+    assert "synthesis" not in result
+    assert result["answer_validation"]["passed"] is True
+    assert [item["tool"] for item in result["tool_calls"]] == expected_tools
+    if answer_type == "coverage":
+        assert [
+            item["symbol"] for item in result["system_answer"]["available_companies"]
+        ] == ["INFY"]
+        assert [
+            item["symbol"] for item in result["system_answer"]["unavailable_companies"]
+        ] == ["TCS"]
+    else:
+        assert result["system_answer"]["capabilities"]
+        assert result["system_answer"]["limitations"]
+
+    validation = build_validation_report(completed)
+    assert validation.status == "passed"
+    assert {item.check_id: item.status for item in validation.checks}[
+        "answer_relevance"
+    ] == "passed"
+
+
+def test_semantically_wrong_legacy_answer_fails_quality_gates(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.store.record_universe_snapshot(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        effective_date=date(2026, 7, 26),
+        source_url="https://nsearchives.nseindia.com/nifty50.csv",
+        source_hash="1" * 64,
+        members=[{"company_id": "NSE:INFY", "symbol": "INFY", "name": "Infosys"}],
+    )
+    for period_end, value in ((date(2026, 6, 30), "120"), (date(2025, 6, 30), "100")):
+        _seed_fact(runtime, company_id="NSE:INFY", period_end=period_end, value=value)
+    run, _ = runtime.store.create_investigation(
+        workspace_id="alpha",
+        universe_id="NIFTY50",
+        question="Rank companies by year-over-year net profit growth.",
+        request_payload={"strict_evidence": True, "comparison": "yoy", "max_tool_calls": 8},
+        idempotency_key="wrong-answer-quality",
+    )
+    completed = run_investigation_once(runtime, run.analysis_id)
+    wrong_result = {
+        **completed.result_payload,
+        "plan": {**completed.result_payload["plan"], "intent": "coverage"},
+    }
+    legacy_wrong = completed.model_copy(
+        update={
+            "question": "What are your capabilities and limitations?",
+            "result_payload": wrong_result,
+        }
+    )
+
+    report = build_validation_report(legacy_wrong)
+    checks = {item.check_id: item.status for item in report.checks}
+    assert report.status == "failed"
+    assert checks["intent_alignment"] == "failed"
+    assert checks["answer_relevance"] == "failed"
+    assert checks["tool_policy"] == "failed"
+
+    evaluation = evaluate_investigation(runtime, run=legacy_wrong)
+    suites = {item.suite_id: item for item in evaluation.suites}
+    assert evaluation.status == "failed"
+    assert suites["plan_quality"].status == "failed"
+    assert suites["answer_relevance"].status == "failed"

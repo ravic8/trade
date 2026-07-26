@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -91,3 +92,46 @@ def test_infy_13_quarter_golden_dataset_passes_end_to_end(tmp_path: Path) -> Non
     assert report.value_correct_count == 52
     assert report.evidence_correct_count == 52
     assert report.defects == []
+
+
+@pytest.mark.skipif(
+    not INFY_MANIFEST.is_file(),
+    reason="local licensed/downloaded INFY filing pack is not present",
+)
+def test_golden_lock_allows_additive_manifest_evolution(tmp_path: Path) -> None:
+    manifest_payload = json.loads(INFY_MANIFEST.read_text(encoding="utf-8"))
+    manifest_payload["documents"].append(
+        {
+            "filename": "future-additive-document.xml",
+            "sha256": "f" * 64,
+            "acquisition_status": "success",
+        }
+    )
+    manifest = tmp_path / "data/filings/nse/INFY/manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+
+    dataset = load_golden_dataset(INFY_GOLDEN, repository_root=tmp_path)
+
+    assert len(dataset.cases) == 13
+
+
+@pytest.mark.skipif(
+    not INFY_MANIFEST.is_file(),
+    reason="local licensed/downloaded INFY filing pack is not present",
+)
+def test_golden_lock_rejects_missing_locked_source(tmp_path: Path) -> None:
+    dataset = load_golden_dataset(INFY_GOLDEN, verify_manifest=False)
+    missing_case = dataset.cases[0]
+    manifest_payload = json.loads(INFY_MANIFEST.read_text(encoding="utf-8"))
+    manifest_payload["documents"] = [
+        item
+        for item in manifest_payload["documents"]
+        if item.get("sha256") != missing_case.source_sha256
+    ]
+    manifest = tmp_path / "data/filings/nse/INFY/manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="locked sources changed or disappeared"):
+        load_golden_dataset(INFY_GOLDEN, repository_root=tmp_path)

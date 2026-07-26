@@ -13,6 +13,7 @@ from trade_research.filings.agent_models import (
     InvestigationPlan,
     InvestigationSynthesis,
     SynthesisClaim,
+    classify_investigation_intent,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,13 @@ INVESTIGATION_PLAN_SCHEMA: dict[str, Any] = {
     "properties": {
         "intent": {
             "type": "string",
-            "enum": ["rank_growth", "compare_companies", "coverage"],
+            "enum": [
+                "rank_growth",
+                "compare_companies",
+                "coverage",
+                "capabilities",
+                "limitations",
+            ],
         },
         "metric": {
             "type": "string",
@@ -116,7 +123,12 @@ class FilingAgentLLM:
             }
         prompt = (
             "Convert the analyst objective into JSON. Allowed intent values: "
-            "rank_growth, compare_companies, coverage. Allowed metric values: "
+            "rank_growth, compare_companies, coverage, capabilities, limitations. "
+            "Use coverage when the user asks which stocks/companies have data. "
+            "Use capabilities for what the agent can do (including combined "
+            "capabilities-and-limitations questions), and limitations for only its "
+            "boundaries. Metric/comparison fields are ignored for these system "
+            "intents but must still contain valid defaults. Allowed metric values: "
             "net_profit, revenue, basic_eps, diluted_eps, profit_before_tax. "
             "Allowed comparison values: yoy, qoq. Use consolidated scope. "
             "Return only keys intent, metric, comparison, limit, scope, rationale.\n\n"
@@ -134,6 +146,15 @@ class FilingAgentLLM:
         )
         try:
             plan = InvestigationPlan.model_validate(payload)
+            expected_intent = classify_investigation_intent(question)
+            if plan.intent != expected_intent:
+                telemetry |= {
+                    "status": "semantic_mismatch",
+                    "fallback": True,
+                    "provider_intent": plan.intent,
+                    "expected_intent": expected_intent,
+                }
+                return fallback, telemetry
             return plan, telemetry
         except (ValidationError, TypeError):
             telemetry |= {"status": "invalid", "fallback": True}
@@ -394,13 +415,7 @@ def deterministic_plan(
         if any(term in lowered for term in ("qoq", "sequential", "previous quarter"))
         else "yoy"
     )
-    intent: Literal["rank_growth", "compare_companies", "coverage"] = (
-        "coverage"
-        if "coverage" in lowered
-        else "compare_companies"
-        if "compare" in lowered and "rank" not in lowered
-        else "rank_growth"
-    )
+    intent = classify_investigation_intent(question)
     return InvestigationPlan(
         intent=intent,
         metric=metric,

@@ -53,7 +53,7 @@ material, not authoritative numeric facts.
 | Runtime/queue | `src/trade_research/filings/runtime.py`, `tasks.py` | Claims, leases, heartbeat, cancellation, retry, recovery, and Celery dispatch |
 | Retrieval | `src/trade_research/filings/indexing.py` | Versioned chunks, embeddings, Qdrant filters, and index lineage |
 | Analysis | `src/trade_research/filings/analysis.py` | Read-only approved-fact tools, calculations, citations, and abstention |
-| Market agent | `src/trade_research/filings/agent_*.py` | Nifty 50 planning, deterministic comparison, LLM synthesis, claim validation, and durable investigation state |
+| Market agent | `src/trade_research/filings/agent_*.py` | Nifty 50 intent planning, conditional financial/coverage/capability routes, deterministic comparison, LLM synthesis, answer relevance and claim validation, and durable investigation state |
 | API | `src/trade_research/filings/api.py` | Import, processing, status, cancellation, reviews, facts, evidence, and analysis |
 | Telemetry | `src/trade_research/filings/telemetry.py` | Langfuse observations and OpenTelemetry traces/metrics |
 
