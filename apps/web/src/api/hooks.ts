@@ -18,6 +18,7 @@ import {
   getFactorSummary,
   getFilingInvestigation,
   getFilingInvestigationEvents,
+  getFilingInvestigationValidation,
   getFilingUniverseCoverage,
   getJobRuns,
   getMLBacktests,
@@ -46,6 +47,7 @@ import {
   saveUpstoxCredential,
   searchDataInstruments,
   submitFilingInvestigation,
+  evaluateFilingInvestigation,
   testUpstoxCredential,
 } from "./client";
 import type {
@@ -416,5 +418,22 @@ export function useFilingInvestigationEvents(
     queryFn: () => getFilingInvestigationEvents(analysisId as string),
     enabled: Boolean(analysisId),
     refetchInterval: terminal ? false : 1_000,
+  });
+}
+
+export function useFilingInvestigationValidation(
+  analysisId: string | null,
+  terminal: boolean,
+) {
+  return useQuery({
+    queryKey: ["filing-investigation-validation", analysisId],
+    queryFn: () => getFilingInvestigationValidation(analysisId as string),
+    enabled: Boolean(analysisId) && terminal,
+  });
+}
+
+export function useEvaluateFilingInvestigation() {
+  return useMutation({
+    mutationFn: (analysisId: string) => evaluateFilingInvestigation(analysisId),
   });
 }

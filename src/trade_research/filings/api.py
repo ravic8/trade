@@ -33,15 +33,22 @@ from trade_research.filings.models import (
     FilingUniverseSnapshot,
     FilingUniverseSnapshotRequest,
     FinancialFact,
+    InvestigationEvaluationReport,
     InvestigationEvent,
     InvestigationRequest,
     InvestigationRun,
+    InvestigationStatus,
     InvestigationSubmission,
+    InvestigationValidationReport,
     ManifestImportRequest,
     ManifestImportResponse,
     ReviewDecisionRequest,
     ReviewRequest,
     ReviewStatus,
+)
+from trade_research.filings.quality import (
+    build_validation_report,
+    evaluate_investigation,
 )
 from trade_research.filings.registry import import_manifest
 from trade_research.filings.review import (
@@ -553,6 +560,86 @@ def filing_investigation_events(
         analysis_id=analysis_id,
         workspace_id=workspace_id,
     )
+
+
+@router.get(
+    "/investigations/{analysis_id}/validation",
+    response_model=InvestigationValidationReport,
+)
+def filing_investigation_validation(
+    analysis_id: str,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> InvestigationValidationReport:
+    run = runtime.store.investigation(analysis_id, workspace_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="filing investigation not found")
+    return build_validation_report(run)
+
+
+@router.post(
+    "/investigations/{analysis_id}/evaluations",
+    response_model=InvestigationEvaluationReport,
+    status_code=status.HTTP_201_CREATED,
+)
+def evaluate_filing_investigation(
+    analysis_id: str,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    actor_id: Annotated[str, Depends(actor_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> InvestigationEvaluationReport:
+    run = runtime.store.investigation(analysis_id, workspace_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="filing investigation not found")
+    if run.status not in {
+        InvestigationStatus.COMPLETED,
+        InvestigationStatus.PARTIAL,
+        InvestigationStatus.ABSTAINED,
+        InvestigationStatus.FAILED,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="filing investigation must be terminal before evaluation",
+        )
+    report = runtime.store.record_investigation_evaluation(
+        evaluate_investigation(runtime, run=run)
+    )
+    runtime.store.record_audit_event(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        action="filing_investigation.evaluated",
+        target_type="filing_investigation_evaluation",
+        target_id=report.evaluation_id,
+        after_payload={
+            "analysis_id": analysis_id,
+            "status": report.status,
+            "score": report.score,
+            "evaluator_version": report.evaluator_version,
+        },
+        reason="repeatable filing investigation quality evaluation",
+        trace_id=run.trace_id,
+    )
+    return report
+
+
+@router.get(
+    "/investigations/{analysis_id}/evaluations/latest",
+    response_model=InvestigationEvaluationReport,
+)
+def latest_filing_investigation_evaluation(
+    analysis_id: str,
+    workspace_id: Annotated[str, Depends(workspace_dependency)],
+    runtime: Annotated[FilingRuntime, Depends(filing_runtime_dependency)],
+) -> InvestigationEvaluationReport:
+    if not runtime.store.investigation(analysis_id, workspace_id):
+        raise HTTPException(status_code=404, detail="filing investigation not found")
+    report = runtime.store.latest_investigation_evaluation(
+        analysis_id=analysis_id,
+        workspace_id=workspace_id,
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="evaluation has not been run")
+    return report
 
 
 @router.post("/analysis/query", response_model=AnalysisQueryResponse)

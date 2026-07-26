@@ -345,6 +345,22 @@ filing_investigation_events_table = Table(
 )
 
 
+filing_investigation_evaluations_table = Table(
+    "filing_investigation_evaluations",
+    filing_metadata,
+    Column("evaluation_id", String, primary_key=True),
+    Column("analysis_id", String, nullable=False),
+    Column("workspace_id", String, nullable=False),
+    Column("dataset_id", String, nullable=False),
+    Column("evaluator_version", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("score", Float, nullable=False),
+    Column("report_payload", JSON, nullable=False),
+    Column("trace_id", String),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+
 filing_index_runs_table = Table(
     "filing_index_runs",
     filing_metadata,
@@ -457,4 +473,10 @@ Index(
     "idx_filing_investigation_events",
     filing_investigation_events_table.c.analysis_id,
     filing_investigation_events_table.c.sequence,
+)
+Index(
+    "idx_filing_investigation_evaluation_latest",
+    filing_investigation_evaluations_table.c.workspace_id,
+    filing_investigation_evaluations_table.c.analysis_id,
+    filing_investigation_evaluations_table.c.created_at,
 )

@@ -2,10 +2,13 @@ import {
   Bot,
   CheckCircle2,
   CircleAlert,
+  ClipboardCheck,
   FileSearch,
+  Gauge,
   LoaderCircle,
   Network,
   ShieldCheck,
+  Wrench,
   X,
 } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
@@ -13,7 +16,9 @@ import { FormEvent, useMemo, useState } from "react";
 import {
   useFilingInvestigation,
   useFilingInvestigationEvents,
+  useFilingInvestigationValidation,
   useFilingUniverseCoverage,
+  useEvaluateFilingInvestigation,
   useSubmitFilingInvestigation,
 } from "../api/hooks";
 import type {
@@ -46,6 +51,7 @@ const PRESETS = [
 export function LensAgentPage() {
   const coverageQuery = useFilingUniverseCoverage();
   const submitMutation = useSubmitFilingInvestigation();
+  const evaluationMutation = useEvaluateFilingInvestigation();
   const [question, setQuestion] = useState(DEFAULT_QUESTION);
   const [comparison, setComparison] =
     useState<FilingInvestigationRequest["comparison"]>("auto");
@@ -60,6 +66,7 @@ export function LensAgentPage() {
     run && ["completed", "partial", "abstained", "failed"].includes(run.status),
   );
   const eventsQuery = useFilingInvestigationEvents(analysisId, terminal);
+  const validationQuery = useFilingInvestigationValidation(analysisId, terminal);
   const canSubmit = question.trim().length >= 8 && !submitMutation.isPending;
   const coverage = coverageQuery.data;
   const coverageValue = (value: number | undefined) =>
@@ -81,6 +88,7 @@ export function LensAgentPage() {
     event.preventDefault();
     if (!canSubmit) return;
     setSelectedCitation(null);
+    evaluationMutation.reset();
     submitMutation.mutate(
       {
         question: question.trim(),
@@ -253,6 +261,161 @@ export function LensAgentPage() {
         </section>
       </div>
 
+      {result?.plan ? (
+        <section className="panel lens-agent-contract">
+          <div className="panel-header">
+            <div>
+              <h2>Agent plan and bounded tools</h2>
+              <p>The model chooses a typed plan; only allowlisted tools can execute it.</p>
+            </div>
+            <Wrench size={20} />
+          </div>
+          <div className="lens-contract-grid">
+            <article>
+              <span>Intent</span>
+              <strong>{result.plan.intent.replaceAll("_", " ")}</strong>
+              <small>{result.plan.rationale}</small>
+            </article>
+            <article>
+              <span>Typed objective</span>
+              <strong>
+                {result.plan.metric.replaceAll("_", " ")} · {result.plan.comparison}
+              </strong>
+              <small>
+                {result.plan.scope} · top {result.plan.limit}
+              </small>
+            </article>
+            <article>
+              <span>Planner</span>
+              <strong>
+                {result.planner_telemetry?.provider ?? "deterministic"} ·{" "}
+                {result.planner_telemetry?.model ?? "safe fallback"}
+              </strong>
+              <small>
+                {result.planner_telemetry?.fallback ? "Fallback used" : "Provider plan accepted"}
+                {result.planner_telemetry?.latency_ms
+                  ? ` · ${result.planner_telemetry.latency_ms} ms`
+                  : ""}
+              </small>
+            </article>
+          </div>
+          <ol className="lens-tool-trajectory">
+            {(result.tool_calls ?? []).map((tool, index) => (
+              <li key={`${String(tool.tool)}-${index}`}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{String(tool.tool ?? "unknown tool")}</strong>
+                  <small>{toolArguments(tool.arguments)}</small>
+                </div>
+                <code>{String(tool.result_count ?? "done")}</code>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {terminal ? (
+        <section className="panel lens-quality-center">
+          <div className="panel-header">
+            <div>
+              <h2>Validation and evaluation</h2>
+              <p>Runtime gates are automatic. The scorecard is repeatable, persisted, and audited.</p>
+            </div>
+            <ClipboardCheck size={20} />
+          </div>
+          <div className="lens-retrieval-disclosure">
+            <FileSearch size={18} />
+            <div>
+              <strong>Structured financial retrieval</strong>
+              <span>
+                Approved facts are queried through typed SQL tools. Semantic/vector retrieval is
+                not used or scored in this workflow.
+              </span>
+            </div>
+          </div>
+          {validationQuery.isPending ? (
+            <div className="lens-quality-loading">
+              <LoaderCircle className="spin" size={18} /> Loading validation gates…
+            </div>
+          ) : validationQuery.data ? (
+            <div className="lens-validation-grid">
+              {validationQuery.data.checks.map((check) => (
+                <article key={check.check_id} className={`lens-gate ${check.status}`}>
+                  {check.status === "passed" ? (
+                    <CheckCircle2 size={18} />
+                  ) : (
+                    <CircleAlert size={18} />
+                  )}
+                  <div>
+                    <strong>{check.label}</strong>
+                    <span>{check.detail}</span>
+                  </div>
+                  <b>{check.status.replaceAll("_", " ")}</b>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="lens-error">Validation report could not be loaded.</div>
+          )}
+          <div className="lens-evaluation-action">
+            <div>
+              <strong>Production scorecard</strong>
+              <span>
+                Re-checks planning, tools, retrieval math, evidence, claims, and the locked
+                INFY extraction baseline.
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={!analysisId || evaluationMutation.isPending}
+              onClick={() => analysisId && evaluationMutation.mutate(analysisId)}
+            >
+              {evaluationMutation.isPending ? (
+                <LoaderCircle className="spin" size={17} />
+              ) : (
+                <Gauge size={17} />
+              )}
+              Run quality evaluation
+            </button>
+          </div>
+          {evaluationMutation.isError ? (
+            <div className="lens-error">{evaluationMutation.error.message}</div>
+          ) : null}
+          {evaluationMutation.data ? (
+            <div className="lens-scorecard">
+              <div className={`lens-overall-score ${evaluationMutation.data.status}`}>
+                <span>Overall quality</span>
+                <strong>{evaluationMutation.data.score.toFixed(1)}</strong>
+                <b>{evaluationMutation.data.status}</b>
+                <small>
+                  {evaluationMutation.data.evaluator_version} · saved{" "}
+                  {formatDateTime(evaluationMutation.data.created_at)}
+                </small>
+              </div>
+              <div className="lens-suite-grid">
+                {evaluationMutation.data.suites.map((suite) => (
+                  <article key={suite.suite_id} className={suite.status}>
+                    <div>
+                      <span>{suite.label}</span>
+                      <b>{suite.status.replaceAll("_", " ")}</b>
+                    </div>
+                    <strong>
+                      {suite.status === "not_evaluated" ? "—" : suite.score.toFixed(0)}
+                    </strong>
+                    <small>{suite.summary}</small>
+                    <em>{suite.hard_gate ? "Release gate" : "Informational"}</em>
+                  </article>
+                ))}
+              </div>
+              <p className="lens-evaluation-id">
+                Evaluation {evaluationMutation.data.evaluation_id} · trace{" "}
+                {evaluationMutation.data.trace_id ?? "not available"}
+              </p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       {result?.synthesis ? (
         <section className="panel lens-answer">
           <div className="panel-header">
@@ -382,6 +545,27 @@ export function LensAgentPage() {
         </section>
       ) : null}
 
+      {result?.ranking?.exclusions?.length ? (
+        <section className="panel lens-exclusions">
+          <div className="panel-header">
+            <div>
+              <h2>Disclosed exclusions</h2>
+              <p>Every unranked member is retained with a machine-readable reason.</p>
+            </div>
+            <CircleAlert size={20} />
+          </div>
+          <div className="lens-exclusion-grid">
+            {result.ranking.exclusions.map((company) => (
+              <article key={company.company_id}>
+                <strong>{company.symbol}</strong>
+                <span>{company.name}</span>
+                <code>{company.reason_code.replaceAll("_", " ")}</code>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {selectedCitation ? (
         <aside className="lens-evidence-drawer" aria-label="Filing evidence">
           <div className="lens-evidence-header">
@@ -456,4 +640,12 @@ function formatValue(value: string, currency?: string | null): string {
     ? new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(numeric)
     : value;
   return currency ? `${currency} ${rendered}` : rendered;
+}
+
+function toolArguments(value: unknown): string {
+  if (!value || typeof value !== "object") return "No arguments";
+  return Object.entries(value)
+    .slice(0, 4)
+    .map(([key, item]) => `${key.replaceAll("_", " ")}: ${String(item)}`)
+    .join(" · ");
 }

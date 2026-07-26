@@ -896,6 +896,14 @@ export type FilingInvestigationResult = {
     scope: string;
     rationale: string;
   };
+  planner_telemetry?: {
+    provider?: string;
+    model?: string;
+    status?: string;
+    fallback?: boolean;
+    latency_ms?: number;
+    usage?: Record<string, number>;
+  };
   coverage: FilingUniverseCoverage;
   ranking: {
     rows: FilingInvestigationRankingRow[];
@@ -965,6 +973,47 @@ export type FilingInvestigationEvent = {
   node: string;
   status: string;
   detail: Record<string, unknown>;
+  created_at: string;
+};
+
+export type FilingInvestigationQualityCheck = {
+  check_id: string;
+  label: string;
+  status: "passed" | "failed" | "warning" | "not_evaluated";
+  detail: string;
+  metrics: Record<string, unknown>;
+};
+
+export type FilingInvestigationValidationReport = {
+  analysis_id: string;
+  status: "passed" | "failed" | "partial";
+  retrieval_mode: "structured_financial_retrieval";
+  checks: FilingInvestigationQualityCheck[];
+  generated_at: string;
+};
+
+export type FilingInvestigationEvaluationSuite = {
+  suite_id: string;
+  label: string;
+  status: "passed" | "failed" | "not_evaluated";
+  score: number;
+  hard_gate: boolean;
+  summary: string;
+  checks: FilingInvestigationQualityCheck[];
+  metrics: Record<string, unknown>;
+};
+
+export type FilingInvestigationEvaluationReport = {
+  evaluation_id: string;
+  analysis_id: string;
+  workspace_id: string;
+  dataset_id: string;
+  evaluator_version: string;
+  status: "passed" | "failed";
+  score: number;
+  retrieval_mode: "structured_financial_retrieval";
+  suites: FilingInvestigationEvaluationSuite[];
+  trace_id?: string | null;
   created_at: string;
 };
 

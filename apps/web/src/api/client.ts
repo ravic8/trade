@@ -31,9 +31,11 @@ import type {
   FactorICResponse,
   FactorSummaryResponse,
   FilingInvestigationEvent,
+  FilingInvestigationEvaluationReport,
   FilingInvestigationRequest,
   FilingInvestigationRun,
   FilingInvestigationSubmission,
+  FilingInvestigationValidationReport,
   FilingUniverseCoverage,
   JobRun,
   MLBacktestsResponse,
@@ -590,5 +592,23 @@ export function getFilingInvestigationEvents(
   return strictFetchJson(
     `/api/filings/investigations/${encodeURIComponent(analysisId)}/events`,
     { headers: filingHeaders },
+  );
+}
+
+export function getFilingInvestigationValidation(
+  analysisId: string,
+): Promise<FilingInvestigationValidationReport> {
+  return strictFetchJson(
+    `/api/filings/investigations/${encodeURIComponent(analysisId)}/validation`,
+    { headers: filingHeaders },
+  );
+}
+
+export function evaluateFilingInvestigation(
+  analysisId: string,
+): Promise<FilingInvestigationEvaluationReport> {
+  return strictFetchJson(
+    `/api/filings/investigations/${encodeURIComponent(analysisId)}/evaluations`,
+    { method: "POST", headers: filingHeaders },
   );
 }
