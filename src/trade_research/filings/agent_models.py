@@ -73,14 +73,31 @@ def classify_investigation_intent(question: str) -> InvestigationIntent:
         "what universe",
         "which universe",
     )
+    financial_terms = (
+        "rank",
+        "ranking",
+        "leader",
+        "growth",
+        "momentum",
+        "strongest",
+        "top ",
+        "compare",
+        "comparison",
+        "year-over-year",
+        "quarter-over-quarter",
+        "yoy",
+        "qoq",
+    )
     if any(term in normalized for term in capability_terms):
         return "capabilities"
     if any(term in normalized for term in limitation_terms):
         return "limitations"
+    if any(term in normalized for term in financial_terms):
+        if "compare" in normalized and "rank" not in normalized:
+            return "compare_companies"
+        return "rank_growth"
     if any(term in normalized for term in coverage_terms):
         return "coverage"
-    if "compare" in normalized and "rank" not in normalized:
-        return "compare_companies"
     return "rank_growth"
 
 

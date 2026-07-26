@@ -4259,6 +4259,49 @@ tbody tr:hover {
   font-weight: 750;
 }
 
+.lens-suite-checks {
+  border-top: 1px solid #e4ebe7;
+  padding-top: 7px;
+}
+
+.lens-suite-checks summary {
+  color: #315f4d;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.lens-suite-checks ul {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lens-suite-checks li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 6px;
+}
+
+.lens-suite-checks li b {
+  align-self: start;
+  grid-row: 1 / span 2;
+  padding: 2px 5px;
+  font-size: 0.55rem;
+}
+
+.lens-suite-checks li > span {
+  color: #29463a;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.lens-suite-checks li small {
+  overflow-wrap: anywhere;
+}
+
 .lens-evaluation-id {
   grid-column: 1 / -1;
   margin: 0;

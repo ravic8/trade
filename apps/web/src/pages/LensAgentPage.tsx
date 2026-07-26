@@ -310,7 +310,11 @@ export function LensAgentPage() {
                 {result.planner_telemetry?.model ?? "safe fallback"}
               </strong>
               <small>
-                {result.planner_telemetry?.fallback ? "Fallback used" : "Provider plan accepted"}
+                {result.planner_telemetry?.fallback
+                  ? `Fallback used · ${result.planner_telemetry.status ?? "invalid plan"}`
+                  : result.planner_telemetry?.repair_succeeded
+                    ? `Provider plan repaired · ${result.planner_telemetry.initial_failure ?? "validation failure"}`
+                    : "Provider plan accepted"}
                 {result.planner_telemetry?.latency_ms
                   ? ` · ${result.planner_telemetry.latency_ms} ms`
                   : ""}
@@ -426,6 +430,20 @@ export function LensAgentPage() {
                       {suite.status === "not_evaluated" ? "—" : suite.score.toFixed(0)}
                     </strong>
                     <small>{suite.summary}</small>
+                    {suite.checks.length ? (
+                      <details className="lens-suite-checks">
+                        <summary>Check details</summary>
+                        <ul>
+                          {suite.checks.map((check) => (
+                            <li key={check.check_id} className={check.status}>
+                              <b>{check.status}</b>
+                              <span>{check.label}</span>
+                              <small>{check.detail}</small>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
                     <em>{suite.hard_gate ? "Release gate" : "Informational"}</em>
                   </article>
                 ))}

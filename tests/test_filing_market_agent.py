@@ -612,6 +612,10 @@ def test_top_ten_model_claims_are_validated_against_all_ranked_rows(
         ("What are your capabilites?", "capabilities"),
         ("What can you not do?", "limitations"),
         ("Compare INFY and TCS revenue", "compare_companies"),
+        (
+            "Rank Nifty 50 companies by net-profit growth and explain coverage.",
+            "rank_growth",
+        ),
     ],
 )
 def test_question_intent_classifier(question: str, expected: str) -> None:
