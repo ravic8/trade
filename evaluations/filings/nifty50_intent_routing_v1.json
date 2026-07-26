@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "dataset_id": "nifty50-intent-routing-v1",
+  "cases": [
+    {
+      "case_id": "coverage-ui-approved-data",
+      "utterance": "For which Nifty 50 stocks do you currently have approved filing data?",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "coverage-stocks-have-data",
+      "utterance": "For which stocks do you have data?",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "coverage-universe-stocks",
+      "utterance": "What universe stocks do you have data for?",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "coverage-approved-companies",
+      "utterance": "Which Nifty 50 companies have approved financial facts?",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "coverage-represented-members",
+      "utterance": "Which universe members are represented in your filing data?",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "coverage-data-available",
+      "utterance": "What filing data is available right now?",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "coverage-show-revenue",
+      "utterance": "Show revenue coverage.",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "coverage-missing-stocks",
+      "utterance": "Which Nifty 50 stocks are covered and which are missing?",
+      "expected_intent": "coverage"
+    },
+    {
+      "case_id": "capabilities-combined",
+      "utterance": "What are your capabilities and limitations?",
+      "expected_intent": "capabilities"
+    },
+    {
+      "case_id": "capabilities-typo",
+      "utterance": "What are your capabilites?",
+      "expected_intent": "capabilities"
+    },
+    {
+      "case_id": "capabilities-help",
+      "utterance": "How can you help me analyze Nifty 50 filings?",
+      "expected_intent": "capabilities"
+    },
+    {
+      "case_id": "capabilities-supported",
+      "utterance": "What analysis do you support?",
+      "expected_intent": "capabilities"
+    },
+    {
+      "case_id": "capabilities-can-do",
+      "utterance": "What can this filing agent do?",
+      "expected_intent": "capabilities"
+    },
+    {
+      "case_id": "limitations-cannot-do",
+      "utterance": "What can you not do?",
+      "expected_intent": "limitations"
+    },
+    {
+      "case_id": "limitations-only",
+      "utterance": "What are the agent limitations?",
+      "expected_intent": "limitations"
+    },
+    {
+      "case_id": "limitations-unsupported",
+      "utterance": "Which requests are unsupported?",
+      "expected_intent": "limitations"
+    },
+    {
+      "case_id": "rank-net-profit-yoy-full",
+      "utterance": "Rank Nifty 50 companies by year-over-year net profit growth.",
+      "expected_intent": "rank_growth"
+    },
+    {
+      "case_id": "rank-with-coverage-disclosure",
+      "utterance": "Rank Nifty 50 companies by net-profit growth and explain coverage.",
+      "expected_intent": "rank_growth"
+    },
+    {
+      "case_id": "rank-revenue-leaders",
+      "utterance": "Show the revenue growth leaders in the Nifty 50.",
+      "expected_intent": "rank_growth"
+    },
+    {
+      "case_id": "rank-eps-momentum",
+      "utterance": "Which companies have the strongest EPS momentum?",
+      "expected_intent": "rank_growth"
+    },
+    {
+      "case_id": "rank-top-profit-qoq",
+      "utterance": "Give me the top 10 companies by quarter-over-quarter profit growth.",
+      "expected_intent": "rank_growth"
+    },
+    {
+      "case_id": "rank-net-profit-generic",
+      "utterance": "Rank companies by year-over-year net profit growth.",
+      "expected_intent": "rank_growth"
+    },
+    {
+      "case_id": "rank-production-demo",
+      "utterance": "Rank Nifty 50 companies by year-over-year consolidated net-profit growth. Explain the leaders, cite every result, and clearly disclose excluded companies.",
+      "expected_intent": "rank_growth"
+    },
+    {
+      "case_id": "compare-infy-tcs-revenue",
+      "utterance": "Compare INFY and TCS revenue.",
+      "expected_intent": "compare_companies"
+    },
+    {
+      "case_id": "compare-two-companies",
+      "utterance": "Compare the net profit of Reliance and Infosys.",
+      "expected_intent": "compare_companies"
+    },
+    {
+      "case_id": "compare-eps",
+      "utterance": "Show a comparison of basic EPS for TCS and INFY.",
+      "expected_intent": "compare_companies"
+    }
+  ]
+}

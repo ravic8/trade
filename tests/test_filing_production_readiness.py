@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from trade_research.config import Settings
@@ -13,6 +14,23 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
     golden = tmp_path / "evaluations/filings/infy_m1_golden.json"
     golden.parent.mkdir(parents=True)
     golden.write_text("{}", encoding="utf-8")
+    intent_dataset = tmp_path / "evaluations/filings/nifty50_intent_routing_v1.json"
+    intent_dataset.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "dataset_id": "test-intents-v1",
+                "cases": [
+                    {
+                        "case_id": "coverage-test",
+                        "utterance": "Which stocks have data?",
+                        "expected_intent": "coverage",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     alert_token = tmp_path / "secrets/alertmanager-webhook-token"
     alert_token.parent.mkdir(parents=True)
     alert_token.write_text("a" * 64, encoding="utf-8")
@@ -24,6 +42,7 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
         "filing_enabled": True,
         "filing_manifest_path": manifest,
         "filing_golden_dataset_path": golden,
+        "filing_intent_evaluation_dataset_path": intent_dataset,
         "filing_queue_mode": "celery",
         "filing_artifact_backend": "s3",
         "filing_s3_endpoint_url": "http://minio:9000",
@@ -69,6 +88,7 @@ def test_readiness_passes_only_when_every_production_gate_passes(
         "authentication",
         "source_manifest",
         "golden_dataset",
+        "intent_evaluation_dataset",
         "langfuse",
         "alerting",
         "postgresql_migration",
@@ -119,6 +139,7 @@ def test_readiness_reports_missing_corpus_without_importing_it(
     settings = _settings(tmp_path)
     settings.filing_manifest_path.unlink()
     settings.filing_golden_dataset_path.unlink()
+    settings.filing_intent_evaluation_dataset_path.unlink()
 
     report = verify_filing_production(
         settings,
@@ -128,7 +149,11 @@ def test_readiness_reports_missing_corpus_without_importing_it(
 
     assert report.passed is False
     failed = {check.name for check in report.checks if not check.passed}
-    assert failed == {"source_manifest", "golden_dataset"}
+    assert failed == {
+        "source_manifest",
+        "golden_dataset",
+        "intent_evaluation_dataset",
+    }
 
 
 def test_readiness_fails_closed_without_alert_webhook_credential(

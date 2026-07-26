@@ -343,6 +343,55 @@ def test_semantically_wrong_provider_intent_is_recorded_and_safely_corrected() -
     assert telemetry["expected_intent"] == "capabilities"
 
 
+def test_low_confidence_policy_accepts_valid_structured_llm_intent() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "intent": "coverage",
+                                    "metric": "revenue",
+                                    "comparison": "yoy",
+                                    "limit": 10,
+                                    "scope": "consolidated",
+                                    "rationale": "Inspect available filing data.",
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {},
+            },
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = FilingAgentLLM(
+        _settings(provider="openai", model="gpt-5.4-nano"),
+        http_client=http_client,
+    )
+
+    plan, telemetry = client.plan(
+        question="Please investigate what is available for my objective.",
+        requested_comparison="auto",
+    )
+    http_client.close()
+
+    assert len(requests) == 1
+    assert plan.intent == "coverage"
+    assert telemetry["status"] == "ok"
+    assert telemetry["fallback"] is False
+    assert telemetry["policy_enforced"] is False
+    assert telemetry["policy_intent"] is None
+    assert telemetry["policy_confidence"] == "low"
+
+
 def test_invalid_provider_plan_is_repaired_within_bounded_revision() -> None:
     responses = [
         {
