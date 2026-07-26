@@ -9,7 +9,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from trade_research.filings.agent_models import InvestigationPlan
+from trade_research.filings.agent_models import (
+    SYSTEM_INTENTS,
+    InvestigationPlan,
+    classify_investigation_intent,
+)
 from trade_research.filings.evaluation import (
     evaluate_golden_dataset,
     load_golden_dataset,
@@ -25,9 +29,9 @@ from trade_research.filings.models import (
 from trade_research.filings.runtime import FilingRuntime
 from trade_research.filings.store import utc_now
 
-EVALUATOR_VERSION = "filing-investigation-evaluator-v1"
-DATASET_ID = "nifty50-investigation-v1"
-EXPECTED_TOOL_SEQUENCE = (
+EVALUATOR_VERSION = "filing-investigation-evaluator-v2"
+DATASET_ID = "nifty50-investigation-v2"
+FINANCIAL_TOOL_SEQUENCE = (
     "filings.get_coverage",
     "financial_facts.compare",
     "filing_evidence.resolve",
@@ -37,6 +41,15 @@ EXPECTED_TOOL_SEQUENCE = (
 def build_validation_report(run: InvestigationRun) -> InvestigationValidationReport:
     result = run.result_payload
     plan_valid, plan_detail = _validate_plan(result.get("plan") or run.plan_payload)
+    expected_intent = classify_investigation_intent(run.question)
+    intent_valid, intent_detail, intent_metrics = _validate_intent(
+        run.question,
+        result.get("plan") or run.plan_payload,
+    )
+    answer_valid, answer_detail, answer_metrics = _validate_answer_relevance(
+        expected_intent,
+        result,
+    )
     coverage_valid, coverage_detail, coverage_metrics = _validate_coverage(
         result.get("coverage")
     )
@@ -66,6 +79,20 @@ def build_validation_report(run: InvestigationRun) -> InvestigationValidationRep
         ),
         _check("plan_schema", "Bounded plan schema", plan_valid, plan_detail),
         _check(
+            "intent_alignment",
+            "Question-to-intent alignment",
+            intent_valid,
+            intent_detail,
+            metrics=intent_metrics,
+        ),
+        _check(
+            "answer_relevance",
+            "Answer relevance and route contract",
+            answer_valid,
+            answer_detail,
+            metrics=answer_metrics,
+        ),
+        _check(
             "universe_coverage",
             "Universe and exclusion accounting",
             coverage_valid,
@@ -79,28 +106,33 @@ def build_validation_report(run: InvestigationRun) -> InvestigationValidationRep
             tools_detail,
             metrics=tools_metrics,
         ),
-        _check(
-            "structured_retrieval",
-            "Structured retrieval and deterministic math",
-            retrieval_valid,
-            retrieval_detail,
-            metrics=retrieval_metrics,
-        ),
-        _check(
-            "evidence_resolution",
-            "Exact filing evidence resolution",
-            evidence_valid,
-            evidence_detail,
-            metrics=evidence_metrics,
-        ),
-        _check(
-            "claim_validation",
-            "Citation-bound claim validation",
-            claims_valid,
-            claims_detail,
-            metrics=claims_metrics,
-        ),
     ]
+    if expected_intent not in SYSTEM_INTENTS:
+        checks.extend(
+            [
+                _check(
+                    "structured_retrieval",
+                    "Structured retrieval and deterministic math",
+                    retrieval_valid,
+                    retrieval_detail,
+                    metrics=retrieval_metrics,
+                ),
+                _check(
+                    "evidence_resolution",
+                    "Exact filing evidence resolution",
+                    evidence_valid,
+                    evidence_detail,
+                    metrics=evidence_metrics,
+                ),
+                _check(
+                    "claim_validation",
+                    "Citation-bound claim validation",
+                    claims_valid,
+                    claims_detail,
+                    metrics=claims_metrics,
+                ),
+            ]
+        )
     failed = any(item.status == "failed" for item in checks)
     warning = any(item.status == "warning" for item in checks)
     return InvestigationValidationReport(
@@ -122,6 +154,7 @@ def evaluate_investigation(
 
     plan_checks = [
         checks["plan_schema"],
+        checks["intent_alignment"],
         _check(
             "planner_provider",
             "LLM planner completed",
@@ -148,22 +181,41 @@ def evaluate_investigation(
             ),
         ),
     ]
+    expected_intent = classify_investigation_intent(run.question)
     suites = [
-        _suite("plan_quality", "Plan quality", plan_checks),
+        _suite("plan_quality", "LLM intent and plan quality", plan_checks),
+        _suite(
+            "answer_relevance",
+            "Question-answer relevance",
+            [checks["answer_relevance"]],
+        ),
         _suite("tool_selection", "Tool selection and arguments", [checks["tool_policy"]]),
-        _suite(
-            "structured_retrieval",
-            "Structured retrieval quality",
-            [checks["universe_coverage"], checks["structured_retrieval"]],
-            metrics={"retrieval_mode": "structured_financial_retrieval"},
-        ),
-        _suite(
-            "evidence_and_claims",
-            "Evidence and grounded claims",
-            [checks["evidence_resolution"], checks["claim_validation"]],
-        ),
-        _golden_suite(runtime, workspace_id=run.workspace_id),
     ]
+    if expected_intent in SYSTEM_INTENTS:
+        suites.append(
+            _suite(
+                "system_contract",
+                "System capability and coverage contract",
+                [checks["universe_coverage"], checks["answer_relevance"]],
+            )
+        )
+    else:
+        suites.extend(
+            [
+                _suite(
+                    "structured_retrieval",
+                    "Structured retrieval quality",
+                    [checks["universe_coverage"], checks["structured_retrieval"]],
+                    metrics={"retrieval_mode": "structured_financial_retrieval"},
+                ),
+                _suite(
+                    "evidence_and_claims",
+                    "Evidence and grounded claims",
+                    [checks["evidence_resolution"], checks["claim_validation"]],
+                ),
+            ]
+        )
+    suites.append(_golden_suite(runtime, workspace_id=run.workspace_id))
     evaluated = [suite for suite in suites if suite.status != "not_evaluated"]
     score = (
         round(sum(suite.score for suite in evaluated) / len(evaluated), 2)
@@ -199,6 +251,88 @@ def _validate_plan(payload: Any) -> tuple[bool, str]:
     )
 
 
+def _validate_intent(
+    question: str,
+    payload: Any,
+) -> tuple[bool, str, dict[str, Any]]:
+    expected = classify_investigation_intent(question)
+    planned = payload.get("intent") if isinstance(payload, dict) else None
+    valid = planned == expected
+    return valid, (
+        f"Expected {expected} from the user objective; planner selected "
+        f"{planned or 'no intent'}."
+    ), {"expected_intent": expected, "planned_intent": planned}
+
+
+def _validate_answer_relevance(
+    expected_intent: str,
+    result: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any]]:
+    answer_type = str(result.get("answer_type") or "")
+    system_answer = (
+        result.get("system_answer")
+        if isinstance(result.get("system_answer"), dict)
+        else {}
+    )
+    has_ranking = isinstance(result.get("ranking"), dict)
+    answer_validation = (
+        result.get("answer_validation")
+        if isinstance(result.get("answer_validation"), dict)
+        else {}
+    )
+    if expected_intent == "coverage":
+        available = system_answer.get("available_companies")
+        coverage = result.get("coverage") if isinstance(result.get("coverage"), dict) else {}
+        represented = _integer(coverage.get("represented_company_count"))
+        valid = (
+            answer_type == "coverage"
+            and isinstance(available, list)
+            and len(available) == represented
+            and not has_ranking
+            and answer_validation.get("passed") is True
+        )
+        detail = (
+            f"Coverage question returned {len(available) if isinstance(available, list) else 0}/"
+            f"{represented} represented companies without executing a ranking."
+        )
+    elif expected_intent in {"capabilities", "limitations"}:
+        capabilities = system_answer.get("capabilities")
+        limitations = system_answer.get("limitations")
+        valid = (
+            answer_type == "capabilities"
+            and isinstance(capabilities, list)
+            and bool(capabilities)
+            and isinstance(limitations, list)
+            and bool(limitations)
+            and not has_ranking
+            and answer_validation.get("passed") is True
+        )
+        detail = (
+            "Capability question returned the versioned supported-operation and "
+            "limitation contract."
+            if valid
+            else "Capability question did not return the required system contract."
+        )
+    else:
+        ranking = result.get("ranking") if has_ranking else {}
+        synthesis = result.get("synthesis")
+        valid = (
+            answer_type in {"", "financial_analysis"}
+            and isinstance(ranking.get("rows"), list)
+            and isinstance(synthesis, dict)
+        )
+        detail = (
+            "Financial objective returned a structured ranking and synthesis."
+            if valid
+            else "Financial objective did not return a relevant ranking and synthesis."
+        )
+    return valid, detail, {
+        "expected_intent": expected_intent,
+        "answer_type": answer_type or "legacy_financial",
+        "financial_ranking_present": has_ranking,
+    }
+
+
 def _validate_coverage(payload: Any) -> tuple[bool, str, dict[str, Any]]:
     coverage = payload if isinstance(payload, dict) else {}
     member_count = _integer(coverage.get("member_count"))
@@ -231,19 +365,25 @@ def _validate_tools(run: InvestigationRun) -> tuple[bool, str, dict[str, Any]]:
     budget = _integer(run.request_payload.get("max_tool_calls"), default=8)
     plan_payload = run.result_payload.get("plan")
     plan = plan_payload if isinstance(plan_payload, dict) else {}
+    expected_intent = classify_investigation_intent(run.question)
+    if expected_intent == "coverage":
+        expected_tools = ("filings.get_coverage",)
+    elif expected_intent in {"capabilities", "limitations"}:
+        expected_tools = ("filings.get_coverage", "agent.describe_capabilities")
+    else:
+        expected_tools = FINANCIAL_TOOL_SEQUENCE
     compare = calls[1] if len(calls) > 1 and isinstance(calls[1], dict) else {}
     arguments = compare.get("arguments") if isinstance(compare.get("arguments"), dict) else {}
-    arguments_valid = all(
-        arguments.get(key) == plan.get(key)
-        for key in ("metric", "comparison", "scope")
+    arguments_valid = expected_intent in SYSTEM_INTENTS or all(
+        arguments.get(key) == plan.get(key) for key in ("metric", "comparison", "scope")
     )
-    valid = names == EXPECTED_TOOL_SEQUENCE and len(calls) <= budget and arguments_valid
+    valid = names == expected_tools and len(calls) <= budget and arguments_valid
     return valid, (
         f"Called {' → '.join(names) if names else 'no tools'}; "
         f"{len(calls)}/{budget} budget used."
     ), {
         "called_tools": list(names),
-        "expected_tools": list(EXPECTED_TOOL_SEQUENCE),
+        "expected_tools": list(expected_tools),
         "tool_call_count": len(calls),
         "max_tool_calls": budget,
         "arguments_match_plan": arguments_valid,

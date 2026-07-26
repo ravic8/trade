@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     filing_agent_llm_enabled: bool = False
     filing_agent_llm_provider: Literal["openai", "gemini"] = "openai"
     filing_agent_llm_model: str = "gpt-4o-mini"
-    filing_agent_prompt_version: str = "nifty50-investigation-v1"
+    filing_agent_prompt_version: str = "nifty50-investigation-v2"
     filing_agent_max_output_tokens: int = Field(default=1_200, ge=128, le=8_192)
     filing_agent_timeout_seconds: float = Field(default=20.0, ge=1, le=120)
     filing_agent_retry_attempts: int = Field(default=2, ge=1, le=5)

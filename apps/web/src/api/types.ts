@@ -888,6 +888,7 @@ export type FilingInvestigationCitation = {
 };
 
 export type FilingInvestigationResult = {
+  answer_type: "financial_analysis" | "coverage" | "capabilities";
   plan: {
     intent: string;
     metric: string;
@@ -905,7 +906,7 @@ export type FilingInvestigationResult = {
     usage?: Record<string, number>;
   };
   coverage: FilingUniverseCoverage;
-  ranking: {
+  ranking?: {
     rows: FilingInvestigationRankingRow[];
     eligible_count: number;
     ranked_count: number;
@@ -917,7 +918,7 @@ export type FilingInvestigationResult = {
       reason_code: string;
     }>;
   };
-  synthesis: {
+  synthesis?: {
     title: string;
     summary: string;
     claims: Array<{ text: string; citation_ids: string[] }>;
@@ -927,12 +928,50 @@ export type FilingInvestigationResult = {
     model?: string | null;
     usage: Record<string, number>;
   };
-  citations: FilingInvestigationCitation[];
-  claim_validation: {
+  citations?: FilingInvestigationCitation[];
+  claim_validation?: {
     passed: boolean;
     valid_claim_count: number;
     rejected_claim_count: number;
     complete_row_count: number;
+  };
+  system_answer?: {
+    contract_version: string;
+    answer_type: "coverage" | "capabilities";
+    title: string;
+    summary: string;
+    coverage: {
+      universe_id: string;
+      snapshot_id?: string | null;
+      member_count: number;
+      represented_company_count: number;
+      eligible_company_count: number;
+      unavailable_company_count: number;
+      insufficient_history_count: number;
+    };
+    available_companies?: FilingCoverageCompany[];
+    analysis_eligible_companies?: FilingCoverageCompany[];
+    insufficient_history_companies?: FilingCoverageCompany[];
+    unavailable_companies?: FilingCoverageCompany[];
+    supported_universes?: Array<{
+      universe_id: string;
+      exchange: string;
+      member_count: number;
+    }>;
+    supported_analysis?: {
+      metrics: string[];
+      comparisons: string[];
+      scope: string[];
+      periodicity: string[];
+    };
+    capabilities?: Array<{ id: string; label: string; detail: string }>;
+    limitations?: string[];
+    runtime?: Record<string, string | boolean>;
+  };
+  answer_validation?: {
+    passed: boolean;
+    intent: string;
+    detail: string;
   };
   tool_calls: Array<Record<string, unknown>>;
   prompt_version: string;

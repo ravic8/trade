@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -102,11 +103,38 @@ def load_golden_dataset(
             raise FileNotFoundError(manifest)
         actual_hash = _sha256(manifest)
         if actual_hash != dataset.source_manifest_sha256:
-            raise ValueError(
-                "golden dataset source manifest changed: "
-                f"expected {dataset.source_manifest_sha256}, got {actual_hash}"
-            )
+            _verify_locked_sources_in_evolved_manifest(dataset, manifest)
     return dataset
+
+
+def _verify_locked_sources_in_evolved_manifest(
+    dataset: FilingGoldenDataset,
+    manifest: Path,
+) -> None:
+    """Allow additive manifest evolution while preserving every locked source."""
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError("golden dataset source manifest is unreadable") from exc
+    documents = payload.get("documents") if isinstance(payload, dict) else None
+    if not isinstance(documents, list):
+        raise ValueError("golden dataset source manifest lacks documents")
+    active_sources = {
+        (str(item.get("filename") or ""), str(item.get("sha256") or ""))
+        for item in documents
+        if isinstance(item, dict)
+        and str(item.get("acquisition_status") or "success") != "failed"
+    }
+    missing = [
+        case.case_id
+        for case in dataset.cases
+        if (case.source_filename, case.source_sha256) not in active_sources
+    ]
+    if missing:
+        raise ValueError(
+            "golden dataset locked sources changed or disappeared: "
+            + ", ".join(missing)
+        )
 
 
 def evaluate_golden_dataset(
