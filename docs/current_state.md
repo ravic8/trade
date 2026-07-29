@@ -92,7 +92,7 @@ BigQuery production sync. `NSE_DAILY_PRIMARY_SOURCE=upstox` and
 
 ## Dagster state
 
-The repository defines 17 schedules. Every schedule has
+The repository defines 19 schedules. Every schedule has
 `DefaultScheduleStatus.STOPPED`.
 
 | Schedule | Job | Repository default |
@@ -106,6 +106,8 @@ The repository defines 17 schedules. Every schedule has
 | `us_universe_refresh_schedule` | `us_universe_refresh_job` | stopped |
 | `yfinance_daily_work_planner_schedule` | `yfinance_daily_work_planner_job` | stopped |
 | `yfinance_nse_completed_session_work_planner_schedule` | `yfinance_nse_completed_session_work_planner_job` | stopped |
+| `yfinance_tsx_completed_session_work_planner_schedule` | `yfinance_tsx_completed_session_work_planner_job` | stopped |
+| `yfinance_us_completed_session_work_planner_schedule` | `yfinance_us_completed_session_work_planner_job` | stopped |
 | `yfinance_daily_work_worker_schedule` | `yfinance_daily_work_worker_job` | stopped |
 | `nse_completed_session_opportunity_targets_schedule` | `nse_completed_session_opportunity_targets_job` | stopped |
 | `tsx_completed_session_opportunity_targets_schedule` | `tsx_completed_session_opportunity_targets_job` | stopped |
@@ -121,9 +123,12 @@ schedule, tick, run, and repository-origin state from Dagster SQLite in
 read-only mode. Until schedule reconciliation writes the current-origin marker,
 actual running/stopped state is available but origin health remains unknown.
 
-The two North America completed-session target schedules are Phase 1 additions.
-They remain stopped by repository default and become desired-running only when
-their exchange-specific durable yfinance flags are enabled.
+The North America completed-session planner and target schedules are Phase 1
+additions. They remain stopped by repository default and become desired-running
+only when their exchange-specific durable yfinance flags are enabled. Each
+post-close planner runs at 18:00 exchange-local time; coverage-gated target
+checks continue from 18:15 through 01:15 so the shared worker can drain the
+newly planned session before materialization.
 
 Direct audit found 12 running schedule records and 3 stopped schedules:
 

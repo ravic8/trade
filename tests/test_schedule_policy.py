@@ -29,9 +29,25 @@ def test_schedule_policy_enables_exchange_targets_from_yfinance_flags() -> None:
     statuses = desired_schedule_statuses(settings)
 
     assert statuses["nse_completed_session_opportunity_targets_schedule"] == "running"
+    assert statuses["yfinance_tsx_completed_session_work_planner_schedule"] == "running"
+    assert statuses["yfinance_us_completed_session_work_planner_schedule"] == "running"
     assert statuses["tsx_completed_session_opportunity_targets_schedule"] == "running"
     assert statuses["us_completed_session_opportunity_targets_schedule"] == "running"
     assert statuses["north_america_daily_yfinance_schedule"] == "stopped"
+
+
+def test_north_america_post_close_planners_follow_exchange_flags() -> None:
+    settings = Settings(
+        _env_file=None,
+        yfinance_daily_enabled=True,
+        yfinance_full_tsx_enabled=True,
+        yfinance_full_us_enabled=False,
+    )
+
+    statuses = desired_schedule_statuses(settings)
+
+    assert statuses["yfinance_tsx_completed_session_work_planner_schedule"] == "running"
+    assert statuses["yfinance_us_completed_session_work_planner_schedule"] == "stopped"
 
 
 def test_schedule_policy_metadata_matches_dagster_definitions() -> None:

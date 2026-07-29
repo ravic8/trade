@@ -361,15 +361,20 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
     ]
 
 
-def test_north_america_completed_session_assets_use_coverage_gated_refresh(
+def test_north_america_completed_session_assets_plan_then_use_coverage_gated_refresh(
     monkeypatch,
 ) -> None:
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, object]] = []
+
+    def fake_planner(*, exchanges, include_initial_backfill, trigger):
+        calls.append(("planner", (exchanges, include_initial_backfill, trigger)))
+        return _result("yfinance_daily_work_planner")
 
     def fake_targets(*, exchange, ohlcv_source):
-        calls.append((exchange, ohlcv_source))
+        calls.append(("targets", (exchange, ohlcv_source)))
         return _result(f"{exchange.lower()}_opportunity_targets")
 
+    monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_planner", fake_planner)
     monkeypatch.setattr(
         daily_assets,
         "run_completed_session_opportunity_target_pipeline",
@@ -377,12 +382,16 @@ def test_north_america_completed_session_assets_use_coverage_gated_refresh(
     )
     context = dagster.build_op_context()
 
+    daily_assets.yfinance_tsx_completed_session_work_plan(context)
+    daily_assets.yfinance_us_completed_session_work_plan(context)
     daily_assets.tsx_completed_session_opportunity_targets(context)
     daily_assets.us_completed_session_opportunity_targets(context)
 
     assert calls == [
-        ("TSX", "yfinance"),
-        ("US", "yfinance"),
+        ("planner", (("TSX",), False, "dagster")),
+        ("planner", (("US",), False, "dagster")),
+        ("targets", ("TSX", "yfinance")),
+        ("targets", ("US", "yfinance")),
     ]
 
 

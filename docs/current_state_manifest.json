@@ -62,6 +62,8 @@
     "us_universe_refresh_schedule",
     "yfinance_daily_work_planner_schedule",
     "yfinance_nse_completed_session_work_planner_schedule",
+    "yfinance_tsx_completed_session_work_planner_schedule",
+    "yfinance_us_completed_session_work_planner_schedule",
     "nse_completed_session_opportunity_targets_schedule",
     "tsx_completed_session_opportunity_targets_schedule",
     "us_completed_session_opportunity_targets_schedule",

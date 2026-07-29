@@ -102,8 +102,8 @@ Expected results:
 - no stale-origin schedule remains active;
 - a second preview reports no actions;
 - `status_drift` and `origin_drift` are false for managed schedules;
-- TSX and US completed-session Opportunity schedules are running when their
-  yfinance exchange flags are enabled;
+- TSX and US completed-session work planners and Opportunity schedules are
+  running when their yfinance exchange flags are enabled;
 - stopped FX and legacy North America direct schedules remain stopped;
 - historical ticks and runs are still queryable.
 
