@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime
 
 import pandas as pd
+import pytest
 
 from trade_research.storage import TimescaleStore
 from trade_research.storage.timescale import metadata
@@ -78,6 +79,15 @@ def test_opportunity_targets_are_idempotent_and_queryable(tmp_path) -> None:
     assert len(page["rows"]) == 2
     assert page["summary"]["positive_sessions"] == 2
     assert page["summary"]["positive_session_ratio"] == 1.0
+    assert page["summary"]["return_band_sessions"] == 2
+    assert page["summary"]["return_band_eligible_sessions"] == 2
+    assert page["summary"]["return_band_ratio"] == 1.0
+    assert page["summary"]["median_upside"] == page["distributions"]["upside"][
+        "percentiles"
+    ]["p50"]
+    assert page["summary"]["median_true_range"] == page["distributions"][
+        "true_range"
+    ]["percentiles"]["p50"]
     assert page["distributions"]["upside"]["count"] == 2
     assert page["distributions"]["upside"]["percentiles"]["p50"] > 0
     assert sum(
@@ -151,10 +161,56 @@ def test_opportunity_page_combines_percentile_filters_before_pagination(tmp_path
     assert page["session_total"] == 2
     assert page["total"] == 1
     assert page["rows"][0]["symbol"] == "AAA"
+    assert page["summary"]["median_upside"] == page["rows"][0]["upside"]
+    assert page["summary"]["median_true_range"] == page["rows"][0]["true_range"]
     assert page["percentile_filters"] == {
         "upside": {"minimum": 75, "maximum": 100},
         "recovery": {"minimum": 50, "maximum": 100},
     }
+
+
+def test_opportunity_page_counts_inclusive_return_band_before_pagination(tmp_path) -> None:
+    store = TimescaleStore(f"sqlite:///{tmp_path / 'opportunities.sqlite'}")
+    metadata.create_all(store.engine)
+    targets = _targets()
+    targets.loc[
+        (targets["symbol"] == "BBB") & (targets["date"] == date(2026, 1, 5)),
+        "session_return",
+    ] = -0.01
+    store.upsert_daily_opportunity_targets(targets)
+
+    aaa_return = 3 / 101
+    page = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        session_date=date(2026, 1, 5),
+        limit=1,
+        session_return_bounds=(aaa_return, aaa_return),
+    )
+
+    assert page["total"] == 2
+    assert len(page["rows"]) == 1
+    assert page["summary"]["return_band_sessions"] == 1
+    assert page["summary"]["return_band_eligible_sessions"] == 2
+    assert page["summary"]["return_band_ratio"] == 0.5
+
+    losses = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+        session_date=date(2026, 1, 5),
+        session_return_bounds=(None, -0.01),
+    )
+    assert losses["summary"]["return_band_sessions"] == 1
+
+    with pytest.raises(ValueError, match="minimum cannot exceed maximum"):
+        store.opportunity_targets_page(
+            target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+            exchange="NSE",
+            source="yfinance",
+            session_return_bounds=(0.02, 0.01),
+        )
 
 
 def test_opportunity_page_defaults_to_latest_session_with_sufficient_coverage(tmp_path) -> None:

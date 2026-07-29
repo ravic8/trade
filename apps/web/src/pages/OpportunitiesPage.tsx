@@ -24,6 +24,7 @@ import type {
   DailyOpportunitiesParams,
   OpportunityDistributionMetric,
   OpportunityPercentileRange,
+  OpportunityReturnRange,
   OpportunitySession,
 } from "../api/types";
 import { EmptyState, LoadingState } from "../components/DataState";
@@ -88,11 +89,62 @@ function sessionAgeInCalendarDays(value: string | null | undefined) {
   return Math.max(0, Math.floor((todayTime - sessionTime) / 86_400_000));
 }
 
+function parseOptionalPercent(value: string) {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function resolveReturnRange(
+  minimum: string,
+  maximum: string,
+): { range: OpportunityReturnRange; error: string | null } {
+  const minimumPercent = parseOptionalPercent(minimum);
+  const maximumPercent = parseOptionalPercent(maximum);
+  if (
+    minimumPercent != null &&
+    maximumPercent != null &&
+    minimumPercent > maximumPercent
+  ) {
+    return {
+      range: {},
+      error: "Minimum cannot exceed maximum",
+    };
+  }
+  return {
+    range: { minimumPercent, maximumPercent },
+    error: null,
+  };
+}
+
+function formatReturnBound(value: number) {
+  return `${new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+  }).format(value)}%`;
+}
+
+function describeReturnRange(range: OpportunityReturnRange) {
+  if (range.minimumPercent != null && range.maximumPercent != null) {
+    return `${formatReturnBound(range.minimumPercent)} to ${formatReturnBound(range.maximumPercent)} · inclusive`;
+  }
+  if (range.minimumPercent != null) {
+    return `${formatReturnBound(range.minimumPercent)} or more · inclusive`;
+  }
+  if (range.maximumPercent != null) {
+    return `${formatReturnBound(range.maximumPercent)} or less · inclusive`;
+  }
+  return "All reported returns";
+}
+
 export function OpportunitiesPage() {
   const [exchange, setExchange] = useState<DailyOpportunitiesParams["exchange"]>("NSE");
   const [sessionDate, setSessionDate] = useState("");
   const [symbol, setSymbol] = useState("");
   const deferredSymbol = useDeferredValue(symbol.trim());
+  const [returnMinimum, setReturnMinimum] = useState("1");
+  const [returnMaximum, setReturnMaximum] = useState("");
+  const deferredReturnMinimum = useDeferredValue(returnMinimum);
+  const deferredReturnMaximum = useDeferredValue(returnMaximum);
   const [sortBy, setSortBy] = useState("true_range");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [offset, setOffset] = useState(0);
@@ -106,6 +158,14 @@ export function OpportunitiesPage() {
   const [percentileFilters, setPercentileFilters] = useState<
     Partial<Record<OpportunityDistributionMetric, OpportunityPercentileRange>>
   >({});
+  const returnRange = useMemo(
+    () => resolveReturnRange(returnMinimum, returnMaximum),
+    [returnMaximum, returnMinimum],
+  );
+  const deferredReturnRange = useMemo(
+    () => resolveReturnRange(deferredReturnMinimum, deferredReturnMaximum),
+    [deferredReturnMaximum, deferredReturnMinimum],
+  );
 
   const updateRange = useCallback(
     (metric: OpportunityDistributionMetric, nextRange: OpportunityPercentileRange) => {
@@ -121,20 +181,29 @@ export function OpportunitiesPage() {
     [],
   );
 
-  const query = useDailyOpportunities({
-    exchange,
-    sessionDate: sessionDate || undefined,
-    symbol: deferredSymbol || undefined,
-    sortBy,
-    direction,
-    limit: pageSize,
-    offset,
-    percentileFilters,
-  });
+  const query = useDailyOpportunities(
+    {
+      exchange,
+      sessionDate: sessionDate || undefined,
+      symbol: deferredSymbol || undefined,
+      sortBy,
+      direction,
+      limit: pageSize,
+      offset,
+      sessionReturnRange: deferredReturnRange.range,
+      percentileFilters,
+    },
+    !deferredReturnRange.error,
+  );
   const payload = query.data;
   const summary = payload?.summary ?? {};
   const activeFilterCount = Object.keys(percentileFilters).length;
-  const filtersUpdating = deferredSymbol !== symbol.trim() || query.isFetching;
+  const returnBandUpdating =
+    deferredReturnMinimum !== returnMinimum ||
+    deferredReturnMaximum !== returnMaximum ||
+    query.isFetching;
+  const filtersUpdating =
+    deferredSymbol !== symbol.trim() || returnBandUpdating;
 
   const shownDistributions = useMemo(
     () =>
@@ -403,22 +472,31 @@ export function OpportunitiesPage() {
               : "No computed session"
           }
         />
-        <MetricCard
-          icon={TrendingUp}
-          label="Positive return"
-          value={formatPercent(summary.positive_session_ratio, 1)}
-          detail={`${summary.positive_sessions ?? 0} matching symbols closed above open`}
+        <ReturnBandMetricCard
+          minimum={returnMinimum}
+          maximum={returnMaximum}
+          onMinimumChange={setReturnMinimum}
+          onMaximumChange={setReturnMaximum}
+          value={
+            returnRange.error
+              ? "—"
+              : returnBandUpdating
+                ? "…"
+                : (summary.return_band_sessions ?? 0).toLocaleString()
+          }
+          detail={returnRange.error ?? describeReturnRange(returnRange.range)}
+          invalid={Boolean(returnRange.error)}
         />
         <MetricCard
           icon={ArrowUpRight}
-          label="Average upside"
-          value={formatPercent(summary.average_upside)}
-          detail="Across the filtered result set"
+          label="Median upside"
+          value={formatPercent(summary.median_upside)}
+          detail="50th percentile of matching stocks"
         />
         <MetricCard
           icon={Waves}
-          label="Average true range"
-          value={formatPercent(summary.average_true_range)}
+          label="Median true range"
+          value={formatPercent(summary.median_true_range)}
           detail={
             payload?.session_exists
               ? `${formatPercent(payload.coverage_ratio, 1)} session coverage`
@@ -536,6 +614,61 @@ export function OpportunitiesPage() {
         )}
       </section>
     </>
+  );
+}
+
+function ReturnBandMetricCard({
+  minimum,
+  maximum,
+  onMinimumChange,
+  onMaximumChange,
+  value,
+  detail,
+  invalid,
+}: {
+  minimum: string;
+  maximum: string;
+  onMinimumChange: (value: string) => void;
+  onMaximumChange: (value: string) => void;
+  value: string;
+  detail: string;
+  invalid: boolean;
+}) {
+  return (
+    <section className="metric-card return-band-card">
+      <div className="metric-icon">
+        <TrendingUp size={18} />
+      </div>
+      <span>Stocks in return range</span>
+      <strong>{value}</strong>
+      <div className="return-band-controls" aria-label="Inclusive return range">
+        <label>
+          <span>Min %</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.1"
+            value={minimum}
+            onChange={(event) => onMinimumChange(event.target.value)}
+            placeholder="No min"
+            aria-label="Minimum return percent"
+          />
+        </label>
+        <label>
+          <span>Max %</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.1"
+            value={maximum}
+            onChange={(event) => onMaximumChange(event.target.value)}
+            placeholder="No max"
+            aria-label="Maximum return percent"
+          />
+        </label>
+      </div>
+      <small className={invalid ? "return-band-error" : undefined}>{detail}</small>
+    </section>
   );
 }
 

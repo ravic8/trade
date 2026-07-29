@@ -130,6 +130,18 @@ export function getDailyOpportunities(
   if (params.direction) query.set("direction", params.direction);
   if (params.limit) query.set("limit", String(params.limit));
   if (params.offset) query.set("offset", String(params.offset));
+  if (params.sessionReturnRange?.minimumPercent != null) {
+    query.set(
+      "session_return_min_percent",
+      String(params.sessionReturnRange.minimumPercent),
+    );
+  }
+  if (params.sessionReturnRange?.maximumPercent != null) {
+    query.set(
+      "session_return_max_percent",
+      String(params.sessionReturnRange.maximumPercent),
+    );
+  }
   for (const [metric, range] of Object.entries(params.percentileFilters ?? {})) {
     if (range.minimum != null) {
       query.set(`${metric}_percentile_min`, String(range.minimum));

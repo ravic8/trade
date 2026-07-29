@@ -906,6 +906,55 @@ a {
   margin-top: 6px;
 }
 
+.return-band-card {
+  min-height: 190px;
+}
+
+.return-band-card strong {
+  margin-top: 6px;
+}
+
+.return-band-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.return-band-controls label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.return-band-controls label span {
+  color: #52636c;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.return-band-controls input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid #cfd9de;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #21313a;
+  padding: 0 8px;
+  font: inherit;
+}
+
+.return-band-controls input:focus {
+  border-color: #0f684a;
+  outline: 2px solid rgb(15 104 74 / 14%);
+  outline-offset: 1px;
+}
+
+.return-band-card .return-band-error {
+  color: #a23b34;
+}
+
 .metric-icon {
   position: absolute;
   top: 14px;

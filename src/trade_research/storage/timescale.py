@@ -5538,6 +5538,7 @@ class TimescaleStore:
         percentile_filters: Mapping[
             str, tuple[float | None, float | None]
         ] | None = None,
+        session_return_bounds: tuple[float | None, float | None] | None = None,
     ) -> dict[str, Any]:
         exchange_code = exchange.upper()
         source_name = source.lower()
@@ -5615,6 +5616,17 @@ class TimescaleStore:
                 raise ValueError("percentile minimum cannot exceed maximum")
             if lower is not None or upper is not None:
                 normalized_percentile_filters[metric] = (lower, upper)
+
+        return_lower, return_upper = session_return_bounds or (None, None)
+        for bound in (return_lower, return_upper):
+            if bound is not None and not math.isfinite(float(bound)):
+                raise ValueError("session return bounds must be finite")
+        if (
+            return_lower is not None
+            and return_upper is not None
+            and return_lower > return_upper
+        ):
+            raise ValueError("session return minimum cannot exceed maximum")
 
         session_filters = [
             opportunity_targets_daily_table.c.target_version == target_version,
@@ -5792,6 +5804,18 @@ class TimescaleStore:
         positive_sessions = (
             int((filtered_frame["session_return"] > 0).sum()) if total else 0
         )
+        eligible_return_sessions = filtered_frame["session_return"].dropna()
+        return_band_sessions = eligible_return_sessions
+        if return_lower is not None:
+            return_band_sessions = return_band_sessions[
+                return_band_sessions >= return_lower
+            ]
+        if return_upper is not None:
+            return_band_sessions = return_band_sessions[
+                return_band_sessions <= return_upper
+            ]
+        return_band_count = int(len(return_band_sessions))
+        return_band_eligible_count = int(len(eligible_return_sessions))
         quality_warning_sessions = (
             int((filtered_frame["quality_status"] != "passed").sum()) if total else 0
         )
@@ -5806,13 +5830,27 @@ class TimescaleStore:
                 else float(value)
             )
 
+        def filtered_median(column: str) -> float | None:
+            if not total:
+                return None
+            value = filtered_frame[column].median()
+            return (
+                None
+                if pd.isna(value) or not math.isfinite(float(value))
+                else float(value)
+            )
+
         summary = {
             "average_return": filtered_mean("session_return"),
             "average_gap": filtered_mean("gap"),
             "average_upside": filtered_mean("upside"),
             "average_downside": filtered_mean("downside"),
             "average_true_range": filtered_mean("true_range"),
+            "median_upside": filtered_median("upside"),
+            "median_true_range": filtered_median("true_range"),
             "positive_sessions": positive_sessions,
+            "return_band_sessions": return_band_count,
+            "return_band_eligible_sessions": return_band_eligible_count,
             "quality_warning_sessions": quality_warning_sessions,
         }
         summary["positive_session_ratio"] = (
@@ -5820,6 +5858,11 @@ class TimescaleStore:
         )
         summary["quality_warning_ratio"] = (
             quality_warning_sessions / total if total else None
+        )
+        summary["return_band_ratio"] = (
+            return_band_count / return_band_eligible_count
+            if return_band_eligible_count
+            else None
         )
 
         if not filtered_frame.empty:

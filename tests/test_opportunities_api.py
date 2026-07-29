@@ -14,6 +14,9 @@ class OpportunityStore:
         self.params = params
         if params["sort_by"] == "not_a_target":
             raise ValueError("Unsupported opportunity sort column: not_a_target")
+        lower, upper = params["session_return_bounds"]
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError("session return minimum cannot exceed maximum")
         return {
             "exchange": params["exchange"],
             "source": params["source"],
@@ -66,6 +69,8 @@ def test_daily_opportunities_exposes_pdf_target_variables(monkeypatch) -> None:
                 "session_date": "2026-07-17",
                 "symbol": "SHOP",
                 "sort_by": "upside",
+                "session_return_min_percent": "0.5",
+                "session_return_max_percent": "1",
                 "upside_percentile_min": "75",
                 "recovery_percentile_max": "90",
             },
@@ -90,6 +95,7 @@ def test_daily_opportunities_exposes_pdf_target_variables(monkeypatch) -> None:
             "recovery": (None, 90.0),
             "upside": (75.0, None),
         },
+        "session_return_bounds": (0.005, 0.01),
     }
 
 
@@ -100,10 +106,16 @@ def test_daily_opportunities_rejects_forex_and_unknown_sort(monkeypatch) -> None
     with TestClient(app) as client:
         forex = client.get("/api/opportunities/daily?exchange=FOREX")
         bad_sort = client.get("/api/opportunities/daily?sort_by=not_a_target")
+        bad_return_range = client.get(
+            "/api/opportunities/daily?session_return_min_percent=2"
+            "&session_return_max_percent=1"
+        )
         noncanonical_source = client.get("/api/opportunities/daily?source=upstox")
 
     assert forex.status_code == 400
     assert "NSE, TSX, or US" in forex.json()["detail"]
     assert bad_sort.status_code == 400
+    assert bad_return_range.status_code == 400
+    assert "minimum cannot exceed maximum" in bad_return_range.json()["detail"]
     assert noncanonical_source.status_code == 400
     assert "canonical yfinance" in noncanonical_source.json()["detail"]

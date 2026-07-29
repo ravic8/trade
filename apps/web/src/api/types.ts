@@ -62,6 +62,11 @@ export type OpportunityPercentileRange = {
   maximum?: number;
 };
 
+export type OpportunityReturnRange = {
+  minimumPercent?: number;
+  maximumPercent?: number;
+};
+
 export type OpportunityDistributionBin = {
   start: number;
   end: number;
@@ -97,8 +102,13 @@ export type OpportunityTargetSummary = {
   average_upside?: number | null;
   average_downside?: number | null;
   average_true_range?: number | null;
+  median_upside?: number | null;
+  median_true_range?: number | null;
   positive_sessions?: number;
   positive_session_ratio?: number | null;
+  return_band_sessions?: number;
+  return_band_eligible_sessions?: number;
+  return_band_ratio?: number | null;
   quality_warning_sessions?: number;
   quality_warning_ratio?: number | null;
 };
@@ -134,6 +144,7 @@ export type DailyOpportunitiesParams = {
   direction?: "asc" | "desc";
   limit?: number;
   offset?: number;
+  sessionReturnRange?: OpportunityReturnRange;
   percentileFilters?: Partial<
     Record<OpportunityDistributionMetric, OpportunityPercentileRange>
   >;
