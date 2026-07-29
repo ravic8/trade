@@ -217,6 +217,36 @@ def yfinance_nse_completed_session_work_plan(context) -> PipelineRunResult:
 
 @asset(
     group_name="yfinance_daily_queue",
+    compute_kind="python",
+    description="Plan TSX Yahoo work after the provider grace period for the completed session.",
+)
+def yfinance_tsx_completed_session_work_plan(context) -> PipelineRunResult:
+    result = run_yfinance_daily_work_planner(
+        exchanges=("TSX",),
+        include_initial_backfill=False,
+        trigger="dagster",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="yfinance_daily_queue",
+    compute_kind="python",
+    description="Plan US Yahoo work after the provider grace period for the completed session.",
+)
+def yfinance_us_completed_session_work_plan(context) -> PipelineRunResult:
+    result = run_yfinance_daily_work_planner(
+        exchanges=("US",),
+        include_initial_backfill=False,
+        trigger="dagster",
+    )
+    context.add_output_metadata(_result_metadata(result))
+    return result
+
+
+@asset(
+    group_name="yfinance_daily_queue",
     compute_kind="yfinance",
     description="Claim and execute one bounded batch of durable Yahoo daily work.",
 )

@@ -60,6 +60,25 @@ def test_phase5_yfinance_queue_jobs_and_schedules_are_stopped_by_default() -> No
         definitions.yfinance_nse_completed_session_work_planner_schedule.cron_schedule
         == "15 12 * * 1-5"
     )
+    for exchange, timezone in (
+        ("tsx", "America/Toronto"),
+        ("us", "America/New_York"),
+    ):
+        planner_job = getattr(
+            definitions,
+            f"yfinance_{exchange}_completed_session_work_planner_job",
+        )
+        planner_schedule = getattr(
+            definitions,
+            f"yfinance_{exchange}_completed_session_work_planner_schedule",
+        )
+        assert (
+            planner_job.name
+            == f"yfinance_{exchange}_completed_session_work_planner_job"
+        )
+        assert planner_schedule.cron_schedule == "0 18 * * 1-5"
+        assert planner_schedule.execution_timezone == timezone
+        assert planner_schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
     assert (
         definitions.nse_completed_session_opportunity_targets_schedule.cron_schedule
         == "15 13-18 * * 1-5"
@@ -80,9 +99,12 @@ def test_phase5_yfinance_queue_jobs_and_schedules_are_stopped_by_default() -> No
         assert job.name == f"{exchange}_completed_session_opportunity_targets_job"
         assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
         assert schedule.cron_schedule == [
-            "15 22-23 * * 1-5",
-            "15 0-3 * * 2-6",
+            "15 18-23 * * 1-5",
+            "15 0-1 * * 2-6",
         ]
+        assert schedule.execution_timezone == (
+            "America/Toronto" if exchange == "tsx" else "America/New_York"
+        )
 
 
 def test_bigquery_export_job_and_schedule_are_registered_but_stopped() -> None:

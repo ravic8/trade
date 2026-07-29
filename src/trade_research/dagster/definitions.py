@@ -31,6 +31,8 @@ from trade_research.dagster.daily_assets import (
     yfinance_fx_crypto_intraday_ohlcv,
     yfinance_fx_intraday_gap_validation,
     yfinance_nse_completed_session_work_plan,
+    yfinance_tsx_completed_session_work_plan,
+    yfinance_us_completed_session_work_plan,
     yfinance_us_daily_ohlcv,
 )
 
@@ -82,6 +84,16 @@ yfinance_daily_work_planner_job = define_asset_job(
 yfinance_nse_completed_session_work_planner_job = define_asset_job(
     name="yfinance_nse_completed_session_work_planner_job",
     selection=[yfinance_nse_completed_session_work_plan],
+)
+
+yfinance_tsx_completed_session_work_planner_job = define_asset_job(
+    name="yfinance_tsx_completed_session_work_planner_job",
+    selection=[yfinance_tsx_completed_session_work_plan],
+)
+
+yfinance_us_completed_session_work_planner_job = define_asset_job(
+    name="yfinance_us_completed_session_work_planner_job",
+    selection=[yfinance_us_completed_session_work_plan],
 )
 
 nse_completed_session_opportunity_targets_job = define_asset_job(
@@ -228,6 +240,22 @@ yfinance_nse_completed_session_work_planner_schedule = ScheduleDefinition(
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
+yfinance_tsx_completed_session_work_planner_schedule = ScheduleDefinition(
+    name="yfinance_tsx_completed_session_work_planner_schedule",
+    job=yfinance_tsx_completed_session_work_planner_job,
+    cron_schedule="0 18 * * 1-5",
+    execution_timezone="America/Toronto",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+yfinance_us_completed_session_work_planner_schedule = ScheduleDefinition(
+    name="yfinance_us_completed_session_work_planner_schedule",
+    job=yfinance_us_completed_session_work_planner_job,
+    cron_schedule="0 18 * * 1-5",
+    execution_timezone="America/New_York",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
 nse_completed_session_opportunity_targets_schedule = ScheduleDefinition(
     name="nse_completed_session_opportunity_targets_schedule",
     job=nse_completed_session_opportunity_targets_job,
@@ -240,10 +268,10 @@ tsx_completed_session_opportunity_targets_schedule = ScheduleDefinition(
     name="tsx_completed_session_opportunity_targets_schedule",
     job=tsx_completed_session_opportunity_targets_job,
     cron_schedule=[
-        "15 22-23 * * 1-5",
-        "15 0-3 * * 2-6",
+        "15 18-23 * * 1-5",
+        "15 0-1 * * 2-6",
     ],
-    execution_timezone="UTC",
+    execution_timezone="America/Toronto",
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
@@ -251,10 +279,10 @@ us_completed_session_opportunity_targets_schedule = ScheduleDefinition(
     name="us_completed_session_opportunity_targets_schedule",
     job=us_completed_session_opportunity_targets_job,
     cron_schedule=[
-        "15 22-23 * * 1-5",
-        "15 0-3 * * 2-6",
+        "15 18-23 * * 1-5",
+        "15 0-1 * * 2-6",
     ],
-    execution_timezone="UTC",
+    execution_timezone="America/New_York",
     default_status=DefaultScheduleStatus.STOPPED,
 )
 
@@ -312,6 +340,8 @@ defs = Definitions(
         us_universe_snapshot,
         yfinance_daily_work_plan,
         yfinance_nse_completed_session_work_plan,
+        yfinance_tsx_completed_session_work_plan,
+        yfinance_us_completed_session_work_plan,
         yfinance_daily_work_worker,
         yfinance_us_daily_ohlcv,
         yfinance_canada_daily_ohlcv,
@@ -345,6 +375,8 @@ defs = Definitions(
         us_universe_refresh_job,
         yfinance_daily_work_planner_job,
         yfinance_nse_completed_session_work_planner_job,
+        yfinance_tsx_completed_session_work_planner_job,
+        yfinance_us_completed_session_work_planner_job,
         yfinance_daily_work_worker_job,
         nse_completed_session_opportunity_targets_job,
         tsx_completed_session_opportunity_targets_job,
@@ -364,6 +396,8 @@ defs = Definitions(
         us_universe_refresh_schedule,
         yfinance_daily_work_planner_schedule,
         yfinance_nse_completed_session_work_planner_schedule,
+        yfinance_tsx_completed_session_work_planner_schedule,
+        yfinance_us_completed_session_work_planner_schedule,
         yfinance_daily_work_worker_schedule,
         nse_completed_session_opportunity_targets_schedule,
         tsx_completed_session_opportunity_targets_schedule,

@@ -1448,6 +1448,8 @@ def test_data_schedule_status_endpoint() -> None:
     assert schedules["daily_research_schedule"]["actual_status"] == "unknown"
     assert "yfinance_daily_work_planner_schedule" in schedules
     assert "yfinance_nse_completed_session_work_planner_schedule" in schedules
+    assert "yfinance_tsx_completed_session_work_planner_schedule" in schedules
+    assert "yfinance_us_completed_session_work_planner_schedule" in schedules
     assert "yfinance_daily_work_worker_schedule" in schedules
     assert "nse_completed_session_opportunity_targets_schedule" in schedules
     assert "tsx_completed_session_opportunity_targets_schedule" in schedules
@@ -1482,6 +1484,8 @@ def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) ->
         "daily_research_schedule",
         "yfinance_daily_work_planner_schedule",
         "yfinance_nse_completed_session_work_planner_schedule",
+        "yfinance_tsx_completed_session_work_planner_schedule",
+        "yfinance_us_completed_session_work_planner_schedule",
         "yfinance_daily_work_worker_schedule",
         "nse_completed_session_opportunity_targets_schedule",
         "tsx_completed_session_opportunity_targets_schedule",

@@ -702,6 +702,7 @@ function QueueSnapshot({ groups, onOpen }: { groups: OperationsQueueGroup[]; onO
 function ScheduleSnapshot({ schedules }: { schedules: PipelineScheduleStatusRow[] }) {
   const relevant = schedules.filter((schedule) =>
     schedule.schedule_name.includes("yfinance_daily_work") ||
+    schedule.schedule_name.includes("completed_session_work_planner") ||
     schedule.schedule_name.includes("universe_refresh") ||
     schedule.schedule_name.includes("exchange_sessions") ||
     schedule.schedule_name.includes("opportunity_targets"),
