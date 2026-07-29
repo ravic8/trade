@@ -132,6 +132,14 @@ always means the top decile of the complete selected exchange session. Each
 metric accepts independent `*_percentile_min` and `*_percentile_max` query
 parameters. Multiple bands are combined with AND semantics.
 
+The summary cards report the median (P50) Upside and True Range for the
+currently matching stocks. The return counter accepts inclusive
+`session_return_min_percent` and `session_return_max_percent` bounds, so it can
+count outcomes at or above a threshold, at or below a loss threshold, or
+inside a closed interval. Its count is calculated after symbol and percentile
+filters but before pagination; changing the return bounds changes the counter,
+not the result table.
+
 Histogram display bounds use P1–P99 so a small number of extreme observations
 cannot flatten the useful center of the chart. The first and last bars retain
 all observations outside those display bounds; no rows are discarded from

@@ -1318,6 +1318,8 @@ def daily_opportunities(
     direction: Annotated[str, Query()] = "desc",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
+    session_return_min_percent: Annotated[float | None, Query()] = None,
+    session_return_max_percent: Annotated[float | None, Query()] = None,
     session_return_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
     session_return_percentile_max: Annotated[float | None, Query(ge=0, le=100)] = None,
     recovery_percentile_min: Annotated[float | None, Query(ge=0, le=100)] = None,
@@ -1373,6 +1375,18 @@ def daily_opportunities(
             offset=offset,
             minimum_session_coverage=get_settings().opportunity_minimum_session_coverage,
             percentile_filters=percentile_filters,
+            session_return_bounds=(
+                (
+                    session_return_min_percent / 100
+                    if session_return_min_percent is not None
+                    else None
+                ),
+                (
+                    session_return_max_percent / 100
+                    if session_return_max_percent is not None
+                    else None
+                ),
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

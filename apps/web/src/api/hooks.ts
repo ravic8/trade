@@ -76,7 +76,7 @@ export function useScreenerResults() {
   return useQuery({ queryKey: ["screener-results"], queryFn: getScreenerResults });
 }
 
-export function useDailyOpportunities(params: DailyOpportunitiesParams) {
+export function useDailyOpportunities(params: DailyOpportunitiesParams, enabled = true) {
   return useQuery({
     queryKey: ["daily-opportunities", params],
     queryFn: () => getDailyOpportunities(params),
@@ -90,6 +90,7 @@ export function useDailyOpportunities(params: DailyOpportunitiesParams) {
       return sameSession ? previousData : undefined;
     },
     staleTime: 30_000,
+    enabled,
   });
 }
 
