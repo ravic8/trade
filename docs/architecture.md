@@ -21,6 +21,9 @@ Canonical current behavior and production evidence are tracked in
 provider-ingestion plan is partially implemented and is not the current source
 of truth.
 
+The governing NSE-only target contract for V1 is `docs/v1_spec.md`. It must not
+be read as a claim about current production readiness.
+
 ```text
 apps/web/              React UI
 src/trade_research/    Python package for API, data, storage, features, targets, chat, and jobs

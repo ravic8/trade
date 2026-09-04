@@ -5,9 +5,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
+from pydantic import JsonValue
+
+from trade_research.contracts import ML_INPUTS_CONTRACT_ID, get_data_contract
+from trade_research.validation.results import (
+    VALIDATION_REPORT_CONTRACT_VERSION,
+    ValidationReport,
+    ValidationResult,
+    ValidationStatus,
+)
 
 PROCESSED_OHLCV = "processed/equities/nse_daily_ohlcv_upstox.parquet"
 CLEANED_OHLCV = "processed/validated/ohlcv_daily_validated.parquet"
@@ -15,6 +25,8 @@ CLEANED_METADATA = "processed/validated/ohlcv_daily_validated_metadata.json"
 FEATURES = "processed/features/daily_v1_ohlcv_technical.parquet"
 TARGETS = "processed/targets/daily_v1_forward_returns.parquet"
 VALIDATION_DIR = "processed/validation"
+VALIDATION_RESULTS = "processed/validation/processed_dataset_validation_results_v1.json"
+PROCESSED_DATASET_ID = ML_INPUTS_CONTRACT_ID
 
 RAW_VALIDATION_FILES = [
     "processed/validation/raw_to_processed_validation_report.md",
@@ -37,6 +49,7 @@ TARGET_HORIZONS = {
 class ProcessedDatasetValidationResult:
     summary: dict[str, Any]
     files_generated: list[str]
+    validation_report: ValidationReport
 
 
 def validate_processed_datasets(
@@ -44,8 +57,12 @@ def validate_processed_datasets(
     pass_coverage_threshold: float = 0.90,
     warn_coverage_threshold: float = 0.70,
     processed_ohlcv: str = PROCESSED_OHLCV,
+    run_id: str | None = None,
 ) -> ProcessedDatasetValidationResult:
     data_root = Path(data_dir)
+    validation_run_id = run_id or f"processed-validation-{uuid4()}"
+    created_at = datetime.now(UTC)
+    data_contract = get_data_contract(PROCESSED_DATASET_ID)
     validation_dir = data_root / VALIDATION_DIR
     validation_dir.mkdir(parents=True, exist_ok=True)
 
@@ -271,15 +288,44 @@ def validate_processed_datasets(
 
     summary_json = validation_dir / "processed_dataset_validation_summary.json"
     summary_md = validation_dir / "processed_dataset_validation_summary.md"
-    generated.extend([summary_json, summary_md])
+    validation_results_path = data_root / VALIDATION_RESULTS
+    generated.extend([summary_json, summary_md, validation_results_path])
 
     overall_status = "fail" if blocking else ("warn" if warnings else "pass")
     baseline_ready = (
         not blocking and bool(len(cleaned)) and feature_path.exists() and target_path.exists()
     )
+    validation_report = _build_processed_dataset_validation_report(
+        run_id=validation_run_id,
+        created_at=created_at,
+        scope={
+            "exchange": "NSE",
+            "processed_ohlcv": processed_ohlcv,
+            "data_contract_id": data_contract.contract_id,
+            "dataset_version": data_contract.dataset_version,
+        },
+        processed_exists=processed_path.exists(),
+        processed_summary=processed_summary,
+        cleaned=cleaned,
+        cleaned_summary=cleaned_summary,
+        feature_exists=feature_path.exists(),
+        feature_summary=feature_summary,
+        target_exists=target_path.exists(),
+        target_summary=target_summary,
+        alignment_summary=alignment_summary,
+        baseline_ready=bool(baseline_ready),
+        warnings=sorted(set(warnings)),
+    )
     summary = {
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": created_at.isoformat(),
         "overall_status": overall_status,
+        "validation_contract_version": VALIDATION_REPORT_CONTRACT_VERSION,
+        "validation_run_id": validation_run_id,
+        "validation_status": validation_report.status,
+        "validation_results_path": str(validation_results_path),
+        "data_contract_id": data_contract.contract_id,
+        "data_contract_schema_version": data_contract.schema_version,
+        "dataset_version": data_contract.dataset_version,
         "baseline_ml_ready": bool(baseline_ready),
         "serious_research_ready": bool(baseline_ready and not warnings),
         "production_ready": False,
@@ -301,12 +347,306 @@ def validate_processed_datasets(
         "alignment": alignment_summary,
     }
 
+    validation_results_path.write_text(
+        validation_report.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
     summary_json.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     summary_md.write_text(_summary_markdown(summary), encoding="utf-8")
 
     return ProcessedDatasetValidationResult(
         summary=summary,
         files_generated=[str(path) for path in generated],
+        validation_report=validation_report,
+    )
+
+
+def _build_processed_dataset_validation_report(
+    *,
+    run_id: str,
+    created_at: datetime,
+    scope: dict[str, JsonValue],
+    processed_exists: bool,
+    processed_summary: dict[str, Any],
+    cleaned: pd.DataFrame,
+    cleaned_summary: dict[str, Any],
+    feature_exists: bool,
+    feature_summary: dict[str, Any],
+    target_exists: bool,
+    target_summary: dict[str, Any],
+    alignment_summary: dict[str, Any],
+    baseline_ready: bool,
+    warnings: list[str],
+) -> ValidationReport:
+    dataset_id = PROCESSED_DATASET_ID
+    processed_row_count = int(processed_summary.get("row_count", 0) or 0)
+    processed_key_issues: dict[str, JsonValue] = {
+        "missing_key_rows": int(processed_summary.get("missing_key_rows", 0) or 0),
+        "duplicate_key_count": int(
+            processed_summary.get("duplicate_key_count", 0) or 0
+        ),
+    }
+    cleaned_row_count = int(len(cleaned))
+    cleaned_invalid_row_count = int(
+        cleaned_summary.get("invalid_row_count", 0) or 0
+    )
+    cleaned_duplicate_key_count = int(
+        cleaned_summary.get("duplicate_key_count", 0) or 0
+    )
+    cleaned_preserves_rows = bool(
+        cleaned_summary.get("preserves_all_valid_processed_rows", False)
+    )
+    cleaned_ready = (
+        cleaned_row_count > 0
+        and cleaned_invalid_row_count == 0
+        and cleaned_duplicate_key_count == 0
+        and cleaned_preserves_rows
+    )
+    cleaned_invariants: dict[str, JsonValue] = {
+        "row_count": cleaned_row_count,
+        "invalid_row_count": cleaned_invalid_row_count,
+        "duplicate_key_count": cleaned_duplicate_key_count,
+        "preserves_all_valid_processed_rows": cleaned_preserves_rows,
+    }
+    feature_invariants = _dataset_invariant_counts(feature_summary)
+    target_invariants = _dataset_invariant_counts(target_summary)
+    alignment_invariants: dict[str, JsonValue] = {
+        key: int(alignment_summary.get(key, 0) or 0)
+        for key in [
+            "duplicate_joined_keys",
+            "feature_keys_missing_from_ohlcv",
+            "target_keys_missing_from_ohlcv",
+            "ohlcv_keys_missing_from_features",
+            "ohlcv_keys_missing_from_targets",
+        ]
+    }
+
+    warning_evidence: list[JsonValue] = list(warnings)
+    results = [
+        ValidationResult(
+            check_id="processed_ohlcv.required_input",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            severity="error",
+            status="passed" if processed_exists else "failed",
+            observed_value=processed_exists,
+            expected_value=True,
+            message=(
+                "Processed OHLCV input exists."
+                if processed_exists
+                else "Processed OHLCV input is missing."
+            ),
+            evidence={"row_count": processed_row_count},
+            created_at=created_at,
+        ),
+        ValidationResult(
+            check_id="processed_ohlcv.unique_complete_keys",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            severity="error",
+            status=(
+                "skipped_with_reason"
+                if not processed_exists
+                else (
+                    "passed"
+                    if processed_row_count > 0
+                    and not any(processed_key_issues.values())
+                    else "failed"
+                )
+            ),
+            observed_value=processed_key_issues,
+            expected_value={"missing_key_rows": 0, "duplicate_key_count": 0},
+            message=(
+                "Key validation skipped because processed OHLCV is missing."
+                if not processed_exists
+                else (
+                    "Processed OHLCV keys are populated and unique."
+                    if processed_row_count > 0 and not any(processed_key_issues.values())
+                    else "Processed OHLCV keys are empty, missing, or duplicated."
+                )
+            ),
+            evidence={"row_count": processed_row_count},
+            created_at=created_at,
+        ),
+        ValidationResult(
+            check_id="cleaned_ohlcv.valid_preserved_rows",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            severity="error",
+            status=(
+                "skipped_with_reason"
+                if not processed_exists
+                else (
+                    "passed"
+                    if cleaned_ready
+                    else "failed"
+                )
+            ),
+            observed_value=cleaned_invariants,
+            expected_value={
+                "minimum_row_count": 1,
+                "invalid_row_count": 0,
+                "duplicate_key_count": 0,
+                "preserves_all_valid_processed_rows": True,
+            },
+            message=(
+                "Cleaned OHLCV validation skipped because processed OHLCV is missing."
+                if not processed_exists
+                else (
+                    "Cleaned OHLCV contains valid, unique, preserved rows."
+                    if cleaned_ready
+                    else "Cleaned OHLCV is empty or violates row-preservation invariants."
+                )
+            ),
+            evidence={},
+            created_at=created_at,
+        ),
+        _dataset_contract_result(
+            check_id="features.dataset_contract",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            exists=feature_exists,
+            invariants=feature_invariants,
+            missing_value_count=int(feature_summary.get("missing_value_count", 0) or 0),
+            created_at=created_at,
+        ),
+        _dataset_contract_result(
+            check_id="targets.dataset_contract",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            exists=target_exists,
+            invariants=target_invariants,
+            missing_value_count=int(target_summary.get("missing_value_count", 0) or 0),
+            created_at=created_at,
+        ),
+        ValidationResult(
+            check_id="features_targets.key_alignment",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            severity="error",
+            status=(
+                "skipped_with_reason"
+                if not (len(cleaned) and feature_exists and target_exists)
+                else ("passed" if not any(alignment_invariants.values()) else "failed")
+            ),
+            observed_value=alignment_invariants,
+            expected_value={key: 0 for key in alignment_invariants},
+            message=(
+                "Feature-target alignment skipped because a required dataset is unavailable."
+                if not (len(cleaned) and feature_exists and target_exists)
+                else (
+                    "OHLCV, feature, and target keys align."
+                    if not any(alignment_invariants.values())
+                    else "OHLCV, feature, and target keys do not align."
+                )
+            ),
+            evidence={
+                "joined_key_count": int(
+                    alignment_summary.get("feature_target_joined_key_count", 0) or 0
+                )
+            },
+            created_at=created_at,
+        ),
+        ValidationResult(
+            check_id="processed_datasets.baseline_ml_ready",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            severity="error",
+            status="passed" if baseline_ready else "failed",
+            observed_value=baseline_ready,
+            expected_value=True,
+            message=(
+                "Processed datasets satisfy the baseline ML prerequisites."
+                if baseline_ready
+                else "Processed datasets do not satisfy the baseline ML prerequisites."
+            ),
+            evidence={},
+            created_at=created_at,
+        ),
+        ValidationResult(
+            check_id="processed_datasets.compatibility_advisories",
+            dataset_id=dataset_id,
+            run_id=run_id,
+            scope=scope,
+            severity="warning",
+            status="warning" if warnings else "passed",
+            observed_value=len(warnings),
+            expected_value=0,
+            message=(
+                f"Processed validation emitted {len(warnings)} compatibility advisories."
+                if warnings
+                else "Processed validation emitted no compatibility advisories."
+            ),
+            evidence={"warnings": warning_evidence},
+            created_at=created_at,
+        ),
+    ]
+    return ValidationReport(
+        dataset_id=dataset_id,
+        run_id=run_id,
+        results=tuple(results),
+        created_at=created_at,
+    )
+
+
+def _dataset_invariant_counts(summary: dict[str, Any]) -> dict[str, JsonValue]:
+    return {
+        key: int(summary.get(key, 0) or 0)
+        for key in [
+            "duplicate_key_count",
+            "missing_keys_from_ohlcv",
+            "extra_keys_not_in_ohlcv",
+            "inf_value_count",
+        ]
+    }
+
+
+def _dataset_contract_result(
+    *,
+    check_id: str,
+    dataset_id: str,
+    run_id: str,
+    scope: dict[str, JsonValue],
+    exists: bool,
+    invariants: dict[str, JsonValue],
+    missing_value_count: int,
+    created_at: datetime,
+) -> ValidationResult:
+    status: ValidationStatus
+    if not exists:
+        status = "skipped_with_reason"
+        message = f"{check_id} skipped because its dataset is missing."
+    elif any(invariants.values()):
+        status = "failed"
+        message = f"{check_id} failed key, alignment, or finite-value invariants."
+    elif missing_value_count:
+        status = "warning"
+        message = f"{check_id} passed blocking invariants with expected missing values."
+    else:
+        status = "passed"
+        message = f"{check_id} passed."
+    return ValidationResult(
+        check_id=check_id,
+        dataset_id=dataset_id,
+        run_id=run_id,
+        scope=scope,
+        severity="error",
+        status=status,
+        observed_value={**invariants, "missing_value_count": missing_value_count},
+        expected_value={
+            **{key: 0 for key in invariants},
+            "missing_value_count": "contract-dependent",
+        },
+        message=message,
+        evidence={},
+        created_at=created_at,
     )
 
 

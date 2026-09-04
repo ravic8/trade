@@ -77,6 +77,11 @@ def main() -> int:
             return 0
         if args.confirm != CONFIRMATION:
             parser.error(f"--apply requires --confirm {CONFIRMATION}")
+        if plan.unmanaged_active_schedules:
+            parser.error(
+                "Refusing to apply while unmanaged schedules are active: "
+                + ", ".join(plan.unmanaged_active_schedules)
+            )
         active_daemons = recent_daemon_heartbeats(instance)
         if active_daemons:
             parser.error(

@@ -27,6 +27,12 @@ class DagsterScheduleStatus:
     last_successful_run_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class _CurrentOriginMarker:
+    repository_origin_id: str | None
+    schedule_selector_ids: Mapping[str, str]
+
+
 def read_dagster_schedule_statuses(
     dagster_home: Path | str | None,
     schedule_jobs: Mapping[str, str],
@@ -38,7 +44,7 @@ def read_dagster_schedule_statuses(
     if not schedules_path.exists():
         return {}
 
-    current_repository_origin_id = _read_current_repository_origin(home)
+    current_origin = _read_current_origin_marker(home)
     try:
         with closing(_readonly_sqlite(schedules_path)) as connection:
             stored_rows = connection.execute(
@@ -79,7 +85,8 @@ def read_dagster_schedule_statuses(
         origin_health = _origin_health(
             rows,
             active_rows,
-            current_repository_origin_id,
+            current_origin.repository_origin_id,
+            current_origin.schedule_selector_ids.get(schedule_name),
         )
         latest_tick = max(
             (
@@ -135,16 +142,32 @@ def _readonly_sqlite(path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _read_current_repository_origin(home: Path) -> str | None:
+def _read_current_origin_marker(home: Path) -> _CurrentOriginMarker:
     marker = home / CURRENT_ORIGIN_MARKER
     if not marker.exists():
-        return None
+        return _CurrentOriginMarker(None, {})
     try:
         payload = json.loads(marker.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return None
+        return _CurrentOriginMarker(None, {})
     value = payload.get("repository_origin_id")
-    return str(value) if value else None
+    raw_schedules = payload.get("schedules")
+    selector_ids: dict[str, str] = {}
+    if isinstance(raw_schedules, dict):
+        for schedule_name, identity in raw_schedules.items():
+            if not isinstance(identity, dict):
+                continue
+            selector_id = identity.get("selector_id")
+            if selector_id:
+                selector_ids[str(schedule_name)] = str(selector_id)
+    return _CurrentOriginMarker(
+        str(value) if value else None,
+        selector_ids,
+    )
+
+
+def _read_current_repository_origin(home: Path) -> str | None:
+    return _read_current_origin_marker(home).repository_origin_id
 
 
 def _instigator_name(serialized: str | bytes | None) -> str | None:
@@ -201,6 +224,7 @@ def _origin_health(
     rows: list[sqlite3.Row],
     active_rows: list[sqlite3.Row],
     current_repository_origin_id: str | None,
+    current_selector_id: str | None,
 ) -> str:
     if current_repository_origin_id is None:
         return "unknown"
@@ -209,10 +233,23 @@ def _origin_health(
         # effect and there is no stale origin capable of launching ticks.
         return "current"
     relevant = active_rows or rows
-    origins = {str(row["repository_origin_id"]) for row in relevant}
-    if origins == {current_repository_origin_id}:
+    identities = {
+        (str(row["repository_origin_id"]), str(row["selector_id"]))
+        for row in relevant
+    }
+    if current_selector_id is None:
+        current_identities = {
+            identity
+            for identity in identities
+            if identity[0] == current_repository_origin_id
+        }
+    else:
+        current_identities = {
+            (current_repository_origin_id, current_selector_id)
+        } & identities
+    if identities == current_identities:
         return "current"
-    if current_repository_origin_id in origins:
+    if current_identities:
         return "mixed"
     return "stale"
 

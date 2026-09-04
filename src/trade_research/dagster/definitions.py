@@ -35,6 +35,10 @@ from trade_research.dagster.daily_assets import (
     yfinance_us_completed_session_work_plan,
     yfinance_us_daily_ohlcv,
 )
+from trade_research.dagster.workflow_requests import (
+    data_pipeline_request_job,
+    data_pipeline_request_sensor,
+)
 
 bigquery_export_sync_job = define_asset_job(
     name="bigquery_export_sync_job",
@@ -384,6 +388,7 @@ defs = Definitions(
         nse_exchange_sessions_job,
         tsx_exchange_sessions_job,
         us_exchange_sessions_job,
+        data_pipeline_request_job,
     ],
     schedules=[
         bigquery_daily_sync_schedule,
@@ -406,4 +411,5 @@ defs = Definitions(
         tsx_exchange_sessions_schedule,
         us_exchange_sessions_schedule,
     ],
+    sensors=[data_pipeline_request_sensor],
 )

@@ -4,6 +4,7 @@ from functools import lru_cache
 from math import cos, sin
 from time import monotonic
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,6 @@ from trade_research.credentials import (
 from trade_research.dagster.schedule_policy import schedule_policy
 from trade_research.dagster.status import read_dagster_schedule_statuses
 from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
-from trade_research.data.on_demand import run_daily_ohlcv_request
 from trade_research.data.provider_capabilities import provider_capability
 from trade_research.data.upstox import validate_upstox_access_token
 from trade_research.exchange_sessions import (
@@ -38,6 +38,7 @@ from trade_research.market_calendar import (
     fetch_exchange_holidays,
     validated_exchange_calendar_years,
 )
+from trade_research.operations import WorkflowRequestStore
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
 from trade_research.research.ml_artifacts import MLArtifactReader
@@ -60,6 +61,8 @@ from trade_research.schemas import (
     DataPipelineRunDetail,
     DataPipelineRunSummary,
     DataPipelineRunWorkItemRow,
+    DataPipelineSubmission,
+    DataPipelineWorkflowStatus,
     DataUniverseMemberRow,
     DataUniverseRow,
     OperationsAdaptiveRateStateRow,
@@ -501,6 +504,7 @@ def data_availability(
                 universe_id=universe_id,
                 coverage_status=coverage_status,
                 expected_rows_per_symbol=expected_rows,
+                expected_session_dates=expected_dates,
                 limit=limit,
                 offset=offset,
                 sort=sort,
@@ -625,6 +629,7 @@ def data_schedule_status() -> list[PipelineScheduleStatusRow]:
         {row.schedule_name: row.job_name for row in policies},
     )
     rows: list[PipelineScheduleStatusRow] = []
+    observed_at = datetime.now(UTC)
     for policy in policies:
         observed = actual.get(policy.schedule_name)
         actual_status = observed.actual_status if observed else "unknown"
@@ -635,12 +640,31 @@ def data_schedule_status() -> list[PipelineScheduleStatusRow]:
         )
         if observed and observed.origin_drift:
             status_drift = True
+        if policy.desired_status == "stopped":
+            freshness_status = "not_applicable"
+        elif not observed or not observed.last_successful_run_at:
+            freshness_status = "unknown"
+        elif (
+            observed_at - observed.last_successful_run_at
+        ).total_seconds() > policy.freshness_sla_minutes * 60:
+            freshness_status = "stale"
+        else:
+            freshness_status = "fresh"
+        drift_reasons: list[str] = []
+        if status_drift:
+            drift_reasons.append("status_or_origin")
+        if freshness_status == "stale":
+            drift_reasons.append("freshness_sla")
         rows.append(
             PipelineScheduleStatusRow(
                 schedule_name=policy.schedule_name,
                 job_name=policy.job_name,
                 cron_schedule=policy.cron_schedule,
                 execution_timezone=policy.execution_timezone,
+                exchange=policy.exchange,
+                freshness_sla_minutes=policy.freshness_sla_minutes,
+                upstream_dependencies=list(policy.upstream_dependencies),
+                alert_owner=policy.alert_owner,
                 desired_status=policy.desired_status,
                 intended_status=policy.desired_status,
                 actual_status=actual_status,
@@ -656,6 +680,8 @@ def data_schedule_status() -> list[PipelineScheduleStatusRow]:
                 last_successful_run_at=(
                     observed.last_successful_run_at if observed else None
                 ),
+                freshness_status=freshness_status,
+                drift_reasons=drift_reasons,
                 notes=policy.notes,
             )
         )
@@ -1117,51 +1143,55 @@ def data_pipeline_run_detail(
     )
 
 
-@app.post("/api/data/pipeline-requests", response_model=DataPipelineRunDetail)
-def create_data_pipeline_request(request: DataPipelineRequest) -> DataPipelineRunDetail:
-    if set(request.steps) != {"fetch_ohlcv", "validate_ohlcv"}:
+@app.post(
+    "/api/data/pipeline-requests",
+    response_model=DataPipelineSubmission,
+    status_code=202,
+)
+def create_data_pipeline_request(
+    body: DataPipelineRequest,
+    http_request: Request,
+) -> DataPipelineSubmission:
+    if set(body.steps) != {"fetch_ohlcv", "validate_ohlcv"}:
         raise HTTPException(
             status_code=400,
             detail="MVP data pipeline requests must include fetch_ohlcv and validate_ohlcv.",
         )
-    settings = get_settings()
+    idempotency_key = http_request.headers.get("X-Idempotency-Key") or str(uuid4())
+    if len(idempotency_key) > 200:
+        raise HTTPException(status_code=400, detail="X-Idempotency-Key is too long")
+    requested_by = http_request.headers.get("X-Actor-ID", "authenticated-user")
     try:
-        store = _store()
-        _ensure_exchange_holidays(store, request.exchange, request.start_date, request.end_date)
-        access_token = _upstox_access_token(store, settings)
-        result = run_daily_ohlcv_request(
-            CoveragePreviewInput(
-                provider=request.provider,
-                exchange=request.exchange,
-                symbols=tuple(request.symbols),
-                unit=request.unit,
-                interval=request.interval,
-                start_date=request.start_date,
-                end_date=request.end_date,
-            ),
-            store=store,
-            access_token=access_token,
-            throttle_seconds=settings.data_pipeline_throttle_seconds,
-            max_concurrent_fetches=settings.data_pipeline_max_concurrent_fetches,
+        workflow, created = _workflow_store().submit(
+            workflow_type="upstox_daily_ohlcv",
+            request_payload=body.model_dump(mode="json"),
+            idempotency_key=idempotency_key,
+            requested_by=requested_by,
         )
-        row = store.ingestion_run(result.run_id)
-        if row is None:
-            raise HTTPException(status_code=500, detail="Pipeline run was not persisted")
-        coverage = store.daily_ohlcv_fetch_coverage_for_run(
-            result.run_id,
-            source=row["source"],
-            exchange=row["exchange"],
-        )
-    except HTTPException:
-        raise
-    except (CredentialEncryptionError, ValueError) as exc:
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
-    return DataPipelineRunDetail(
-        run=_to_data_pipeline_run_summary(row),
-        fetch_coverage=coverage,
+    return DataPipelineSubmission(
+        workflow_id=workflow.workflow_id,
+        status=workflow.status,
+        created=created,
+        status_url=f"/api/data/workflow-requests/{workflow.workflow_id}",
     )
+
+
+@app.get(
+    "/api/data/workflow-requests/{workflow_id}",
+    response_model=DataPipelineWorkflowStatus,
+)
+def data_pipeline_workflow_status(workflow_id: str) -> DataPipelineWorkflowStatus:
+    try:
+        workflow = _workflow_store().get(workflow_id)
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow request not found")
+    return DataPipelineWorkflowStatus(**workflow.__dict__)
 
 
 @app.post("/api/chat/query", response_model=ChatQueryResponse)
@@ -1238,8 +1268,12 @@ def market_status() -> list[dict]:
                 }
                 for row in rows
             ]
-    except SQLAlchemyError:
-        pass
+    except SQLAlchemyError as exc:
+        if get_settings().app_env.strip().lower() == "production":
+            raise HTTPException(status_code=503, detail="Market status is unavailable") from exc
+
+    if get_settings().app_env.strip().lower() == "production":
+        return []
 
     now = datetime.now(UTC)
     return [
@@ -1264,6 +1298,11 @@ def market_status() -> list[dict]:
 
 @app.get("/api/screeners/intraday-range/latest")
 def latest_intraday_range() -> list[dict]:
+    if get_settings().app_env.strip().lower() == "production":
+        raise HTTPException(
+            status_code=503,
+            detail="No authoritative intraday-range screener source is configured",
+        )
     now = datetime.now(UTC)
     rows = [
         {
@@ -1409,8 +1448,12 @@ def symbol_candles(ticker: str) -> list[dict]:
                 }
                 for row in rows
             ]
-    except SQLAlchemyError:
-        pass
+    except SQLAlchemyError as exc:
+        if get_settings().app_env.strip().lower() == "production":
+            raise HTTPException(status_code=503, detail="Candle data is unavailable") from exc
+
+    if get_settings().app_env.strip().lower() == "production":
+        raise HTTPException(status_code=404, detail=f"No candles found for {ticker}")
 
     start = datetime.now(UTC).date() - timedelta(days=90)
     candles = []
@@ -1436,6 +1479,8 @@ def symbol_candles(ticker: str) -> list[dict]:
 
 @app.get("/api/research/notes")
 def research_notes(ticker: str | None = None) -> list[dict]:
+    if get_settings().app_env.strip().lower() == "production":
+        return []
     now = datetime.now(UTC)
     notes = [
         {
@@ -1608,8 +1653,12 @@ def latest_jobs() -> list[dict]:
                 }
                 for row in rows
             ]
-    except SQLAlchemyError:
-        pass
+    except SQLAlchemyError as exc:
+        if get_settings().app_env.strip().lower() == "production":
+            raise HTTPException(status_code=503, detail="Job history is unavailable") from exc
+
+    if get_settings().app_env.strip().lower() == "production":
+        return []
 
     now = datetime.now(UTC)
     return [
@@ -2058,6 +2107,10 @@ def _to_screener_result(row: dict) -> dict:
 def _store() -> TimescaleStore:
     settings = get_settings()
     return TimescaleStore(settings.database_url)
+
+
+def _workflow_store() -> WorkflowRequestStore:
+    return WorkflowRequestStore(get_settings().database_url)
 
 
 def _initialized_store() -> TimescaleStore:

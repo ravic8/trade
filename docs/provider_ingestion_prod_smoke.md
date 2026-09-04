@@ -58,29 +58,27 @@ its image refresh, container recreation, and loopback HTTP check in subsequent
 deployments. The deploy script does not start the admin profile when it is
 stopped.
 
-### 2. Initialize Schema
+### 2. Apply the versioned schema migration
 
 ```bash
-docker compose -f docker-compose.prod.yml exec api trade-research init-db
+docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
 ```
 
-This creates or updates Timescale tables, including `provider_request_log`.
+This is the deployment-authorized schema path. The guarded maintenance CLI is
+not a production migration mechanism.
 
-### 3. Run A Small Upstox Smoke Fetch
+### 3. Confirm the production CLI guard
 
-Use a low limit first if you want to verify only the provider guardrails:
+Run a harmless invocation of a mutating command without valid input. The guard
+must stop it before argument handling or database access:
 
 ```bash
 docker compose -f docker-compose.prod.yml exec api \
-  trade-research fetch-upstox-nse-daily --limit 3 --store-db
+  trade-research init-db
 ```
 
-Expected:
-
-- command completes or reports provider-specific warnings;
-- `ingestion_runs` receives a new run;
-- `provider_request_log` receives one row per attempted Upstox request;
-- `daily_ohlcv_fetch_coverage` receives run-scoped coverage rows.
+Expected: exit code `78` and a `Blocked mutating CLI command` message. Do not
+use a CLI bypass for the provider smoke.
 
 ### 4. Inspect Provider Request Logs
 
@@ -106,16 +104,15 @@ Pass criteria:
 - `wait seconds` is present and non-negative;
 - the command does not print `No provider request logs found`.
 
-### 5. Run The Dagster Daily Job
+### 5. Observe or launch the Dagster daily job
 
-```bash
-docker compose -f docker-compose.prod.yml exec dagster-daemon \
-  dagster job execute -m trade_research.dagster.definitions -j daily_research_pipeline_job
-```
+Use the authenticated Dagster UI to launch `daily_research_pipeline_job`, or
+observe the next reconciled schedule tick. The daemon invokes package services
+directly; do not shell into a container to execute the maintenance CLI.
 
 If the job is already current, Upstox may have zero actual provider calls. That
-is valid for incremental behavior. To verify request logging, use the small
-manual smoke fetch above with a known missing window or a safe limit.
+is valid for incremental behavior. A bounded production canary must be a
+Dagster launch with recorded run lineage.
 
 ### 6. Inspect Dagster Run Logs
 
@@ -150,7 +147,7 @@ Do not disable Redis strict mode in production except for emergency diagnosis.
 
 If rows were fetched but `provider-request-log` is empty:
 
-- confirm `trade-research init-db` ran after deployment;
+- confirm `alembic upgrade head` completed during deployment;
 - check that the run used the updated image;
 - check database permissions for inserting into `provider_request_log`.
 

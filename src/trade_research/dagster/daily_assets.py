@@ -124,8 +124,7 @@ def bigquery_tsx_ohlcv_canary(context) -> BigQuerySyncResult:
 )
 def nse_exchange_sessions(context) -> PipelineRunResult:
     result = run_exchange_session_materialization_pipeline("NSE", trigger="dagster")
-    context.add_output_metadata(_result_metadata(result))
-    _assert_pipeline_not_failed(result)
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -136,8 +135,7 @@ def nse_exchange_sessions(context) -> PipelineRunResult:
 )
 def tsx_exchange_sessions(context) -> PipelineRunResult:
     result = run_exchange_session_materialization_pipeline("TSX", trigger="dagster")
-    context.add_output_metadata(_result_metadata(result))
-    _assert_pipeline_not_failed(result)
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -148,8 +146,7 @@ def tsx_exchange_sessions(context) -> PipelineRunResult:
 )
 def us_exchange_sessions(context) -> PipelineRunResult:
     result = run_exchange_session_materialization_pipeline("US", trigger="dagster")
-    context.add_output_metadata(_result_metadata(result))
-    _assert_pipeline_not_failed(result)
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -160,7 +157,7 @@ def us_exchange_sessions(context) -> PipelineRunResult:
 )
 def nse_universe_snapshot(context) -> PipelineRunResult:
     result = run_equity_universe_snapshot_pipeline("NSE", trigger="dagster")
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -171,7 +168,7 @@ def nse_universe_snapshot(context) -> PipelineRunResult:
 )
 def tsx_universe_snapshot(context) -> PipelineRunResult:
     result = run_equity_universe_snapshot_pipeline("TSX", trigger="dagster")
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -182,7 +179,7 @@ def tsx_universe_snapshot(context) -> PipelineRunResult:
 )
 def us_universe_snapshot(context) -> PipelineRunResult:
     result = run_equity_universe_snapshot_pipeline("US", trigger="dagster")
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -196,7 +193,7 @@ def yfinance_daily_work_plan(context) -> PipelineRunResult:
         include_initial_backfill=False,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -211,7 +208,7 @@ def yfinance_nse_completed_session_work_plan(context) -> PipelineRunResult:
         include_initial_backfill=False,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -226,7 +223,7 @@ def yfinance_tsx_completed_session_work_plan(context) -> PipelineRunResult:
         include_initial_backfill=False,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -241,7 +238,7 @@ def yfinance_us_completed_session_work_plan(context) -> PipelineRunResult:
         include_initial_backfill=False,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -252,12 +249,7 @@ def yfinance_us_completed_session_work_plan(context) -> PipelineRunResult:
 )
 def yfinance_daily_work_worker(context) -> PipelineRunResult:
     result = run_yfinance_daily_work_queue(trigger="dagster")
-    context.add_output_metadata(_result_metadata(result))
-    if result.status != "pass":
-        raise RuntimeError(
-            "Yfinance durable worker completed with business or operational failures: "
-            "; ".join(result.warnings or [f"pipeline status={result.status}"])
-        )
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -276,7 +268,7 @@ def upstox_daily_ohlcv(context) -> PipelineRunResult:
         trigger="dagster",
         max_concurrent_fetches=settings.upstox_historical_concurrency,
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -294,8 +286,7 @@ def nse_daily_ohlcv(context) -> PipelineRunResult:
         to_date=latest.latest_expected_trading_date.isoformat(),
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
-    _assert_pipeline_not_failed(result)
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -311,7 +302,7 @@ def yfinance_us_daily_ohlcv(context) -> PipelineRunResult:
         export_db_snapshot=True,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -327,7 +318,7 @@ def yfinance_canada_daily_ohlcv(context) -> PipelineRunResult:
         export_db_snapshot=True,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -348,7 +339,7 @@ def nse_opportunity_targets_v1(
         exchange="NSE",
         ohlcv_source="yfinance",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -364,7 +355,11 @@ def nse_completed_session_opportunity_targets(context) -> PipelineRunResult:
         exchange="NSE",
         ohlcv_source="yfinance",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(
+        context,
+        result,
+        fail_on_degraded=bool(result.metrics.get("ready")),
+    )
     return result
 
 
@@ -380,7 +375,11 @@ def tsx_completed_session_opportunity_targets(context) -> PipelineRunResult:
         exchange="TSX",
         ohlcv_source="yfinance",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(
+        context,
+        result,
+        fail_on_degraded=bool(result.metrics.get("ready")),
+    )
     return result
 
 
@@ -396,7 +395,11 @@ def us_completed_session_opportunity_targets(context) -> PipelineRunResult:
         exchange="US",
         ohlcv_source="yfinance",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(
+        context,
+        result,
+        fail_on_degraded=bool(result.metrics.get("ready")),
+    )
     return result
 
 
@@ -414,7 +417,7 @@ def tsx_opportunity_targets_v1(
 ) -> PipelineRunResult:
     _assert_upstream_not_failed(daily_ohlcv)
     result = run_opportunity_target_pipeline(exchange="TSX", ohlcv_source="yfinance")
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -432,7 +435,7 @@ def us_opportunity_targets_v1(
 ) -> PipelineRunResult:
     _assert_upstream_not_failed(daily_ohlcv)
     result = run_opportunity_target_pipeline(exchange="US", ohlcv_source="yfinance")
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -446,7 +449,7 @@ def dukascopy_fx_intraday_ohlcv(context) -> PipelineRunResult:
         store_db=True,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -460,7 +463,7 @@ def yfinance_fx_crypto_intraday_ohlcv(context) -> PipelineRunResult:
         store_db=True,
         trigger="dagster",
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -482,12 +485,12 @@ def fx_intraday_gap_validation(
             status="fail",
             blocking_issues=["Dukascopy fetch produced no OHLCV artifact to validate."],
         )
-        context.add_output_metadata(_result_metadata(result))
+        _record_pipeline_result(context, result)
         return result
     result = run_dukascopy_intraday_gap_validation_pipeline(
         input_path=input_path,
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -509,7 +512,7 @@ def yfinance_fx_intraday_gap_validation(
             status="fail",
             blocking_issues=["yfinance fetch produced no OHLCV artifact to validate."],
         )
-        context.add_output_metadata(_result_metadata(result))
+        _record_pipeline_result(context, result)
         return result
     result = run_dukascopy_intraday_gap_validation_pipeline(
         input_path=input_path,
@@ -521,7 +524,7 @@ def yfinance_fx_intraday_gap_validation(
             "data/processed/intraday/yfinance_fx_crypto_5m_gap_validation_summary.json"
         ),
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -545,7 +548,7 @@ def processed_dataset_validation(
     _assert_upstream_not_failed(daily_features)
     _assert_upstream_not_failed(daily_targets)
     result = run_processed_dataset_validation_pipeline(coverage_run_id=context.run_id)
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -568,7 +571,7 @@ def daily_features_v1(
         lookback_days=320,
         export_db_snapshot=True,
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -591,7 +594,7 @@ def daily_targets_v1(
         recompute_lookback_days=90,
         export_db_snapshot=True,
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -615,7 +618,7 @@ def factor_research_v1(
     _assert_upstream_not_failed(daily_features)
     _assert_upstream_not_failed(daily_targets)
     result = run_factor_research_pipeline()
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
@@ -638,8 +641,12 @@ def ml_dataset_v1(
     _assert_upstream_not_failed(processed_validation)
     _assert_upstream_not_failed(daily_features)
     _assert_upstream_not_failed(daily_targets)
-    result = run_ml_dataset_v1_pipeline()
-    context.add_output_metadata(_result_metadata(result))
+    stock_coverage_path = _require_upstream_artifact(
+        processed_validation,
+        "stock_coverage",
+    )
+    result = run_ml_dataset_v1_pipeline(stock_coverage_path=stock_coverage_path)
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 
@@ -675,24 +682,58 @@ def daily_pipeline_health(
         store_coverage_db=True,
         coverage_windows_months=[6, 9, 12, 15, 18, 24],
     )
-    context.add_output_metadata(_result_metadata(result))
+    _record_pipeline_result(context, result)
     return result
 
 
 def _assert_upstream_not_failed(result: PipelineRunResult) -> None:
-    if result.status == "fail":
+    if result.business_outcome == "failed":
         raise RuntimeError(f"Upstream pipeline failed: {result.name}")
 
 
-def _assert_pipeline_not_failed(result: PipelineRunResult) -> None:
-    if result.status == "fail":
-        raise RuntimeError(f"Pipeline failed: {result.name}")
+def _require_upstream_artifact(result: PipelineRunResult, name: str) -> Path:
+    path = result.artifacts.get(name)
+    if path is None:
+        raise RuntimeError(
+            f"Upstream pipeline {result.name} did not publish required artifact: {name}"
+        )
+    if not path.is_file():
+        raise RuntimeError(
+            f"Required upstream artifact does not exist for {result.name}: {path}"
+        )
+    return path
+
+
+def _record_pipeline_result(
+    context: Any,
+    result: PipelineRunResult,
+    *,
+    fail_on_degraded: bool = False,
+) -> None:
+    context.add_output_metadata(_result_metadata(result))
+    outcome = result.business_outcome
+    details = result.blocking_issues or result.warnings
+    suffix = ": " + "; ".join(details) if details else ""
+    if outcome == "failed":
+        context.log.error("Pipeline failed: %s%s", result.name, suffix)
+        raise RuntimeError(f"Pipeline failed: {result.name}{suffix}")
+    if outcome == "degraded" and fail_on_degraded:
+        context.log.error("Pipeline degraded: %s%s", result.name, suffix)
+        raise RuntimeError(f"Pipeline degraded: {result.name}{suffix}")
+    if outcome == "degraded":
+        details = result.warnings or ["Pipeline completed with warnings."]
+        context.log.warning(
+            "Pipeline %s finished with degraded business outcome: %s",
+            result.name,
+            "; ".join(details),
+        )
 
 
 def _result_metadata(result: PipelineRunResult) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "pipeline": result.name,
         "status": result.status,
+        "business_outcome": result.business_outcome,
         "rows": result.rows,
     }
     for name, path in result.artifacts.items():

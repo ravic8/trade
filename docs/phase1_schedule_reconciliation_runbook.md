@@ -63,7 +63,12 @@ action. For a stale managed schedule, the reconciler stops the old origin,
 deletes only its instigator-state row, and then starts the current origin.
 Dagster tick and run history is retained. Unknown active schedules appear under
 `unmanaged_active_schedules`; the reconciler reports but never deletes or stops
-them.
+them. Apply is blocked until every unmanaged active schedule has been reviewed
+and stopped or explicitly restored to the managed schedule policy.
+
+Schedule identity includes both the repository-origin ID and the schedule
+selector ID. A selector change under the same repository origin is therefore
+reconciled instead of being incorrectly treated as current.
 
 Apply only after the preview is approved:
 

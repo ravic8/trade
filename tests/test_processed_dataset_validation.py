@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
 
+from trade_research.contracts import ML_INPUTS_CONTRACT_ID, get_data_contract
 from trade_research.pipelines import processed_validation
 from trade_research.validation.processed_datasets import (
     build_date_coverage,
@@ -80,6 +82,10 @@ def test_duplicate_keys_fail_validation(tmp_path: Path) -> None:
     assert (
         "Processed OHLCV has duplicate instrument/date keys." in result.summary["blocking_issues"]
     )
+    checks = {item.check_id: item for item in result.validation_report.results}
+    assert result.validation_report.status == "failed"
+    assert checks["processed_ohlcv.unique_complete_keys"].status == "failed"
+    assert checks["processed_datasets.baseline_ml_ready"].status == "failed"
 
 
 def test_cleaned_ohlcv_excludes_invalid_rows(tmp_path: Path) -> None:
@@ -131,6 +137,13 @@ def test_summary_json_contains_required_fields(tmp_path: Path) -> None:
 
     for field in [
         "overall_status",
+        "validation_contract_version",
+        "validation_run_id",
+        "validation_status",
+        "validation_results_path",
+        "data_contract_id",
+        "data_contract_schema_version",
+        "dataset_version",
         "baseline_ml_ready",
         "serious_research_ready",
         "production_ready",
@@ -146,6 +159,27 @@ def test_summary_json_contains_required_fields(tmp_path: Path) -> None:
         assert field in result.summary
     assert result.summary["baseline_ml_ready"] is True
     assert result.summary["overall_status"] == "warn"
+    assert result.validation_report.run_id == result.summary["validation_run_id"]
+    assert result.validation_report.dataset_id == ML_INPUTS_CONTRACT_ID
+    assert result.summary["data_contract_id"] == ML_INPUTS_CONTRACT_ID
+    assert (
+        result.summary["dataset_version"]
+        == get_data_contract(ML_INPUTS_CONTRACT_ID).dataset_version
+    )
+    assert result.validation_report.status == "warning"
+    validation_path = Path(result.summary["validation_results_path"])
+    assert validation_path.exists()
+    payload = json.loads(validation_path.read_text())
+    assert payload["contract_version"] == "validation_report.v1"
+    assert {item["check_id"] for item in payload["results"]} >= {
+        "processed_ohlcv.required_input",
+        "processed_ohlcv.unique_complete_keys",
+        "cleaned_ohlcv.valid_preserved_rows",
+        "features.dataset_contract",
+        "targets.dataset_contract",
+        "features_targets.key_alignment",
+        "processed_datasets.baseline_ml_ready",
+    }
 
 
 def test_pipeline_materializes_stock_coverage_before_ml_dataset(
@@ -172,12 +206,12 @@ def test_pipeline_materializes_stock_coverage_before_ml_dataset(
     )
 
     coverage_path = data_dir / "processed/validation/daily_pipeline_stock_coverage.parquet"
-    windows_path = (
-        data_dir / "processed/validation/daily_pipeline_stock_coverage_windows.parquet"
-    )
+    windows_path = data_dir / "processed/validation/daily_pipeline_stock_coverage_windows.parquet"
     assert coverage_path.exists()
     assert windows_path.exists()
     assert result.artifacts["stock_coverage"] == coverage_path
+    assert result.artifacts["validation_results"].exists()
+    assert result.metrics["validation_run_id"] == "dagster-run-1"
     assert result.metrics["stock_coverage"]["coverage_run_id"] == "dagster-run-1"
     coverage = pd.read_parquet(coverage_path)
     assert coverage["coverage_pct"].eq(1.0).all()

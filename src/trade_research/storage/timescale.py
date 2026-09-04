@@ -1377,14 +1377,17 @@ class TimescaleStore:
 
     def upsert_symbols(self, symbols: Iterable[Symbol], fetched_at: datetime | None = None) -> int:
         fetched = fetched_at or datetime.now(UTC)
-        rows = [
-            {
-                **symbol.model_dump(),
-                "is_active": True,
-                "fetched_at": fetched,
-            }
-            for symbol in symbols
-        ]
+        rows = _deduplicate_rows(
+            [
+                {
+                    **symbol.model_dump(),
+                    "is_active": True,
+                    "fetched_at": fetched,
+                }
+                for symbol in symbols
+            ],
+            ("symbol", "exchange"),
+        )
         if not rows:
             return 0
 
@@ -2006,7 +2009,10 @@ class TimescaleStore:
         self,
         sessions: Iterable[Mapping[str, Any]],
     ) -> int:
-        rows = [dict(row) for row in sessions]
+        rows = _deduplicate_rows(
+            [dict(row) for row in sessions],
+            ("exchange", "session_date"),
+        )
         if not rows:
             return 0
         total = 0
@@ -2169,7 +2175,13 @@ class TimescaleStore:
         self,
         work_items: Iterable[Mapping[str, Any] | DailyWorkItem],
     ) -> int:
-        rows = [dict(item) if isinstance(item, Mapping) else item.as_row() for item in work_items]
+        rows = _deduplicate_rows(
+            [
+                dict(item) if isinstance(item, Mapping) else item.as_row()
+                for item in work_items
+            ],
+            ("idempotency_key",),
+        )
         if not rows:
             return 0
         inserted = 0
@@ -2188,7 +2200,10 @@ class TimescaleStore:
         self,
         evidence_rows: Iterable[Mapping[str, Any]],
     ) -> int:
-        rows = [dict(row) for row in evidence_rows]
+        rows = _deduplicate_rows(
+            [dict(row) for row in evidence_rows],
+            ("evidence_id",),
+        )
         if not rows:
             return 0
         with self.engine.begin() as connection:
@@ -3021,7 +3036,13 @@ class TimescaleStore:
         unsupported_retry_days: int = 7,
         failure_message: str | None = None,
     ) -> dict[str, int]:
-        tracked_symbols = [symbol for symbol in symbols if symbol.yahoo_symbol]
+        tracked_symbols = list(
+            {
+                (symbol.symbol, symbol.exchange): symbol
+                for symbol in symbols
+                if symbol.yahoo_symbol
+            }.values()
+        )
         if not tracked_symbols:
             return {"updated": 0, "succeeded": 0, "failed": 0}
 
@@ -3794,6 +3815,7 @@ class TimescaleStore:
         universe_id: str | None = None,
         coverage_status: str | None = None,
         expected_rows_per_symbol: int = 0,
+        expected_session_dates: Iterable[date] | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: str = "symbol",
@@ -3802,6 +3824,9 @@ class TimescaleStore:
             raise ValueError("start_date and end_date must be supplied together.")
         if start_date and end_date and start_date > end_date:
             raise ValueError("start_date must be on or before end_date.")
+        expected_dates = tuple(dict.fromkeys(expected_session_dates or ()))
+        if expected_dates and len(expected_dates) != expected_rows_per_symbol:
+            raise ValueError("expected_session_dates must match expected_rows_per_symbol.")
 
         exchange_upper = exchange.upper()
         params: dict[str, Any] = {
@@ -3816,6 +3841,16 @@ class TimescaleStore:
             params["start_date"] = start_date
             params["end_date"] = end_date
             ohlcv_date_filter = "AND d.date BETWEEN :start_date AND :end_date"
+        expected_values_sql = []
+        for index, session_date in enumerate(expected_dates):
+            date_key = f"expected_date_{index}"
+            expected_values_sql.append(f"(:{date_key})")
+            params[date_key] = session_date
+        expected_sessions_sql = (
+            f"VALUES {', '.join(expected_values_sql)}"
+            if expected_values_sql
+            else "SELECT CAST(NULL AS date) WHERE false"
+        )
 
         filters = [
             "pi.source = :source",
@@ -3884,6 +3919,9 @@ class TimescaleStore:
                   AND status = 'fetched'
                 ORDER BY instrument_key, created_at DESC
             ),
+            expected_sessions(session_date) AS (
+                {expected_sessions_sql}
+            ),
             base AS (
                 SELECT
                     pi.trading_symbol AS symbol,
@@ -3893,7 +3931,18 @@ class TimescaleStore:
                     :exchange AS exchange,
                     min(d.date) AS first_stored_date,
                     max(d.date) AS latest_stored_date,
-                    count(d.date)::bigint AS stored_rows,
+                    count(d.date)::bigint AS raw_stored_rows,
+                    count(d.date) FILTER (
+                        WHERE expected.session_date IS NOT NULL
+                          AND d.quality_status = 'ok'
+                    )::bigint AS matched_stored_rows,
+                    count(d.date) FILTER (
+                        WHERE expected.session_date IS NOT NULL
+                          AND d.quality_status <> 'ok'
+                    )::bigint AS invalid_stored_rows,
+                    count(d.date) FILTER (
+                        WHERE expected.session_date IS NULL
+                    )::bigint AS off_calendar_stored_rows,
                     ls.last_successful_run,
                     lf.last_fetch_status
                 FROM provider_instruments pi
@@ -3903,6 +3952,8 @@ class TimescaleStore:
                    AND d.source = pi.source
                    AND d.exchange = :exchange
                    {ohlcv_date_filter}
+                LEFT JOIN expected_sessions expected
+                    ON expected.session_date = d.date
                 LEFT JOIN latest_fetch lf
                     ON lf.instrument_key = pi.instrument_key
                 LEFT JOIN latest_success ls
@@ -3919,19 +3970,39 @@ class TimescaleStore:
             scored AS (
                 SELECT
                     *,
+                    raw_stored_rows AS stored_rows,
+                    CASE
+                        WHEN CAST(:expected_rows AS bigint) <= 0 THEN raw_stored_rows
+                        ELSE matched_stored_rows
+                    END::bigint AS calendar_matched_rows,
+                    CASE
+                        WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0
+                        ELSE invalid_stored_rows
+                    END::bigint AS invalid_stored_eligible_sessions,
+                    CASE
+                        WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0
+                        ELSE off_calendar_stored_rows
+                    END::bigint AS off_calendar_rows,
                     CAST(:expected_rows AS bigint) AS expected_rows,
                     greatest(
-                        CAST(:expected_rows AS bigint) - stored_rows,
+                        CAST(:expected_rows AS bigint) - CASE
+                            WHEN CAST(:expected_rows AS bigint) <= 0 THEN raw_stored_rows
+                            ELSE matched_stored_rows
+                        END,
                         0
                     )::bigint AS missing_rows,
                     CASE
                         WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0.0
-                        ELSE least(stored_rows::float / CAST(:expected_rows AS float), 1.0)
+                        ELSE least(matched_stored_rows::float / CAST(:expected_rows AS float), 1.0)
                     END AS coverage_pct,
                     CASE
-                        WHEN stored_rows = 0 THEN 'empty'
+                        WHEN (CASE
+                            WHEN CAST(:expected_rows AS bigint) <= 0 THEN raw_stored_rows
+                            ELSE matched_stored_rows
+                        END) = 0 THEN 'empty'
                         WHEN CAST(:expected_rows AS bigint) > 0
-                            AND stored_rows >= CAST(:expected_rows AS bigint) THEN 'complete'
+                            AND matched_stored_rows >= CAST(:expected_rows AS bigint)
+                            THEN 'complete'
                         ELSE 'partial'
                     END AS coverage_status
                 FROM base
@@ -3950,6 +4021,10 @@ class TimescaleStore:
                     count(*) FILTER (WHERE coverage_status = 'empty')::bigint AS symbols_empty,
                     coalesce(sum(expected_rows), 0)::bigint AS expected_rows,
                     coalesce(sum(stored_rows), 0)::bigint AS stored_rows,
+                    coalesce(sum(calendar_matched_rows), 0)::bigint AS calendar_matched_rows,
+                    coalesce(sum(invalid_stored_eligible_sessions), 0)::bigint
+                        AS invalid_stored_eligible_sessions,
+                    coalesce(sum(off_calendar_rows), 0)::bigint AS off_calendar_rows,
                     coalesce(sum(missing_rows), 0)::bigint AS missing_rows,
                     count(*) FILTER (
                         WHERE missing_rows > 0
@@ -3968,6 +4043,10 @@ class TimescaleStore:
                 s.symbols_empty,
                 s.expected_rows AS summary_expected_rows,
                 s.stored_rows AS summary_stored_rows,
+                s.calendar_matched_rows AS summary_calendar_matched_rows,
+                s.invalid_stored_eligible_sessions
+                    AS summary_invalid_stored_eligible_sessions,
+                s.off_calendar_rows AS summary_off_calendar_rows,
                 s.missing_rows AS summary_missing_rows,
                 s.estimated_provider_calls_for_missing
             FROM filtered f
@@ -3987,6 +4066,10 @@ class TimescaleStore:
             "symbols_empty": 0,
             "expected_rows": 0,
             "stored_rows": 0,
+            "expected_eligible_sessions": 0,
+            "valid_stored_eligible_sessions": 0,
+            "invalid_stored_eligible_sessions": 0,
+            "coverage_ratio": 0.0,
             "calendar_matched_rows": 0,
             "off_calendar_rows": 0,
             "missing_rows": 0,
@@ -4007,8 +4090,21 @@ class TimescaleStore:
                 "symbols_empty": int(first["symbols_empty"] or 0),
                 "expected_rows": int(first["summary_expected_rows"] or 0),
                 "stored_rows": int(first["summary_stored_rows"] or 0),
-                "calendar_matched_rows": int(first["summary_stored_rows"] or 0),
-                "off_calendar_rows": 0,
+                "expected_eligible_sessions": int(first["summary_expected_rows"] or 0),
+                "valid_stored_eligible_sessions": int(
+                    first["summary_calendar_matched_rows"] or 0
+                ),
+                "invalid_stored_eligible_sessions": int(
+                    first["summary_invalid_stored_eligible_sessions"] or 0
+                ),
+                "coverage_ratio": (
+                    float(first["summary_calendar_matched_rows"] or 0)
+                    / float(first["summary_expected_rows"])
+                    if first["summary_expected_rows"]
+                    else 0.0
+                ),
+                "calendar_matched_rows": int(first["summary_calendar_matched_rows"] or 0),
+                "off_calendar_rows": int(first["summary_off_calendar_rows"] or 0),
                 "missing_rows": int(first["summary_missing_rows"] or 0),
                 "provider_unavailable_rows": 0,
                 "actionable_missing_rows": int(first["summary_missing_rows"] or 0),
@@ -4032,8 +4128,16 @@ class TimescaleStore:
                     "first_stored_date": row.get("first_stored_date"),
                     "latest_stored_date": row.get("latest_stored_date"),
                     "stored_rows": int(row["stored_rows"] or 0),
-                    "calendar_matched_rows": int(row["stored_rows"] or 0),
-                    "off_calendar_rows": 0,
+                    "expected_eligible_sessions": int(row["expected_rows"] or 0),
+                    "valid_stored_eligible_sessions": int(
+                        row["calendar_matched_rows"] or 0
+                    ),
+                    "invalid_stored_eligible_sessions": int(
+                        row["invalid_stored_eligible_sessions"] or 0
+                    ),
+                    "coverage_ratio": float(row["coverage_pct"] or 0.0),
+                    "calendar_matched_rows": int(row["calendar_matched_rows"] or 0),
+                    "off_calendar_rows": int(row["off_calendar_rows"] or 0),
                     "expected_rows": int(row["expected_rows"] or 0),
                     "coverage_pct": float(row["coverage_pct"] or 0.0),
                     "missing_rows": int(row["missing_rows"] or 0),
@@ -4081,6 +4185,10 @@ class TimescaleStore:
                     "symbols_empty": 0,
                     "expected_rows": 0,
                     "stored_rows": 0,
+                    "expected_eligible_sessions": 0,
+                    "valid_stored_eligible_sessions": 0,
+                    "invalid_stored_eligible_sessions": 0,
+                    "coverage_ratio": 0.0,
                     "calendar_matched_rows": 0,
                     "off_calendar_rows": 0,
                     "missing_rows": 0,
@@ -4196,7 +4304,17 @@ class TimescaleStore:
                     min(d.date) AS first_stored_date,
                     max(d.date) AS latest_stored_date,
                     count(d.date)::bigint AS raw_stored_rows,
-                    count(expected.session_date)::bigint AS matched_stored_rows,
+                    count(d.date) FILTER (
+                        WHERE expected.session_date IS NOT NULL
+                          AND d.quality_status = 'ok'
+                    )::bigint AS matched_stored_rows,
+                    count(d.date) FILTER (
+                        WHERE expected.session_date IS NOT NULL
+                          AND d.quality_status <> 'ok'
+                    )::bigint AS invalid_stored_rows,
+                    count(d.date) FILTER (
+                        WHERE expected.session_date IS NULL
+                    )::bigint AS off_calendar_stored_rows,
                     ls.last_successful_run,
                     lf.last_fetch_status
                 FROM seed_symbols s
@@ -4262,8 +4380,12 @@ class TimescaleStore:
                     END::bigint AS calendar_matched_rows,
                     CASE
                         WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0
-                        ELSE greatest(raw_stored_rows - matched_stored_rows, 0)
+                        ELSE off_calendar_stored_rows
                     END::bigint AS off_calendar_rows,
+                    CASE
+                        WHEN CAST(:expected_rows AS bigint) <= 0 THEN 0
+                        ELSE invalid_stored_rows
+                    END::bigint AS invalid_stored_eligible_sessions,
                     CAST(:expected_rows AS bigint) AS expected_rows,
                     greatest(
                         CAST(:expected_rows AS bigint) -
@@ -4339,6 +4461,8 @@ class TimescaleStore:
                     coalesce(sum(stored_rows), 0)::bigint AS stored_rows,
                     coalesce(sum(calendar_matched_rows), 0)::bigint
                         AS calendar_matched_rows,
+                    coalesce(sum(invalid_stored_eligible_sessions), 0)::bigint
+                        AS invalid_stored_eligible_sessions,
                     coalesce(sum(off_calendar_rows), 0)::bigint AS off_calendar_rows,
                     coalesce(sum(missing_rows), 0)::bigint AS missing_rows,
                     coalesce(sum(provider_unavailable_rows), 0)::bigint
@@ -4369,6 +4493,8 @@ class TimescaleStore:
                 s.expected_rows AS summary_expected_rows,
                 s.stored_rows AS summary_stored_rows,
                 s.calendar_matched_rows AS summary_calendar_matched_rows,
+                s.invalid_stored_eligible_sessions
+                    AS summary_invalid_stored_eligible_sessions,
                 s.off_calendar_rows AS summary_off_calendar_rows,
                 s.missing_rows AS summary_missing_rows,
                 s.provider_unavailable_rows AS summary_provider_unavailable_rows,
@@ -4393,6 +4519,10 @@ class TimescaleStore:
             "symbols_empty": 0,
             "expected_rows": 0,
             "stored_rows": 0,
+            "expected_eligible_sessions": 0,
+            "valid_stored_eligible_sessions": 0,
+            "invalid_stored_eligible_sessions": 0,
+            "coverage_ratio": 0.0,
             "calendar_matched_rows": 0,
             "off_calendar_rows": 0,
             "missing_rows": 0,
@@ -4413,6 +4543,19 @@ class TimescaleStore:
                 "symbols_empty": int(first["symbols_empty"] or 0),
                 "expected_rows": int(first["summary_expected_rows"] or 0),
                 "stored_rows": int(first["summary_stored_rows"] or 0),
+                "expected_eligible_sessions": int(first["summary_expected_rows"] or 0),
+                "valid_stored_eligible_sessions": int(
+                    first["summary_calendar_matched_rows"] or 0
+                ),
+                "invalid_stored_eligible_sessions": int(
+                    first["summary_invalid_stored_eligible_sessions"] or 0
+                ),
+                "coverage_ratio": (
+                    float(first["summary_calendar_matched_rows"] or 0)
+                    / float(first["summary_expected_rows"])
+                    if first["summary_expected_rows"]
+                    else 0.0
+                ),
                 "calendar_matched_rows": int(first["summary_calendar_matched_rows"] or 0),
                 "off_calendar_rows": int(first["summary_off_calendar_rows"] or 0),
                 "missing_rows": int(first["summary_missing_rows"] or 0),
@@ -4438,6 +4581,14 @@ class TimescaleStore:
                     "first_stored_date": row.get("first_stored_date"),
                     "latest_stored_date": row.get("latest_stored_date"),
                     "stored_rows": int(row["stored_rows"] or 0),
+                    "expected_eligible_sessions": int(row["expected_rows"] or 0),
+                    "valid_stored_eligible_sessions": int(
+                        row["calendar_matched_rows"] or 0
+                    ),
+                    "invalid_stored_eligible_sessions": int(
+                        row["invalid_stored_eligible_sessions"] or 0
+                    ),
+                    "coverage_ratio": float(row["coverage_pct"] or 0.0),
                     "calendar_matched_rows": int(row["calendar_matched_rows"] or 0),
                     "off_calendar_rows": int(row["off_calendar_rows"] or 0),
                     "expected_rows": int(row["expected_rows"] or 0),
@@ -6572,7 +6723,7 @@ class TimescaleStore:
                     "quality_status": _quality_status(row),
                 }
             )
-        return rows
+        return _deduplicate_rows(rows, ("ticker", "ts", "source"))
 
     @staticmethod
     def _instrument_rows(frame: pd.DataFrame, source: str) -> list[dict[str, Any]]:
@@ -6605,7 +6756,7 @@ class TimescaleStore:
                     "raw": record.get("raw") if isinstance(record.get("raw"), dict) else {},
                 }
             )
-        return rows
+        return _deduplicate_rows(rows, ("source", "instrument_key"))
 
     @staticmethod
     def _universe_member_rows(
@@ -6630,7 +6781,7 @@ class TimescaleStore:
                     "included_at": included_at,
                 }
             )
-        return rows
+        return _deduplicate_rows(rows, ("universe_id", "symbol"))
 
     @staticmethod
     def _daily_ohlcv_rows(frame: pd.DataFrame, exchange: str, source: str) -> list[dict[str, Any]]:
@@ -6640,24 +6791,37 @@ class TimescaleStore:
         fetched_at = datetime.now(UTC)
         rows = []
         for record in frame.to_dict(orient="records"):
-            required_columns = ["Date", "Open", "High", "Low", "Close", "Volume"]
+            normalized = "instrument_key" in record
+            required_columns = (
+                ["date", "open", "high", "low", "close", "volume"]
+                if normalized
+                else ["Date", "Open", "High", "Low", "Close", "Volume"]
+            )
             if any(pd.isna(record.get(column)) for column in required_columns):
                 continue
             row = {
-                "instrument_key": str(record["InstrumentKey"]),
-                "source": source,
-                "date": _nullable_date(record["Date"]),
-                "symbol": str(record["Symbol"]).upper(),
-                "exchange": exchange,
-                "open": float(record["Open"]),
-                "high": float(record["High"]),
-                "low": float(record["Low"]),
-                "close": float(record["Close"]),
-                "volume": int(record["Volume"]),
-                "open_interest": _nullable_int(record.get("OpenInterest")),
-                "fetched_at": fetched_at,
+                "instrument_key": str(
+                    record["instrument_key"] if normalized else record["InstrumentKey"]
+                ),
+                "source": str(record.get("source") or source).lower(),
+                "date": _nullable_date(record["date"] if normalized else record["Date"]),
+                "symbol": str(
+                    record["symbol"] if normalized else record["Symbol"]
+                ).upper(),
+                "exchange": str(record.get("exchange") or exchange).upper(),
+                "open": float(record["open"] if normalized else record["Open"]),
+                "high": float(record["high"] if normalized else record["High"]),
+                "low": float(record["low"] if normalized else record["Low"]),
+                "close": float(record["close"] if normalized else record["Close"]),
+                "volume": int(record["volume"] if normalized else record["Volume"]),
+                "open_interest": _nullable_int(
+                    record.get("open_interest") if normalized else record.get("OpenInterest")
+                ),
+                "fetched_at": _as_utc(record.get("fetched_at") or fetched_at),
             }
-            row["quality_status"] = _quality_status(row)
+            row["quality_status"] = str(
+                record.get("quality_status") or _quality_status(row)
+            )
             rows.append(row)
         return _deduplicate_rows(rows, ("instrument_key", "source", "date"))
 
@@ -6739,7 +6903,10 @@ class TimescaleStore:
             }
             row["quality_status"] = _quality_status(row)
             rows.append(row)
-        return rows
+        return _deduplicate_rows(
+            rows,
+            ("instrument_key", "source", "interval", "ts"),
+        )
 
     @staticmethod
     def _corporate_action_rows(
@@ -6773,7 +6940,10 @@ class TimescaleStore:
                     "fetched_at": fetched_at,
                 }
             )
-        return rows
+        return _deduplicate_rows(
+            rows,
+            ("source", "instrument_key", "action_date", "action_type"),
+        )
 
     @staticmethod
     def _audit_rows(
@@ -6839,13 +7009,16 @@ class TimescaleStore:
                 "close": _nullable_float(record.get("close")),
                 "volume": _nullable_int(record.get("volume")),
                 "open_interest": _nullable_int(record.get("open_interest")),
-                "computed_at": computed_at,
+                "computed_at": _as_utc(record.get("computed_at") or computed_at),
                 "quality_status": _clean_string(record.get("quality_status")) or "unknown",
             }
             for column in FEATURE_COLUMNS_V1_0:
                 row[column] = _nullable_float(record.get(column))
             rows.append(row)
-        return rows
+        return _deduplicate_rows(
+            rows,
+            ("instrument_key", "date", "feature_version"),
+        )
 
     @staticmethod
     def _feature_audit_rows(
@@ -6897,7 +7070,7 @@ class TimescaleStore:
                 "source": _clean_string(record.get("source")) or "unknown",
                 "symbol": symbol.upper(),
                 "exchange": (_clean_string(record.get("exchange")) or "NSE").upper(),
-                "computed_at": computed_at,
+                "computed_at": _as_utc(record.get("computed_at") or computed_at),
                 "quality_status": _clean_string(record.get("quality_status")) or "unknown",
             }
             for column in DAILY_FORWARD_TARGET_COLUMNS_V1_0:
@@ -6906,7 +7079,10 @@ class TimescaleStore:
                 else:
                     row[column] = _nullable_float(record.get(column))
             rows.append(row)
-        return rows
+        return _deduplicate_rows(
+            rows,
+            ("instrument_key", "date", "target_version"),
+        )
 
     @staticmethod
     def _daily_opportunity_target_rows(frame: pd.DataFrame) -> list[dict[str, Any]]:
@@ -6950,7 +7126,10 @@ class TimescaleStore:
             for column in DAILY_OPPORTUNITY_TARGET_COLUMNS_V1_0:
                 row[column] = _nullable_float(record.get(column))
             rows.append(row)
-        return rows
+        return _deduplicate_rows(
+            rows,
+            ("instrument_key", "source", "date", "target_version"),
+        )
 
     @staticmethod
     def _target_audit_rows(
@@ -7017,7 +7196,10 @@ class TimescaleStore:
                     "created_at": created_at,
                 }
             )
-        return rows
+        return _deduplicate_rows(
+            rows,
+            ("run_id", "window_months", "instrument_key"),
+        )
 
     @staticmethod
     def _daily_ohlcv_fetch_coverage_rows(
@@ -7052,7 +7234,7 @@ class TimescaleStore:
                     "created_at": created_at,
                 }
             )
-        return rows
+        return _deduplicate_rows(rows, ("run_id", "instrument_key"))
 
     @staticmethod
     def _provider_request_log_rows(logs: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -7086,7 +7268,7 @@ class TimescaleStore:
                     "created_at": _as_utc(record.get("created_at") or datetime.now(UTC)),
                 }
             )
-        return rows
+        return _deduplicate_rows(rows, ("id",))
 
 
 def make_timescale_store(database_url: str) -> TimescaleStore:

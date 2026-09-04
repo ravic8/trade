@@ -5,8 +5,10 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 import pandas as pd
+from pydantic import JsonValue
 
 from trade_research.config import get_settings
 from trade_research.credentials import resolve_provider_token
@@ -14,6 +16,13 @@ from trade_research.data import UpstoxHistoricalDataProvider, audit_daily_ohlcv
 from trade_research.data.rate_limits import ProviderRateLimiter, build_provider_rate_limiter
 from trade_research.data.upstox import AsyncUpstoxHistoricalDataProvider
 from trade_research.pipelines.base import PipelineRunResult
+from trade_research.pipelines.contract_gate import (
+    PublicationContractEvidence,
+    daily_ohlcv_invariant_result,
+    enforce_publication_contract,
+    expected_publication_sessions,
+    normalize_daily_ohlcv_publication_frame,
+)
 from trade_research.storage import ParquetStore, TimescaleStore
 
 
@@ -33,6 +42,7 @@ def run_upstox_daily_ohlcv_pipeline(
     fetch_coverage_output: Path = Path(
         "data/processed/equities/nse_daily_ohlcv_upstox_fetch_coverage.csv"
     ),
+    contract_validation_output: Path | None = None,
     access_token: str | None = None,
     full_refresh: bool = False,
     store_db: bool = True,
@@ -126,6 +136,47 @@ def run_upstox_daily_ohlcv_pipeline(
         )
 
         ohlcv = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        publication_frame = normalize_daily_ohlcv_publication_frame(
+            ohlcv,
+            exchange="NSE",
+            source="upstox",
+        )
+        contract_evidence: PublicationContractEvidence | None = None
+        if not fetch_plan.empty:
+            publication_run_id = (
+                str(run_id) if run_id is not None else f"upstox-daily-{uuid4()}"
+            )
+            evaluation_time = datetime.now(UTC)
+            publication_scope: dict[str, JsonValue] = {
+                "exchange": "NSE",
+                "source": "upstox",
+                "mode": "full_refresh" if full_refresh or from_date else "incremental",
+            }
+            contract_evidence = enforce_publication_contract(
+                publication_frame,
+                contract_id="market_data.ohlcv_daily.v1",
+                report_path=(
+                    contract_validation_output
+                    or settings.data_dir
+                    / "processed/validation/nse_daily_ohlcv_upstox_contract_validation.json"
+                ),
+                run_id=publication_run_id,
+                scope=publication_scope,
+                eligible_session_dates=expected_publication_sessions(
+                    publication_frame,
+                    exchange="NSE",
+                    expected_end=end,
+                ),
+                additional_results=(
+                    daily_ohlcv_invariant_result(
+                        publication_frame,
+                        run_id=publication_run_id,
+                        scope=publication_scope,
+                        created_at=evaluation_time,
+                    ),
+                ),
+                evaluated_at=evaluation_time,
+            )
         audit = (
             audit_daily_ohlcv(ohlcv, fetch_plan)
             if not fetch_plan.empty
@@ -134,10 +185,10 @@ def run_upstox_daily_ohlcv_pipeline(
 
         store = ParquetStore(settings.data_dir)
         output_path = None
-        if not ohlcv.empty:
+        if not publication_frame.empty:
             output_path = store.write_frame(
                 output_name if is_full_window else incremental_output_name,
-                ohlcv,
+                publication_frame,
             )
 
         audit_output.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +200,11 @@ def run_upstox_daily_ohlcv_pipeline(
         fetch_coverage = build_daily_fetch_coverage(planned, ohlcv, failures_frame)
         fetch_coverage.to_csv(fetch_coverage_output, index=False)
 
-        rows_written = db.upsert_daily_ohlcv(ohlcv) if db is not None and not ohlcv.empty else 0
+        rows_written = (
+            db.upsert_daily_ohlcv(publication_frame)
+            if db is not None and not publication_frame.empty
+            else 0
+        )
         audits_written = (
             db.insert_data_quality_audits(
                 audit,
@@ -208,6 +263,11 @@ def run_upstox_daily_ohlcv_pipeline(
             "fetch_failures": failures_output,
             "skipped_symbols": skipped_output,
             "fetch_coverage": fetch_coverage_output,
+            **(
+                {"contract_validation": contract_evidence.report_path}
+                if contract_evidence is not None
+                else {}
+            ),
         },
         metrics={
             "run_id": run_id,
@@ -227,6 +287,15 @@ def run_upstox_daily_ohlcv_pipeline(
             "db_snapshot_rows": int(db_snapshot_rows),
             "store_db": bool(store_db),
             "max_concurrent_fetches": int(concurrency),
+            "contract_validation_run_id": (
+                contract_evidence.report.run_id if contract_evidence is not None else None
+            ),
+            "contract_validation_status": (
+                contract_evidence.report.status if contract_evidence is not None else None
+            ),
+            "contract_validation_checks": (
+                len(contract_evidence.report.results) if contract_evidence is not None else 0
+            ),
         },
         warnings=warnings,
     )
@@ -244,6 +313,7 @@ def run_upstox_daily_ohlcv_retry_pipeline(
     retry_failures_output: Path = Path(
         "data/processed/equities/nse_daily_ohlcv_upstox_retry_failures.csv"
     ),
+    contract_validation_output: Path | None = None,
     access_token: str | None = None,
     export_db_snapshot: bool = True,
     trigger: str = "pipeline",
@@ -290,6 +360,7 @@ def run_upstox_daily_ohlcv_retry_pipeline(
     limiter = build_provider_rate_limiter(settings)
     try:
         if not candidates.empty:
+            assert token is not None
             frames, failures = _fetch_upstox_daily_batch_with_controls(
                 rows=candidates.to_dict(orient="records"),
                 token=token,
@@ -302,21 +373,69 @@ def run_upstox_daily_ohlcv_retry_pipeline(
             )
 
         ohlcv = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        publication_frame = normalize_daily_ohlcv_publication_frame(
+            ohlcv,
+            exchange="NSE",
+            source="upstox",
+        )
+        contract_evidence: PublicationContractEvidence | None = None
+        if not candidates.empty:
+            publication_run_id = str(run_id)
+            evaluation_time = datetime.now(UTC)
+            publication_scope: dict[str, JsonValue] = {
+                "exchange": "NSE",
+                "source": "upstox",
+                "mode": "retry",
+            }
+            expected_end = _parse_pipeline_date(
+                str(max(candidates["fetch_end"])),
+                "fetch_end",
+            )
+            contract_evidence = enforce_publication_contract(
+                publication_frame,
+                contract_id="market_data.ohlcv_daily.v1",
+                report_path=(
+                    contract_validation_output
+                    or settings.data_dir
+                    / "processed/validation/"
+                    "nse_daily_ohlcv_upstox_retry_contract_validation.json"
+                ),
+                run_id=publication_run_id,
+                scope=publication_scope,
+                eligible_session_dates=expected_publication_sessions(
+                    publication_frame,
+                    exchange="NSE",
+                    expected_end=expected_end,
+                ),
+                additional_results=(
+                    daily_ohlcv_invariant_result(
+                        publication_frame,
+                        run_id=publication_run_id,
+                        scope=publication_scope,
+                        created_at=evaluation_time,
+                    ),
+                ),
+                evaluated_at=evaluation_time,
+            )
         failures_frame = pd.DataFrame(failures, columns=["symbol", "instrument_key", "error"])
         retry_plan = _retry_candidates_to_fetch_plan(candidates)
         retry_coverage = build_daily_fetch_coverage(retry_plan, ohlcv, failures_frame)
 
         store = ParquetStore(settings.data_dir)
         output_path = None
-        if not ohlcv.empty:
-            output_path = store.write_frame(retry_output_name, ohlcv)
+        if not publication_frame.empty:
+            output_path = store.write_frame(retry_output_name, publication_frame)
 
         retry_coverage_output.parent.mkdir(parents=True, exist_ok=True)
         retry_failures_output.parent.mkdir(parents=True, exist_ok=True)
         retry_coverage.to_csv(retry_coverage_output, index=False)
         failures_frame.to_csv(retry_failures_output, index=False)
 
-        rows_written = db.upsert_daily_ohlcv(ohlcv) if not ohlcv.empty else 0
+        rows_written = (
+            db.upsert_daily_ohlcv(publication_frame)
+            if not publication_frame.empty
+            else 0
+        )
         retry_coverage_rows = (
             db.insert_daily_ohlcv_fetch_coverage(str(run_id), retry_coverage)
             if not retry_coverage.empty
@@ -365,6 +484,11 @@ def run_upstox_daily_ohlcv_retry_pipeline(
             **({"ohlcv_retry": output_path} if output_path is not None else {}),
             "retry_coverage": retry_coverage_output,
             "retry_failures": retry_failures_output,
+            **(
+                {"contract_validation": contract_evidence.report_path}
+                if contract_evidence is not None
+                else {}
+            ),
         },
         metrics={
             "run_id": run_id,
@@ -378,6 +502,15 @@ def run_upstox_daily_ohlcv_retry_pipeline(
             "timescale_rows": int(rows_written),
             "db_snapshot_rows": int(db_snapshot_rows),
             "max_concurrent_fetches": int(concurrency),
+            "contract_validation_run_id": (
+                contract_evidence.report.run_id if contract_evidence is not None else None
+            ),
+            "contract_validation_status": (
+                contract_evidence.report.status if contract_evidence is not None else None
+            ),
+            "contract_validation_checks": (
+                len(contract_evidence.report.results) if contract_evidence is not None else 0
+            ),
         },
         warnings=warnings,
     )

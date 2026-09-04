@@ -243,6 +243,13 @@ export type DataPipelineRequest = DataCoveragePreviewRequest & {
   mode: "incremental_missing_only";
 };
 
+export type DataPipelineSubmission = {
+  workflow_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  created: boolean;
+  status_url: string;
+};
+
 export type DataPipelineHealthResponse = {
   provider: "upstox";
   exchange: "NSE";
@@ -294,6 +301,10 @@ export type DataAvailabilityRow = {
   first_stored_ts: string | null;
   latest_stored_ts: string | null;
   stored_rows: number;
+  expected_eligible_sessions: number;
+  valid_stored_eligible_sessions: number;
+  invalid_stored_eligible_sessions: number;
+  coverage_ratio: number;
   calendar_matched_rows: number;
   off_calendar_rows: number;
   expected_rows: number;
@@ -314,6 +325,10 @@ export type DataAvailabilitySummary = {
   symbols_empty: number;
   expected_rows: number;
   stored_rows: number;
+  expected_eligible_sessions: number;
+  valid_stored_eligible_sessions: number;
+  invalid_stored_eligible_sessions: number;
+  coverage_ratio: number;
   calendar_matched_rows: number;
   off_calendar_rows: number;
   missing_rows: number;
@@ -502,6 +517,10 @@ export type PipelineScheduleStatusRow = {
   job_name: string;
   cron_schedule: string;
   execution_timezone: string;
+  exchange: string;
+  freshness_sla_minutes: number;
+  upstream_dependencies: string[];
+  alert_owner: string;
   desired_status: "running" | "stopped";
   intended_status: "running" | "stopped";
   actual_status: "running" | "stopped" | "unknown";
@@ -515,6 +534,8 @@ export type PipelineScheduleStatusRow = {
   last_run_status: string | null;
   last_run_at: string | null;
   last_successful_run_at: string | null;
+  freshness_status: "fresh" | "stale" | "unknown" | "not_applicable";
+  drift_reasons: string[];
   notes: string | null;
 };
 

@@ -39,6 +39,8 @@ class FakeExecutionStore:
         end_date: date,
         source: str = "upstox",
         exchange: str = "NSE",
+        *,
+        valid_only: bool = False,
     ) -> dict[str, set[date]]:
         return {key: {start_date} for key in instrument_keys}
 

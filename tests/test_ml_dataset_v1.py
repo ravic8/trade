@@ -88,6 +88,26 @@ def test_ml_dataset_pipeline_writes_artifacts(tmp_path: Path, monkeypatch) -> No
         assert data_dir in path.parents
 
 
+def test_ml_dataset_pipeline_accepts_explicit_stock_coverage_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _write_pipeline_inputs(data_dir)
+    default_coverage = (
+        data_dir / "processed/validation/daily_pipeline_stock_coverage.parquet"
+    )
+    explicit_coverage = tmp_path / "validation-output" / "coverage.parquet"
+    explicit_coverage.parent.mkdir(parents=True)
+    default_coverage.replace(explicit_coverage)
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+
+    result = run_ml_dataset_v1_pipeline(stock_coverage_path=explicit_coverage)
+
+    assert result.status == "pass"
+    assert result.metrics["trainable_row_count"] == 2
+
+
 def _ohlcv(days: int = 3) -> pd.DataFrame:
     rows = []
     for symbol, key in [("AAA", "NSE_EQ|AAA"), ("BBB", "NSE_EQ|BBB")]:

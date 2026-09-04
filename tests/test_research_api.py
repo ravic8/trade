@@ -121,6 +121,8 @@ class FakeCoverageStore:
         end_date: date,
         source: str = "upstox",
         exchange: str = "NSE",
+        *,
+        valid_only: bool = False,
     ) -> dict:
         if source == "yfinance":
             assert exchange == "US"
@@ -345,6 +347,7 @@ class FakeCoverageStore:
         universe_id: str | None = None,
         coverage_status: str | None = None,
         expected_rows_per_symbol: int = 0,
+        expected_session_dates: list[date] | tuple[date, ...] | None = None,
         limit: int = 50,
         offset: int = 0,
         sort: str = "symbol",
@@ -357,6 +360,11 @@ class FakeCoverageStore:
         assert universe_id is None
         assert coverage_status is None
         assert expected_rows_per_symbol == 3
+        assert expected_session_dates == [
+            date(2026, 1, 1),
+            date(2026, 1, 2),
+            date(2026, 1, 6),
+        ]
         assert limit == 25
         assert offset == 0
         assert sort == "-coverage_pct"
@@ -373,6 +381,10 @@ class FakeCoverageStore:
                     "first_stored_date": date(2026, 1, 1),
                     "latest_stored_date": date(2026, 1, 2),
                     "stored_rows": 2,
+                    "expected_eligible_sessions": 3,
+                    "valid_stored_eligible_sessions": 2,
+                    "invalid_stored_eligible_sessions": 0,
+                    "coverage_ratio": 2 / 3,
                     "expected_rows": 3,
                     "coverage_pct": 2 / 3,
                     "missing_rows": 1,
@@ -388,6 +400,10 @@ class FakeCoverageStore:
                 "symbols_empty": 0,
                 "expected_rows": 3,
                 "stored_rows": 2,
+                "expected_eligible_sessions": 3,
+                "valid_stored_eligible_sessions": 2,
+                "invalid_stored_eligible_sessions": 0,
+                "coverage_ratio": 2 / 3,
                 "missing_rows": 1,
                 "estimated_provider_calls_for_missing": 1,
             },
@@ -888,6 +904,12 @@ def test_data_coverage_preview_endpoint(monkeypatch) -> None:
     assert payload["expected_rows"] == 6
     assert payload["already_present_rows"] == 3
     assert payload["missing_rows"] == 3
+    assert payload["expected_eligible_sessions"] == 6
+    assert payload["valid_stored_eligible_sessions"] == 3
+    assert payload["invalid_stored_eligible_sessions"] == 0
+    assert payload["missing_eligible_sessions"] == 3
+    assert payload["coverage_ratio"] == 0.5
+    assert payload["coverage"][0]["expected_eligible_sessions"] == 3
     assert payload["estimated_provider_calls"] == 3
     assert payload["tasks"][0]["fetch_start"] == "2026-01-06"
 
@@ -1506,6 +1528,14 @@ def test_data_schedule_status_exposes_actual_state_and_origin_drift(
     from trade_research.dagster.status import DagsterScheduleStatus
 
     monkeypatch.setattr(
+        "trade_research.api.app.get_settings",
+        lambda: Settings(
+            _env_file=None,
+            yfinance_daily_enabled=True,
+            yfinance_nse_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(
         "trade_research.api.app.read_dagster_schedule_statuses",
         lambda *_args, **_kwargs: {
             "yfinance_daily_work_worker_schedule": DagsterScheduleStatus(
@@ -1535,6 +1565,12 @@ def test_data_schedule_status_exposes_actual_state_and_origin_drift(
     assert worker["status_drift"] is True
     assert worker["origin_health"] == "stale"
     assert worker["last_run_status"] == "failure"
+    assert worker["freshness_status"] == "stale"
+    assert worker["drift_reasons"] == ["status_or_origin", "freshness_sla"]
+    assert worker["exchange"] == "MULTI"
+    assert worker["freshness_sla_minutes"] == 15
+    assert worker["alert_owner"] == "market-data"
+    assert worker["upstream_dependencies"] == ["yfinance_daily_work_planner"]
 
 
 def test_data_pipeline_run_detail_endpoint(monkeypatch) -> None:
@@ -1660,14 +1696,21 @@ def test_data_pipeline_run_detail_returns_404(monkeypatch) -> None:
 
 
 def test_create_data_pipeline_request_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
-
-    def fake_run_daily_ohlcv_request(*args, **kwargs):
-        return SimpleNamespace(run_id="run-1")
+    class FakeWorkflowStore:
+        def submit(self, **kwargs):
+            assert kwargs["workflow_type"] == "upstox_daily_ohlcv"
+            assert kwargs["idempotency_key"] == "request-123"
+            assert kwargs["requested_by"] == "user@example.com"
+            assert kwargs["request_payload"]["symbols"] == ["AAA"]
+            now = datetime(2026, 9, 4, tzinfo=UTC)
+            return SimpleNamespace(
+                workflow_id="workflow-1",
+                status="queued",
+                created_at=now,
+            ), True
 
     monkeypatch.setattr(
-        "trade_research.api.app.run_daily_ohlcv_request",
-        fake_run_daily_ohlcv_request,
+        "trade_research.api.app._workflow_store", lambda: FakeWorkflowStore()
     )
 
     with TestClient(app) as client:
@@ -1684,12 +1727,20 @@ def test_create_data_pipeline_request_endpoint(monkeypatch) -> None:
                 "steps": ["fetch_ohlcv", "validate_ohlcv"],
                 "mode": "incremental_missing_only",
             },
+            headers={
+                "X-Idempotency-Key": "request-123",
+                "X-Actor-ID": "user@example.com",
+            },
         )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["run"]["id"] == "run-1"
-    assert payload["fetch_coverage"][0]["status"] == "fetched"
+    assert payload == {
+        "workflow_id": "workflow-1",
+        "status": "queued",
+        "created": True,
+        "status_url": "/api/data/workflow-requests/workflow-1",
+    }
 
 
 def test_create_data_pipeline_request_rejects_partial_steps(monkeypatch) -> None:
@@ -1713,6 +1764,36 @@ def test_create_data_pipeline_request_rejects_partial_steps(monkeypatch) -> None
 
     assert response.status_code == 400
     assert "fetch_ohlcv and validate_ohlcv" in response.json()["detail"]
+
+
+def test_data_pipeline_workflow_status_endpoint(monkeypatch) -> None:
+    now = datetime(2026, 9, 4, tzinfo=UTC)
+
+    class FakeWorkflowStore:
+        def get(self, workflow_id: str):
+            assert workflow_id == "workflow-1"
+            return SimpleNamespace(
+                workflow_id=workflow_id,
+                workflow_type="upstox_daily_ohlcv",
+                status="running",
+                requested_by="user@example.com",
+                dagster_run_id="dagster-1",
+                result_run_id=None,
+                error_message=None,
+                created_at=now,
+                started_at=now,
+                completed_at=None,
+                updated_at=now,
+            )
+
+    monkeypatch.setattr(
+        "trade_research.api.app._workflow_store", lambda: FakeWorkflowStore()
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/data/workflow-requests/workflow-1")
+
+    assert response.status_code == 200
+    assert response.json()["dagster_run_id"] == "dagster-1"
 
 
 def test_research_progress_endpoint() -> None:

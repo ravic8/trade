@@ -238,17 +238,17 @@ alongside the durable planner/worker path and should be consolidated in Phase 3.
 
 | Page | Backend | Current behavior |
 |---|---|---|
-| Dashboard | `/api/market/status`, `/api/opportunities/daily` | Market status uses PostgreSQL, then synthetic fallback; Opportunities is strict PostgreSQL |
-| Data | `/api/data/*` | Operational rows are PostgreSQL; schedule status is configured intent, not Dagster actual state |
+| Dashboard | `/api/market/status`, `/api/opportunities/daily` | Production market status and Opportunities are strict PostgreSQL; demo fallback is local-development only |
+| Data | `/api/data/*` | Operational rows are PostgreSQL; schedule status joins the checked-in desired manifest to read-only Dagster actual state and reports freshness/drift |
 | Opportunities | `/api/opportunities/daily` | Strict PostgreSQL yfinance Opportunity targets; no mock fallback |
-| Research chat | `/api/chat/*`, `/api/research/notes` | Chat foundation is real; research notes are hard-coded |
+| Research chat | `/api/chat/*`, `/api/research/notes` | Chat foundation is real; hard-coded research notes are local-development only and production returns an empty collection |
 | Research Progress | `/api/research/progress` | Reads local generated artifacts |
 | Factors | `/api/research/factors/*` | Reads local JSON/CSV artifacts |
 | Models | `/api/research/ml/*` | Reads local JSON/Parquet artifacts and may compute views from them |
-| Jobs | `/api/jobs/latest` | Uses PostgreSQL provider runs, then synthetic fallback |
+| Jobs | `/api/jobs/latest` | Production uses PostgreSQL provider runs and returns an empty collection when none exist; demo fallback is local-development only |
 | Provider Settings | `/api/admin/provider-credentials/upstox/*` | Reads/writes encrypted Upstox credential state with environment fallback |
-| Screeners | `/api/screeners/intraday-range/latest` | Hard-coded response |
-| Symbol | `/api/symbols/{ticker}/candles`, research notes | PostgreSQL candles then synthetic fallback; notes are hard-coded |
+| Screeners | `/api/screeners/intraday-range/latest` | Production fails with `503` until an authoritative screener source is configured; hard-coded rows are local-development only |
+| Symbol | `/api/symbols/{ticker}/candles`, research notes | Production candles are strict PostgreSQL with explicit `404`/`503` states; demo candles and notes are local-development only |
 
 The frontend also supplies fallback objects for many non-strict requests. Only
 the Opportunities client currently uses strict fetch behavior.
@@ -257,17 +257,17 @@ Detailed evidence is in `docs/phase0_page_data_source_inventory.md`.
 
 ## Production mutation surfaces
 
-The current repository still permits production mutation outside Dagster:
+The Phase 1 repository changes classify every Typer command and reject normal
+mutating commands when `APP_ENV=production`. `POST /api/data/pipeline-requests`
+now creates an idempotent durable workflow request and returns `202`; the API
+process no longer performs provider fetching inline. A stopped-by-default
+Dagster sensor dispatches those requests through package services and records
+workflow, Dagster-run, and ingestion-run lineage.
 
-- mutating Typer CLI commands;
-- `POST /api/data/pipeline-requests`, which runs an Upstox fetch/validation
-  request inline in the API process;
-- Upstox credential save/test admin routes;
-- deployment and database administration scripts.
-
-Phase 1 will add a production mutation guard and remove inline provider
-execution from normal application operation. Phase 0 records these paths but
-does not change behavior.
+Administrative credential routes, deployment tooling, and database
+administration remain separately controlled mutation surfaces. The new CLI
+and workflow boundary is repository-verified but is not production evidence
+until CI, backup, deployment, and observe-only checks complete.
 
 See `docs/phase0_cli_and_mutation_inventory.md`.
 
@@ -299,11 +299,12 @@ duplicate constrained universe-member values are sent in a single
 `ON CONFLICT DO UPDATE` statement. The same error appears in some yfinance work
 attempts and requires input deduplication before upsert.
 
-### P0 — Production pages can present synthetic data
+### Resolved in the Phase 1 repository — production pages presented synthetic data
 
 Dashboard market status, Jobs, Symbol candles, Screeners, and Research notes
-can return fabricated/fallback values. Production must fail closed in later
-phases.
+now fail closed or return explicit empty collections in production. Their demo
+data remains available only in local development. Deployment verification is
+still required before this P0 can be closed against the production host.
 
 ### P0 — NSE provider authority can be internally inconsistent
 
@@ -373,10 +374,19 @@ execution.
 
 ## Canonical companion documents
 
+- `docs/v1_spec.md` (governing V1 target contract; not current-state evidence)
 - `docs/phase0_repository_inventory.md`
 - `docs/phase0_page_data_source_inventory.md`
 - `docs/phase0_cli_and_mutation_inventory.md`
 - `docs/phase0_production_audit.md`
 - `docs/phase0_exit_report.md`
+- `docs/phase1_pipeline_outcome_contract.md`
+- `docs/phase1_data_contract_registry.md`
+- `docs/phase1_contract_evaluator.md`
+- `docs/phase1_contract_publication_gates.md`
+- `docs/phase1_coverage_semantics.md`
+- `docs/phase1_upsert_and_dependency_hardening.md`
+- `docs/phase1_validation_result_contract.md`
+- `docs/phase1_exit_checklist.md`
 - `docs/stabilization_validation_workflow_implementation_plan.md`
 - `docs/research_platform_milestone_execution_plan.md`

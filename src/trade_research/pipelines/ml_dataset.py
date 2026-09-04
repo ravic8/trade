@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from trade_research.config import get_settings
 from trade_research.modeling.ml_dataset_v1 import (
     MLDatasetV1Config,
@@ -17,6 +19,7 @@ def run_ml_dataset_v1_pipeline(
     features_name: str = "processed/features/daily_v1_ohlcv_technical",
     targets_name: str = "processed/targets/daily_v1_forward_returns",
     stock_coverage_name: str = "processed/validation/daily_pipeline_stock_coverage",
+    stock_coverage_path: Path | None = None,
     output_name: str = "processed/ml/ml_dataset_v1",
     summary_output: Path | None = None,
     exclusions_output: Path | None = None,
@@ -36,11 +39,16 @@ def run_ml_dataset_v1_pipeline(
         leakage_checks_output or output_dir / "ml_dataset_v1_leakage_checks.json"
     )
 
+    stock_coverage = (
+        pd.read_parquet(stock_coverage_path)
+        if stock_coverage_path is not None
+        else store.read_frame(stock_coverage_name)
+    )
     build = build_ml_dataset_v1(
         ohlcv=store.read_frame(ohlcv_name),
         features=store.read_frame(features_name),
         targets=store.read_frame(targets_name),
-        stock_coverage=store.read_frame(stock_coverage_name),
+        stock_coverage=stock_coverage,
         config=config,
     )
 

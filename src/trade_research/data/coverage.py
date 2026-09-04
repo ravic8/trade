@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Protocol
+from typing import Any, Protocol, TypedDict
 
 from trade_research.config import get_settings
 from trade_research.exchange_sessions import (
-    expected_dates_for_instrument,
     resolve_expected_session_dates,
 )
 from trade_research.market_calendar import (
@@ -15,6 +14,7 @@ from trade_research.market_calendar import (
     expected_trading_dates,
     validated_exchange_calendar_years,
 )
+from trade_research.validation.coverage import evaluate_eligible_session_coverage
 
 
 class DailyCoverageStore(Protocol):
@@ -33,6 +33,8 @@ class DailyCoverageStore(Protocol):
         end_date: date,
         source: str = "upstox",
         exchange: str = "NSE",
+        *,
+        valid_only: bool = False,
     ) -> dict[str, set[date]]:
         ...
 
@@ -62,6 +64,20 @@ class CoveragePreviewInput:
     interval: int
     start_date: date
     end_date: date
+
+
+class ResolvedCoverageInstrument(TypedDict):
+    symbol: str
+    trading_symbol: str
+    instrument_key: str
+    name: Any
+    isin: Any
+
+
+class CoverageInstrumentResolution(TypedDict):
+    resolved: list[ResolvedCoverageInstrument]
+    unresolved_symbols: set[str]
+    ambiguous_symbols: set[str]
 
 
 def build_daily_coverage_preview(
@@ -106,6 +122,17 @@ def build_daily_coverage_preview(
         calendar_source = (
             "stored_exchange_holidays" if holidays is not None else "weekdays_only_fallback"
         )
+    provider_eligible_dates = _provider_eligible_dates(
+        store,
+        expected_dates,
+        provider=request.provider,
+        exchange=request.exchange,
+        grace_minutes=(
+            settings.yfinance_provider_grace_minutes
+            if request.provider.lower() == "yfinance"
+            else 0
+        ),
+    )
     stored_dates = store.daily_ohlcv_dates_by_instrument(
         instrument_keys,
         request.start_date,
@@ -113,44 +140,55 @@ def build_daily_coverage_preview(
         source=request.provider,
         exchange=request.exchange,
     )
-    first_date_loader = getattr(
-        store,
-        "first_daily_ohlcv_dates_by_instrument",
-        None,
-    )
-    first_trade_dates = (
-        first_date_loader(
-            instrument_keys,
-            source=request.provider,
-            exchange=request.exchange,
-        )
-        if first_date_loader is not None
-        else {
-            key: min(values)
-            for key, values in stored_dates.items()
-            if values
-        }
+    valid_stored_dates = store.daily_ohlcv_dates_by_instrument(
+        instrument_keys,
+        request.start_date,
+        request.end_date,
+        source=request.provider,
+        exchange=request.exchange,
+        valid_only=True,
     )
 
     tasks = []
+    coverage_evidence = []
+    total_requested_sessions = 0
     total_expected = 0
     total_present = 0
+    total_invalid = 0
     total_missing = 0
+    total_explained_missing = 0
+    total_actionable_missing = 0
+    total_off_calendar = 0
+    total_exclusions: defaultdict[str, int] = defaultdict(int)
     for item in resolved:
         key = item["instrument_key"]
-        instrument_expected_dates = expected_dates_for_instrument(
-            expected_dates,
-            coverage_start=request.start_date,
-            first_trade_date=first_trade_dates.get(key),
+        coverage = evaluate_eligible_session_coverage(
+            requested_start=request.start_date,
+            requested_end=request.end_date,
+            exchange_session_dates=expected_dates,
+            provider_eligible_session_dates=provider_eligible_dates,
+            stored_dates=tuple(stored_dates.get(key, set())),
+            valid_stored_dates=tuple(valid_stored_dates.get(key, set())),
         )
-        instrument_expected_set = set(instrument_expected_dates)
-        present_dates = stored_dates.get(key, set())
-        present_expected = instrument_expected_set.intersection(present_dates)
-        missing_dates = sorted(instrument_expected_set.difference(present_dates))
-        total_expected += len(instrument_expected_dates)
-        total_present += len(present_expected)
-        total_missing += len(missing_dates)
-        for window_start, window_end, dates in _contiguous_windows(missing_dates):
+        evidence = {
+            "symbol": item["symbol"],
+            "instrument_key": key,
+            **coverage.as_evidence(),
+        }
+        coverage_evidence.append(evidence)
+        total_requested_sessions += coverage.requested_exchange_sessions
+        total_expected += coverage.expected_eligible_sessions
+        total_present += coverage.valid_stored_eligible_sessions
+        total_invalid += coverage.invalid_stored_eligible_sessions
+        total_missing += coverage.missing_eligible_sessions
+        total_explained_missing += coverage.explained_missing_sessions
+        total_actionable_missing += coverage.actionable_missing_sessions
+        total_off_calendar += len(coverage.off_calendar_stored_dates)
+        for reason, count in coverage.exclusion_counts.items():
+            total_exclusions[reason] += count
+        for window_start, window_end, dates in _contiguous_windows(
+            list(coverage.actionable_missing_dates)
+        ):
             tasks.append(
                 {
                     "symbol": item["symbol"],
@@ -191,6 +229,17 @@ def build_daily_coverage_preview(
         "symbols_resolved": len(resolved),
         "unresolved_symbols": sorted(resolution["unresolved_symbols"]),
         "ambiguous_symbols": sorted(resolution["ambiguous_symbols"]),
+        "requested_exchange_sessions": total_requested_sessions,
+        "expected_eligible_sessions": total_expected,
+        "valid_stored_eligible_sessions": total_present,
+        "invalid_stored_eligible_sessions": total_invalid,
+        "missing_eligible_sessions": total_missing,
+        "explained_missing_sessions": total_explained_missing,
+        "actionable_missing_sessions": total_actionable_missing,
+        "off_calendar_stored_sessions": total_off_calendar,
+        "coverage_ratio": total_present / total_expected if total_expected else 0.0,
+        "eligibility_exclusion_counts": dict(sorted(total_exclusions.items())),
+        "coverage": coverage_evidence,
         "expected_rows": total_expected,
         "already_present_rows": total_present,
         "missing_rows": total_missing,
@@ -225,7 +274,7 @@ def _normalize_symbols(symbols: tuple[str, ...]) -> list[str]:
 def _resolve_unique_instruments(
     requested_symbols: list[str],
     instruments: list[dict],
-) -> dict[str, list[dict] | set[str]]:
+) -> CoverageInstrumentResolution:
     by_symbol: dict[str, list[dict]] = defaultdict(list)
     for row in instruments:
         trading_symbol = str(row.get("trading_symbol") or "").strip().upper()
@@ -233,7 +282,7 @@ def _resolve_unique_instruments(
         for alias in {trading_symbol, yahoo_symbol} - {""}:
             by_symbol[alias].append(row)
 
-    resolved = []
+    resolved: list[ResolvedCoverageInstrument] = []
     unresolved = set()
     ambiguous = set()
     for symbol in requested_symbols:
@@ -285,6 +334,33 @@ def _stored_holidays(
         early_close_dates=frozenset(early_close_dates),
         source_url=source_url,
     )
+
+
+def _provider_eligible_dates(
+    store: DailyCoverageStore,
+    expected_dates: list[date],
+    *,
+    provider: str,
+    exchange: str,
+    grace_minutes: int,
+) -> list[date]:
+    if not expected_dates:
+        return []
+    resolver = getattr(store, "latest_provider_eligible_exchange_session", None)
+    if resolver is None:
+        return expected_dates
+    latest = resolver(
+        exchange,
+        provider_grace_minutes=grace_minutes,
+    )
+    if latest is None:
+        return []
+    latest_date = latest.get("session_date")
+    if not isinstance(latest_date, date):
+        raise ValueError(
+            f"Latest provider-eligible {provider} session has no valid session_date."
+        )
+    return [value for value in expected_dates if value <= latest_date]
 
 
 def _contiguous_windows(missing_dates: list[date]) -> list[tuple[date, date, list[date]]]:

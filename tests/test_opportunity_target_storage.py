@@ -256,6 +256,49 @@ def test_opportunity_page_defaults_to_latest_session_with_sufficient_coverage(tm
     assert explicit_partial["coverage_status"] == "partial"
 
 
+def test_opportunity_coverage_denominator_is_exchange_specific(tmp_path) -> None:
+    store = TimescaleStore(f"sqlite:///{tmp_path / 'opportunities.sqlite'}")
+    metadata.create_all(store.engine)
+    targets = _targets()
+    tsx = targets[targets["symbol"] == "AAA"].copy()
+    tsx["exchange"] = "TSX"
+    tsx["symbol"] = "SHOP.TO"
+    tsx["instrument_key"] = "YF|SHOP.TO"
+    store.upsert_daily_opportunity_targets(pd.concat([targets, tsx], ignore_index=True))
+
+    nse = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+    )
+    tsx_page = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="TSX",
+        source="yfinance",
+    )
+
+    assert nse["expected_instruments"] == 2
+    assert tsx_page["expected_instruments"] == 1
+    assert tsx_page["coverage_ratio"] == 1.0
+
+
+def test_opportunity_page_has_stable_empty_state(tmp_path) -> None:
+    store = TimescaleStore(f"sqlite:///{tmp_path / 'opportunities.sqlite'}")
+    metadata.create_all(store.engine)
+
+    page = store.opportunity_targets_page(
+        target_version=DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
+        exchange="NSE",
+        source="yfinance",
+    )
+
+    assert page["selection_mode"] == "automatic"
+    assert page["session_exists"] is False
+    assert page["coverage_status"] == "unavailable"
+    assert page["rows"] == []
+    assert page["distributions"] == {}
+
+
 def test_opportunity_histograms_keep_outliers_without_flattening_the_scale(tmp_path) -> None:
     store = TimescaleStore(f"sqlite:///{tmp_path / 'opportunities.sqlite'}")
     metadata.create_all(store.engine)

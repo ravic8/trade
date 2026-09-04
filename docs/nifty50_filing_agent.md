@@ -211,7 +211,7 @@ coverage gate reports it.
 
 The feature is demo-ready when:
 
-- migration `20260726_0012` is at head;
+- Lens migration `20260726_0012` is present and the repository is at the current Alembic head;
 - the Nifty 50 snapshot contains exactly 50 unique symbols;
 - acquisition/import reports enumerate successes and failures;
 - the coverage endpoint reports represented and eligible companies;

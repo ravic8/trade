@@ -122,3 +122,12 @@ def test_bigquery_export_job_and_schedule_are_registered_but_stopped() -> None:
         schedule.name != "bigquery_tsx_ohlcv_canary_schedule"
         for schedule in definitions.defs.schedules
     )
+
+
+def test_api_workflow_requests_have_one_stopped_by_default_dagster_dispatcher() -> None:
+    assert definitions.data_pipeline_request_job.name == "data_pipeline_request_job"
+    assert definitions.data_pipeline_request_sensor.name == "data_pipeline_request_sensor"
+    assert (
+        definitions.data_pipeline_request_sensor.default_status
+        == dagster.DefaultSensorStatus.STOPPED
+    )

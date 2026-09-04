@@ -59,6 +59,100 @@ This milestone does not include live order execution or autonomous trading.
 | Production fallbacks | Fail closed; no mock or local-artifact truth |
 | BigQuery | Optional outbound reporting replica, not authoritative |
 
+### 2.1 Repository complexity and simplification strategy
+
+The platform's product scope justifies a substantial repository, but the
+current repository is heavier than the product requires. The main risk is not
+file count or a single large process. It is **accidental complexity** created
+by multiple generations of architecture remaining active at the same time:
+
+- yfinance and Upstox paths overlap;
+- direct ingestion and durable queue ingestion coexist;
+- CLI commands, API handlers, and Dagster can initiate the same class of work;
+- PostgreSQL and local Parquet/JSON artifacts compete as application truth;
+- real API results coexist with synthetic frontend and backend fallbacks;
+- operational ingestion, analytical materialization, and research experiments
+  share broad modules and settings;
+- compatibility paths are added faster than superseded paths are retired.
+
+This milestone therefore treats simplification as a continuous delivery
+constraint, not as a final cosmetic cleanup. New infrastructure or workflow
+features must reduce or preserve the number of authoritative paths; they must
+not create another permanent parallel path.
+
+The target is a **modular monolith**, not an immediate microservice rewrite:
+
+```text
+platform/
+  orchestration
+  validation
+  operations
+
+data/
+  ingestion
+  universe
+  market_data
+  contracts
+
+research/
+  features
+  targets
+  datasets
+  experiments
+  backtests
+
+product/
+  api
+  web
+
+infrastructure/
+  migrations
+  deployment
+  backup
+  monitoring
+```
+
+These are ownership boundaries. They may remain in one deployable repository
+and one application image while their contracts and dependencies become
+explicit. A service may be extracted later only when independent scaling,
+security, availability, or ownership requirements justify the operational
+cost.
+
+The simplification rules are mandatory:
+
+1. **One production authority per domain.** A domain has one documented write
+   path and one authoritative store.
+2. **Dagster owns normal production mutation.** UI/API requests create
+   versioned work for Dagster; they do not perform long-running provider or
+   research work inline.
+3. **yfinance becomes the standard daily-equity provider.** Upstox remains
+   only as an explicitly bounded comparison source until its retirement gate
+   passes.
+4. **PostgreSQL remains operational truth.** ClickHouse is analytical truth and
+   object storage holds immutable artifacts; neither silently replaces the
+   control plane.
+5. **Artifacts are registered and versioned.** Local `latest.json`, CSV, or
+   Parquet files cannot serve as production application truth.
+6. **Production fails closed.** Synthetic and mock fallbacks are test/demo
+   fixtures, never successful production responses.
+7. **Every compatibility path has a removal record.** It must name the old
+   path, new path, remaining consumers, owner, migration evidence, and removal
+   phase.
+8. **Every phase pays a complexity budget.** A phase that introduces a new
+   store, adapter, dispatcher, or workflow path must identify what it
+   consolidates or what later gate removes the temporary duplication.
+
+Simplification is distributed across the milestone:
+
+| Phase | Required complexity reduction |
+|---|---|
+| 1 | Establish contracts, mutation guards, schedule authority, and a verified inventory of duplicate paths. |
+| 2 | Add ClickHouse/object storage behind explicit ownership boundaries without changing PostgreSQL authority. |
+| 3 | Cut daily equities to yfinance and retire direct/legacy scheduled ingestion paths after reconciliation. |
+| 4–6 | Replace local feature, dataset, model, and result artifacts with registries and versioned durable artifacts. |
+| 7 | Provide one UI/API-to-Dagster workflow submission path rather than workflow-specific execution endpoints. |
+| 8 | Delete compatibility paths, extract oversized modules, archive obsolete documentation, and prove no active consumer remains. |
+
 ## 3. Phase controls
 
 ### 3.1 Phase status
@@ -99,6 +193,8 @@ Each phase produces:
 - Every production activation has a rollback threshold and owner.
 - A downstream phase cannot bypass an upstream validation failure.
 - Large monoliths are split incrementally, not through a single rewrite.
+- No new parallel execution or storage path is accepted without an authority
+  decision and a dated retirement plan for temporary duplication.
 
 ## 4. Phase dependency map
 
@@ -1661,7 +1757,9 @@ Remove or disable:
 
 - production local-artifact readers;
 - production feature/model mutation CLI paths;
+- direct provider ingestion paths superseded by durable Dagster work;
 - retired Upstox scheduled fetch paths after observation approval;
+- workflow-specific execution endpoints superseded by the generic dispatcher;
 - stale feature flags;
 - unused mock fallbacks;
 - obsolete documentation and runbooks.
@@ -1679,6 +1777,10 @@ Extract domains from:
 
 Keep compatibility facades while callers migrate. Remove facades only after
 contract tests prove full cutover.
+
+Align the extracted modules with the ownership boundaries in section 2.1.
+Prevent reverse dependencies from `data` or `research` into HTTP/UI modules,
+and keep infrastructure adapters behind domain-facing interfaces.
 
 ### WP8.3 — Load and resilience testing
 
@@ -1767,6 +1869,8 @@ Every removal is isolated and reversible.
 
 - no production local-artifact reads;
 - no obsolete scheduled provider fetch;
+- no duplicate production execution authority for ingestion, features,
+  datasets, models, or workflows;
 - no undocumented service or data owner;
 - restore completes successfully;
 - load stays within resource limits;
@@ -1787,11 +1891,16 @@ Every removal is isolated and reversible.
 8. Serious-research-readiness decision
 9. Remaining-risk register
 10. Paper-trading recommendation
+11. Repository simplification and retired-path report
 
 ## 8.8 Exit criteria
 
 - Normal production operation has no mutation CLI dependency.
 - Factors and Models have no local-artifact dependency.
+- Daily-equity ingestion has one production provider authority and one normal
+  Dagster execution path.
+- Every retained compatibility path has an owner, consumer evidence, and a
+  dated removal decision.
 - Every authoritative store has a tested restore procedure.
 - Critical load and failure scenarios pass.
 - No unresolved critical security issue remains.
@@ -1852,6 +1961,11 @@ The milestone is complete only when all conditions below pass.
 - CI includes relevant integration, migration, frontend, browser, and security
   gates.
 - Backups and restores are proven.
+- Each domain has one documented production authority and normal write path.
+- New stores and execution paths have explicit ownership boundaries and do not
+  leave ungoverned permanent duplication.
+- Obsolete provider, CLI, direct-ingestion, mock-fallback, and local-artifact
+  paths are removed after consumer-proofed cutover.
 
 # 6. Recommended pull-request sequence
 
@@ -1888,7 +2002,7 @@ Maintain this table in the document or a linked tracking issue:
 | Phase | Status | Owner | Started | Target | Exit evidence |
 |---|---|---|---|---|---|
 | Phase 0 | not_started |  |  |  |  |
-| Phase 1 | not_started |  |  |  |  |
+| Phase 1 | repository_ready; production_verification_pending | trade-research-platform | 2026-09-04 |  | `docs/phase1_exit_checklist.md` |
 | Phase 2 | not_started |  |  |  |  |
 | Phase 3 | not_started |  |  |  |  |
 | Phase 4 | not_started |  |  |  |  |

@@ -21,6 +21,7 @@ import type {
   DataInstrumentSearchRow,
   DataPipelineHealthResponse,
   DataPipelineRequest,
+  DataPipelineSubmission,
   DataPipelineRunDetail,
   DataPipelineRunSummary,
   DataUniverseMemberRow,
@@ -68,15 +69,21 @@ import type {
   ScreenerResult,
 } from "./types";
 
-async function fetchJson<T>(path: string, fallback: T): Promise<T> {
+export async function fetchJson<T>(
+  path: string,
+  fallback: T,
+  allowFallback = import.meta.env.DEV,
+): Promise<T> {
   try {
     const response = await fetch(path);
     if (!response.ok) {
-      return fallback;
+      if (allowFallback) return fallback;
+      throw new Error(`Request failed: ${response.status}`);
     }
     return (await response.json()) as T;
-  } catch {
-    return fallback;
+  } catch (error) {
+    if (allowFallback) return fallback;
+    throw error;
   }
 }
 
@@ -414,7 +421,7 @@ export function previewDataCoverage(
 
 export function createDataPipelineRequest(
   payload: DataPipelineRequest,
-): Promise<DataPipelineRunDetail> {
+): Promise<DataPipelineSubmission> {
   return strictFetchJson("/api/data/pipeline-requests", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

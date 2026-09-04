@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from trade_research.config import get_settings
+from trade_research.operations.tables import workflow_requests_table as workflow_requests_table
 from trade_research.storage.timescale import metadata
 
 config = context.config
