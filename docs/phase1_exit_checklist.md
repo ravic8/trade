@@ -25,7 +25,7 @@ host without changing provider authority.
 | Durable API-to-Dagster mutation boundary | passed locally | `202` workflow submission, idempotent store, stopped sensor, lineage tests |
 | Desired schedule manifest and drift | passed locally | required metadata, read-only actual-state join, stale/drift tests |
 | Opportunities regressions | passed locally | storage/API tests plus desktop and Pixel 5 Playwright smoke tests |
-| Python suite | passed locally | 594 passed, 2 service-gated skips |
+| Python suite | passed locally | 595 passed, 2 service-gated skips |
 | Branch-aware coverage | passed locally | 72%, threshold 70% |
 | Ruff and mypy ratchet | passed locally | exact CI commands |
 | Web unit/lint/build/browser | passed locally | Vitest, ESLint, TypeScript/Vite, Chromium desktop/mobile |
