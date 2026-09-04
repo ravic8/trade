@@ -53,6 +53,35 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://trade:trade@localhost:5432/trade_research"
     redis_url: str = "redis://localhost:6379/0"
 
+    # Phase 2 research storage is additive and remains disabled until its
+    # production canary and restore evidence have been accepted.
+    clickhouse_enabled: bool = False
+    clickhouse_write_enabled: bool = False
+    clickhouse_host: str = "localhost"
+    clickhouse_port: int = Field(default=8123, ge=1, le=65535)
+    clickhouse_database: str = Field(
+        default="research",
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    clickhouse_username: str = "api_reader"
+    clickhouse_password: str | None = None
+    clickhouse_secure: bool = False
+    clickhouse_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    clickhouse_query_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
+    object_store_enabled: bool = False
+    object_store_write_enabled: bool = False
+    object_store_endpoint_url: str | None = None
+    object_store_region: str = "us-east-1"
+    object_store_access_key_id: str | None = None
+    object_store_secret_access_key: str | None = None
+    object_store_raw_bucket: str = "trade-raw"
+    object_store_datasets_bucket: str = "trade-datasets"
+    object_store_models_bucket: str = "trade-models"
+    object_store_experiments_bucket: str = "trade-experiments"
+    object_store_exports_bucket: str = "trade-exports"
+    object_store_server_side_encryption: Literal["AES256", "aws:kms"] = "AES256"
+
     filing_enabled: bool = True
     filing_default_workspace_id: str = "default"
     filing_manifest_path: Path = Path("data/filings/nse/INFY/manifest.json")
@@ -258,6 +287,21 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_yfinance_foundation_settings(self) -> Self:
+        if self.clickhouse_write_enabled and not self.clickhouse_enabled:
+            raise ValueError("ClickHouse writes require CLICKHOUSE_ENABLED=true")
+        if self.clickhouse_enabled and not self.clickhouse_password:
+            raise ValueError(
+                "CLICKHOUSE_PASSWORD is required when CLICKHOUSE_ENABLED=true"
+            )
+        if self.object_store_write_enabled and not self.object_store_enabled:
+            raise ValueError("Object-store writes require OBJECT_STORE_ENABLED=true")
+        if self.object_store_enabled and not (
+            self.object_store_access_key_id and self.object_store_secret_access_key
+        ):
+            raise ValueError(
+                "OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY are "
+                "required when OBJECT_STORE_ENABLED=true"
+            )
         if self.bigquery_enabled and not self.bigquery_project_id:
             raise ValueError("BIGQUERY_PROJECT_ID is required when BIGQUERY_ENABLED=true")
         if self.bigquery_dataset:

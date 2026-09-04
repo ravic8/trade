@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+required_variables="
+CLICKHOUSE_ADMIN_USER CLICKHOUSE_ADMIN_PASSWORD
+CLICKHOUSE_MIGRATION_USER CLICKHOUSE_MIGRATION_PASSWORD
+CLICKHOUSE_DAGSTER_USER CLICKHOUSE_DAGSTER_PASSWORD
+CLICKHOUSE_API_USER CLICKHOUSE_API_PASSWORD
+CLICKHOUSE_ANALYST_USER CLICKHOUSE_ANALYST_PASSWORD
+"
+for variable_name in $required_variables; do
+  eval "variable_value=\${$variable_name:-}"
+  if [ -z "$variable_value" ]; then
+    printf 'missing required ClickHouse bootstrap variable: %s\n' "$variable_name" >&2
+    exit 1
+  fi
+done
+
+client() {
+  clickhouse-client \
+    --host clickhouse \
+    --user "$CLICKHOUSE_ADMIN_USER" \
+    --password "$CLICKHOUSE_ADMIN_PASSWORD" \
+    "$@"
+}
+
+client --multiquery --query "
+CREATE DATABASE IF NOT EXISTS research;
+CREATE ROLE IF NOT EXISTS migration;
+CREATE ROLE IF NOT EXISTS dagster_writer;
+CREATE ROLE IF NOT EXISTS api_reader;
+CREATE ROLE IF NOT EXISTS analyst_reader;
+GRANT CREATE DATABASE ON *.* TO migration;
+GRANT ALL ON research.* TO migration;
+GRANT SELECT, INSERT ON research.* TO dagster_writer;
+GRANT SELECT ON research.* TO api_reader;
+GRANT SELECT ON research.* TO analyst_reader;
+"
+
+upsert_user() {
+  user_name="$1"
+  user_password="$2"
+  role_name="$3"
+  max_seconds="$4"
+  max_memory="$5"
+  readonly_value="$6"
+  client \
+    --param_user_name "$user_name" \
+    --param_user_password "$user_password" \
+    --param_role_name "$role_name" \
+    --param_max_seconds "$max_seconds" \
+    --param_max_memory "$max_memory" \
+    --param_readonly_value "$readonly_value" \
+    --multiquery \
+    --query "
+      CREATE USER IF NOT EXISTS {user_name:Identifier}
+        IDENTIFIED WITH sha256_password BY {user_password:String};
+      ALTER USER {user_name:Identifier}
+        IDENTIFIED WITH sha256_password BY {user_password:String}
+        SETTINGS
+          max_execution_time = {max_seconds:UInt64},
+          max_memory_usage = {max_memory:UInt64},
+          readonly = {readonly_value:UInt8};
+      GRANT {role_name:Identifier} TO {user_name:Identifier};
+      ALTER USER {user_name:Identifier} DEFAULT ROLE {role_name:Identifier};
+    "
+}
+
+upsert_user \
+  "$CLICKHOUSE_MIGRATION_USER" "$CLICKHOUSE_MIGRATION_PASSWORD" \
+  migration 120 1073741824 0
+upsert_user \
+  "$CLICKHOUSE_DAGSTER_USER" "$CLICKHOUSE_DAGSTER_PASSWORD" \
+  dagster_writer 60 1073741824 0
+upsert_user \
+  "$CLICKHOUSE_API_USER" "$CLICKHOUSE_API_PASSWORD" \
+  api_reader 15 268435456 1
+upsert_user \
+  "$CLICKHOUSE_ANALYST_USER" "$CLICKHOUSE_ANALYST_PASSWORD" \
+  analyst_reader 60 536870912 1
+
+printf 'ClickHouse research identities are reconciled.\n'

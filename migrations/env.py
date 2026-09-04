@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from trade_research.config import get_settings
+from trade_research.control_plane import tables as control_plane_tables
 from trade_research.operations.tables import workflow_requests_table as workflow_requests_table
 from trade_research.storage.timescale import metadata
 
@@ -17,6 +18,10 @@ if config.config_file_name is not None:
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = metadata
+
+# Import registration is intentional: the tables share the operational
+# metadata used by Alembic autogeneration.
+_control_plane_tables = control_plane_tables
 
 
 def include_object(

@@ -12,6 +12,23 @@ services:
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      CLICKHOUSE_ENABLED: "false"
+      CLICKHOUSE_WRITE_ENABLED: "false"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: research
+      CLICKHOUSE_USERNAME: api_reader
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_API_PASSWORD:-local-api-reader}
+      OBJECT_STORE_ENABLED: "false"
+      OBJECT_STORE_WRITE_ENABLED: "false"
+      OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_API_ACCESS_KEY_ID:-local-api-artifacts}
+      OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_API_SECRET_ACCESS_KEY:-local-api-artifacts-secret}
+      OBJECT_STORE_RAW_BUCKET: trade-raw
+      OBJECT_STORE_DATASETS_BUCKET: trade-datasets
+      OBJECT_STORE_MODELS_BUCKET: trade-models
+      OBJECT_STORE_EXPERIMENTS_BUCKET: trade-experiments
+      OBJECT_STORE_EXPORTS_BUCKET: trade-exports
       FILING_QUEUE_MODE: celery
       FILING_ARTIFACT_BACKEND: s3
       FILING_S3_ENDPOINT_URL: http://minio:9000
@@ -145,6 +162,23 @@ services:
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      CLICKHOUSE_ENABLED: "false"
+      CLICKHOUSE_WRITE_ENABLED: "false"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: research
+      CLICKHOUSE_USERNAME: dagster_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_DAGSTER_PASSWORD:-local-dagster-writer}
+      OBJECT_STORE_ENABLED: "false"
+      OBJECT_STORE_WRITE_ENABLED: "false"
+      OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-local-dagster-artifacts}
+      OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-local-dagster-artifacts-secret}
+      OBJECT_STORE_RAW_BUCKET: trade-raw
+      OBJECT_STORE_DATASETS_BUCKET: trade-datasets
+      OBJECT_STORE_MODELS_BUCKET: trade-models
+      OBJECT_STORE_EXPERIMENTS_BUCKET: trade-experiments
+      OBJECT_STORE_EXPORTS_BUCKET: trade-exports
       INGESTION_PROFILE: local
       UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
       DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
@@ -180,6 +214,23 @@ services:
       DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      CLICKHOUSE_ENABLED: "false"
+      CLICKHOUSE_WRITE_ENABLED: "false"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: research
+      CLICKHOUSE_USERNAME: dagster_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_DAGSTER_PASSWORD:-local-dagster-writer}
+      OBJECT_STORE_ENABLED: "false"
+      OBJECT_STORE_WRITE_ENABLED: "false"
+      OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-local-dagster-artifacts}
+      OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-local-dagster-artifacts-secret}
+      OBJECT_STORE_RAW_BUCKET: trade-raw
+      OBJECT_STORE_DATASETS_BUCKET: trade-datasets
+      OBJECT_STORE_MODELS_BUCKET: trade-models
+      OBJECT_STORE_EXPERIMENTS_BUCKET: trade-experiments
+      OBJECT_STORE_EXPORTS_BUCKET: trade-exports
       INGESTION_PROFILE: local
       UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
       DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
@@ -214,6 +265,69 @@ services:
       timeout: 5s
       retries: 5
 
+  clickhouse:
+    image: clickhouse:25.8.33.6-jammy
+    profiles: ["research"]
+    environment:
+      CLICKHOUSE_DB: research
+      CLICKHOUSE_USER: ${CLICKHOUSE_ADMIN_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_ADMIN_PASSWORD:-local-clickhouse-admin}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:8123:8123"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  clickhouse-init:
+    image: clickhouse:25.8.33.6-jammy
+    profiles: ["research"]
+    environment:
+      CLICKHOUSE_ADMIN_USER: ${CLICKHOUSE_ADMIN_USER:-admin}
+      CLICKHOUSE_ADMIN_PASSWORD: ${CLICKHOUSE_ADMIN_PASSWORD:-local-clickhouse-admin}
+      CLICKHOUSE_MIGRATION_USER: ${CLICKHOUSE_MIGRATION_USER:-migration}
+      CLICKHOUSE_MIGRATION_PASSWORD: ${CLICKHOUSE_MIGRATION_PASSWORD:-local-migration}
+      CLICKHOUSE_DAGSTER_USER: ${CLICKHOUSE_DAGSTER_USER:-dagster_writer}
+      CLICKHOUSE_DAGSTER_PASSWORD: ${CLICKHOUSE_DAGSTER_PASSWORD:-local-dagster-writer}
+      CLICKHOUSE_API_USER: ${CLICKHOUSE_API_USER:-api_reader}
+      CLICKHOUSE_API_PASSWORD: ${CLICKHOUSE_API_PASSWORD:-local-api-reader}
+      CLICKHOUSE_ANALYST_USER: ${CLICKHOUSE_ANALYST_USER:-analyst_reader}
+      CLICKHOUSE_ANALYST_PASSWORD: ${CLICKHOUSE_ANALYST_PASSWORD:-local-analyst-reader}
+    volumes:
+      - ./clickhouse/bootstrap-access.sh:/bootstrap-access.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap-access.sh"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: "no"
+
+  clickhouse-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    profiles: ["research"]
+    command: ["python", "/app/scripts/run_clickhouse_migrations.py"]
+    environment:
+      CLICKHOUSE_ENABLED: "true"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: research
+      CLICKHOUSE_USERNAME: ${CLICKHOUSE_MIGRATION_USER:-migration}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_MIGRATION_PASSWORD:-local-migration}
+    depends_on:
+      clickhouse-init:
+        condition: service_completed_successfully
+    restart: "no"
+
   redis:
     image: redis:7-alpine
     ports:
@@ -228,7 +342,7 @@ services:
       - qdrant_data:/qdrant/storage
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -243,6 +357,28 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  minio-research-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      RAW_BUCKET: trade-raw
+      DATASETS_BUCKET: trade-datasets
+      MODELS_BUCKET: trade-models
+      EXPERIMENTS_BUCKET: trade-experiments
+      EXPORTS_BUCKET: trade-exports
+      DAGSTER_ACCESS_KEY: ${OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-local-dagster-artifacts}
+      DAGSTER_SECRET_KEY: ${OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-local-dagster-artifacts-secret}
+      API_ACCESS_KEY: ${OBJECT_STORE_API_ACCESS_KEY_ID:-local-api-artifacts}
+      API_SECRET_KEY: ${OBJECT_STORE_API_SECRET_ACCESS_KEY:-local-api-artifacts-secret}
+    volumes:
+      - ./minio/bootstrap-research.sh:/bootstrap-research.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap-research.sh"]
+    restart: "no"
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -282,6 +418,7 @@ volumes:
   postgres_data:
   qdrant_data:
   minio_data:
+  clickhouse_data:
   prometheus_data:
   dbeaver_data:
   web_node_modules:

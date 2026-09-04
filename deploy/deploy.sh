@@ -135,6 +135,51 @@ if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
   export PROD_ALERT_WEBHOOK_TOKEN_FILE="$alert_token_file"
 fi
 
+if [[ "${PROD_RESEARCH_STORAGE_ENABLED:-false}" == "true" \
+  && "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" != "true" ]]; then
+  printf '[trade-deploy] research application access requires the storage profile to be deployed\n' >&2
+  exit 1
+fi
+
+if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  research_secret_names=(
+    PROD_CLICKHOUSE_ADMIN_PASSWORD
+    PROD_CLICKHOUSE_MIGRATION_PASSWORD
+    PROD_CLICKHOUSE_DAGSTER_PASSWORD
+    PROD_CLICKHOUSE_API_PASSWORD
+    PROD_CLICKHOUSE_ANALYST_PASSWORD
+    PROD_OBJECT_STORE_DAGSTER_ACCESS_KEY_ID
+    PROD_OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY
+    PROD_OBJECT_STORE_API_ACCESS_KEY_ID
+    PROD_OBJECT_STORE_API_SECRET_ACCESS_KEY
+  )
+  for secret_name in "${research_secret_names[@]}"; do
+    require_secure_value "$secret_name" "${!secret_name:-}"
+  done
+  research_password_names=(
+    PROD_CLICKHOUSE_ADMIN_PASSWORD
+    PROD_CLICKHOUSE_MIGRATION_PASSWORD
+    PROD_CLICKHOUSE_DAGSTER_PASSWORD
+    PROD_CLICKHOUSE_API_PASSWORD
+    PROD_CLICKHOUSE_ANALYST_PASSWORD
+    PROD_OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY
+    PROD_OBJECT_STORE_API_SECRET_ACCESS_KEY
+  )
+  for password_name in "${research_password_names[@]}"; do
+    password_value="${!password_name:-}"
+    if [[ "${#password_value}" -lt 16 ]]; then
+      printf '[trade-deploy] %s must contain at least 16 characters\n' "$password_name" >&2
+      exit 1
+    fi
+  done
+  unset password_value
+  if [[ "$PROD_OBJECT_STORE_DAGSTER_ACCESS_KEY_ID" \
+      == "$PROD_OBJECT_STORE_API_ACCESS_KEY_ID" ]]; then
+    printf '[trade-deploy] Dagster and API object-store identities must differ\n' >&2
+    exit 1
+  fi
+fi
+
 if [[ "${PROD_LANGFUSE_ENABLED:-false}" == "true" ]]; then
   require_secure_value "PROD_LANGFUSE_PUBLIC_KEY" "${PROD_LANGFUSE_PUBLIC_KEY:-}"
   require_secure_value "PROD_LANGFUSE_SECRET_KEY" "${PROD_LANGFUSE_SECRET_KEY:-}"
@@ -164,6 +209,9 @@ mkdir_from_var "${PROD_QDRANT_DATA_DIR:-/opt/trade/qdrant}"
 if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
   mkdir_from_var "${PROD_MINIO_DATA_DIR:-/opt/trade/minio}"
 fi
+if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  mkdir_from_var "${PROD_CLICKHOUSE_DATA_DIR:-/opt/trade/clickhouse}"
+fi
 if [[ "${PROD_OTEL_ENABLED:-true}" == "true" ]]; then
   mkdir_from_var "${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}"
   mkdir_from_var "${alertmanager_data_dir:-${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}}"
@@ -189,6 +237,9 @@ if [[ "$DEPLOY_REEXECUTED" != true \
 fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.yml")
+if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  compose+=(--profile research)
+fi
 
 log "installing secret-free CloudBeaver connection policy"
 cloudbeaver_policy_changed=false
@@ -260,6 +311,17 @@ migration_started_seconds=$SECONDS
   alembic -c /app/alembic.ini upgrade head
 log "database migrations completed in $((SECONDS - migration_started_seconds))s"
 
+if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  log "starting private Phase 2 storage services"
+  "${compose[@]}" up -d clickhouse minio
+  log "reconciling ClickHouse identities"
+  "${compose[@]}" run --rm clickhouse-init
+  log "applying ClickHouse migrations"
+  "${compose[@]}" run --rm --no-deps clickhouse-migrate
+  log "reconciling versioned research object buckets and policies"
+  "${compose[@]}" run --rm minio-research-init
+fi
+
 log "starting production stack"
 "${compose[@]}" up -d --remove-orphans
 if [[ "$cloudbeaver_policy_changed" == true \
@@ -294,6 +356,7 @@ for attempt in {1..30}; do
   filing_health_ok=true
   cloudbeaver_health_ok=false
   dagster_health_ok=true
+  research_storage_health_ok=true
 
   if curl -fsS "$health_url" >/dev/null; then
     api_health_ok=true
@@ -323,11 +386,22 @@ for attempt in {1..30}; do
       dagster_health_ok=true
     fi
   fi
+  if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+    research_storage_health_ok=false
+    if [[ -n "$("${compose[@]}" ps --status running -q clickhouse)" ]] \
+      && "${compose[@]}" exec -T clickhouse clickhouse-client \
+        --user "$PROD_CLICKHOUSE_API_USER" \
+        --password "$PROD_CLICKHOUSE_API_PASSWORD" \
+        --query "SELECT count() FROM research.schema_migrations" >/dev/null; then
+      research_storage_health_ok=true
+    fi
+  fi
 
   if [[ "$api_health_ok" == true \
     && "$filing_health_ok" == true \
     && "$cloudbeaver_health_ok" == true \
-    && "$dagster_health_ok" == true ]]; then
+    && "$dagster_health_ok" == true \
+    && "$research_storage_health_ok" == true ]]; then
     log "health check passed"
     log "deployment completed in $((SECONDS - deploy_started_seconds))s"
     "${compose[@]}" ps
@@ -350,6 +424,9 @@ log_services=(
   prometheus
   alertmanager
 )
+if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  log_services+=(clickhouse)
+fi
 if [[ "$dagster_webserver_was_running" == true ]]; then
   log_services+=(dagster-webserver)
 fi
