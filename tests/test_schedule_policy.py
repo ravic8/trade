@@ -1,6 +1,7 @@
 from trade_research.config import Settings
 from trade_research.dagster.schedule_policy import (
     desired_schedule_statuses,
+    load_schedule_manifest,
     schedule_policy,
 )
 
@@ -70,3 +71,23 @@ def test_schedule_policy_metadata_matches_dagster_definitions() -> None:
         assert policy.job_name == definition.job_name
         assert policy.cron_schedule == cron
         assert policy.execution_timezone == definition.execution_timezone
+
+
+def test_production_manifest_has_required_operational_fields() -> None:
+    manifest = load_schedule_manifest()
+
+    assert manifest["environment"] == "production"
+    required = {
+        "schedule_name",
+        "job_name",
+        "cron_schedule",
+        "execution_timezone",
+        "exchange",
+        "enabled_when",
+        "freshness_sla_minutes",
+        "upstream_dependencies",
+        "alert_owner",
+    }
+    assert all(required <= set(row) for row in manifest["schedules"])
+    assert all(row["freshness_sla_minutes"] > 0 for row in manifest["schedules"])
+    assert all(row["alert_owner"] for row in manifest["schedules"])

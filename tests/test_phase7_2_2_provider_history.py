@@ -396,7 +396,7 @@ def test_phase7_2_2_migration_creates_provider_history_evidence_table(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert revision == "20260726_0012"
+    assert revision == "20260904_0013"
     assert {
         "instrument_key",
         "coverage_start",

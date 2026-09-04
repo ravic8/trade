@@ -3,67 +3,164 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   python:
-    name: Python
+    name: Python unit, contracts, and coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pyproject.toml
-
       - name: Install package
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
-
       - name: Ruff
         run: python -m ruff check
-
+      - name: Mypy ratchet boundary
+        run: >-
+          python -m mypy src/trade_research/validation src/trade_research/contracts
+          src/trade_research/cli_guard.py
       - name: Current-state documentation
         run: python scripts/check_current_state_docs.py
+      - name: Pytest with coverage gate
+        run: python -m pytest --cov=trade_research --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: coverage.xml
 
-      - name: Pytest
-        run: python -m pytest
+  services:
+    name: Timescale, Redis, and migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:2.23.1-pg16
+        env:
+          POSTGRES_DB: trade_research
+          POSTGRES_USER: trade
+          POSTGRES_PASSWORD: trade
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U trade -d trade_research"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7.4.5-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql+psycopg://trade:trade@localhost:5432/trade_research
+      REDIS_URL: redis://localhost:6379/0
+      PHASE1_SERVICE_TESTS: "1"
+      PGPASSWORD: trade
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Empty database upgrade
+        run: python -m alembic upgrade head
+      - name: PostgreSQL and Redis integration
+        run: python -m pytest tests/integration/test_phase1_services.py -q
+      - name: Supported previous-schema upgrade
+        run: |
+          createdb -h localhost -U trade trade_previous
+          DATABASE_URL=postgresql+psycopg://trade:trade@localhost:5432/trade_previous python -m alembic upgrade 20260726_0012
+          DATABASE_URL=postgresql+psycopg://trade:trade@localhost:5432/trade_previous python -m alembic upgrade head
+          test "$(psql -h localhost -U trade -d trade_previous -Atc "select version_num from alembic_version")" = "20260904_0013"
+      - name: Dagster definition-load and asset contracts
+        run: python -m pytest tests/test_dagster_definitions.py tests/test_dagster_daily_assets.py -q
 
   web:
-    name: Web
+    name: Web unit, build, and browser smoke
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-
       - name: Install dependencies
         run: npm ci
-
       - name: Lint
         run: npm run lint
-
+      - name: Unit tests
+        run: npm test
       - name: Build
         run: npm run build
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Desktop and mobile smoke tests
+        run: npm run test:e2e
+
+  security:
+    name: Dependency, secret, and source scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python dependency audit
+        run: |
+          python -m pip install --upgrade pip "setuptools>=83" pip-audit
+          python -m pip install -e .
+          python -m pip_audit
+      - name: JavaScript dependency audit
+        working-directory: apps/web
+        run: npm audit --audit-level=critical
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Filesystem and Dockerfile scan
+        run: >-
+          docker run --rm
+          -v "${{ github.workspace }}:/workspace:ro"
+          aquasec/trivy:0.69.3 fs
+          --scanners vuln,secret,misconfig
+          --severity CRITICAL --exit-code 1 /workspace
+
+  image-security:
+    name: Container image scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f Dockerfile.api -t trade-research-api:ci .
+      - name: Scan API image
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.69.3 image
+          --severity CRITICAL --ignore-unfixed --exit-code 1
+          trade-research-api:ci
 
   production-compose:
     name: Production Compose
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Validate compose config
         run: docker compose --env-file .env.prod.example -f docker-compose.prod.yml config
-
       - name: Validate Docker build definitions
         run: >-
           docker compose --env-file .env.prod.example -f docker-compose.prod.yml

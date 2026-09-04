@@ -139,6 +139,12 @@ Step 2 feature-layer design docs:
   and direct host evidence, pipeline findings, and risk register.
 - [Phase 1 Schedule Reconciliation Runbook](docs/phase1_schedule_reconciliation_runbook.md):
   recoverable stale-origin repair and desired-versus-actual verification.
+- [Phase 1 Contract Publication Gates](docs/phase1_contract_publication_gates.md):
+  fail-closed daily OHLCV, feature, and target publication with retained
+  validation evidence.
+- [Phase 1 Eligible-Session Coverage Semantics](docs/phase1_coverage_semantics.md):
+  explicit valid/expected session counts, eligibility exclusions, and
+  explained versus actionable missingness.
 - [ML Dataset v1 Strategy](docs/ml_dataset_v1_strategy.md): frozen contract for
   the first leakage-aware next-day-return dataset, daily walk-forward
   evaluation, and reporting plan.

@@ -54,15 +54,15 @@ def build_schedule_reconciliation_plan(
     for schedule_name, remote_schedule in remote_schedules.items():
         desired_status = desired.get(schedule_name, "stopped")
         current_origin_id = remote_schedule.get_remote_origin_id()
-        current_state = next(
-            (
-                state
-                for state in stored_states
-                if state.instigator_origin_id == current_origin_id
-            ),
-            None,
-        )
-        current_running = bool(current_state and current_state.is_running)
+        current_selector_id = remote_schedule.selector_id
+        current_states = [
+            state
+            for state in stored_states
+            if state.instigator_name == schedule_name
+            and state.instigator_origin_id == current_origin_id
+            and state.selector_id == current_selector_id
+        ]
+        current_running = any(state.is_running for state in current_states)
         if desired_status == "running" and not current_running:
             actions.append(
                 ScheduleReconciliationAction(
@@ -86,7 +86,10 @@ def build_schedule_reconciliation_plan(
             state
             for state in stored_states
             if state.instigator_name == schedule_name
-            and state.instigator_origin_id != current_origin_id
+            and (
+                state.instigator_origin_id != current_origin_id
+                or state.selector_id != current_selector_id
+            )
         ]
         actions.extend(
             ScheduleReconciliationAction(
@@ -143,6 +146,11 @@ def apply_schedule_reconciliation_plan(
     *,
     marker_path: Path,
 ) -> None:
+    if plan.unmanaged_active_schedules:
+        names = ", ".join(plan.unmanaged_active_schedules)
+        raise RuntimeError(
+            "Refusing to reconcile while unmanaged schedules are active: " + names
+        )
     remote_schedules = {
         schedule.name: schedule for schedule in remote_repository.get_schedules()
     }

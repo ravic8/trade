@@ -19,6 +19,7 @@ from trade_research.analytics.bigquery import (
     evaluate_bigquery_backfill_reconciliation,
     evaluate_bigquery_tsx_canary_readiness,
 )
+from trade_research.cli_guard import enforce_cli_policy
 from trade_research.config import get_settings
 from trade_research.data import (
     UpstoxInstrumentMasterProvider,
@@ -89,6 +90,17 @@ from trade_research.universe import (
 
 app = typer.Typer(help="Market research agent CLI.")
 console = Console()
+
+
+@app.callback()
+def enforce_production_cli_guard(ctx: typer.Context) -> None:
+    """Apply the production mutation policy before any command callback."""
+
+    current_settings = get_settings()
+    enforce_cli_policy(
+        ctx.invoked_subcommand,
+        app_env=str(getattr(current_settings, "app_env", "local")),
+    )
 
 
 def _universe_provider(exchange: str):

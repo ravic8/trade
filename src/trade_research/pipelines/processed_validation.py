@@ -9,7 +9,11 @@ from trade_research.config import get_settings
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.validation import validate_processed_datasets
 from trade_research.validation.daily_pipeline import write_stock_coverage
-from trade_research.validation.processed_datasets import CLEANED_OHLCV, normalize_ohlcv
+from trade_research.validation.processed_datasets import (
+    CLEANED_OHLCV,
+    VALIDATION_RESULTS,
+    normalize_ohlcv,
+)
 
 
 def run_processed_dataset_validation_pipeline(
@@ -29,6 +33,7 @@ def run_processed_dataset_validation_pipeline(
             if settings.nse_daily_primary_source == "yfinance"
             else "processed/equities/nse_daily_ohlcv_upstox.parquet"
         ),
+        run_id=coverage_run_id,
     )
     summary: dict[str, Any] = result.summary
     coverage = _write_ml_stock_coverage(
@@ -42,6 +47,7 @@ def run_processed_dataset_validation_pipeline(
         artifacts={
             "summary_md": root / "processed/validation/processed_dataset_validation_summary.md",
             "summary_json": root / "processed/validation/processed_dataset_validation_summary.json",
+            "validation_results": root / VALIDATION_RESULTS,
             "stock_coverage": Path(coverage["path"]),
             "stock_coverage_windows": Path(coverage["windows_path"]),
         },

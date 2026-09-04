@@ -4,11 +4,19 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+from pydantic import JsonValue
 
 from trade_research.config import get_settings
 from trade_research.features import invalid_daily_ohlcv_mask, normalize_daily_ohlcv
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.common import limit_daily_symbols
+from trade_research.pipelines.contract_gate import (
+    enforce_publication_contract,
+    expected_publication_sessions,
+    failed_quality_rows_result,
+)
 from trade_research.storage import ParquetStore, TimescaleStore
 from trade_research.targets import (
     DAILY_FORWARD_TARGET_VERSION_V1_0,
@@ -26,6 +34,7 @@ def run_daily_target_pipeline(
     target_version: str = DAILY_FORWARD_TARGET_VERSION_V1_0,
     audit_output: Path = Path("data/processed/targets/daily_v1_forward_returns_audit.csv"),
     summary_output: Path = Path("data/processed/targets/daily_v1_forward_returns_summary.json"),
+    contract_validation_output: Path | None = None,
     limit: int | None = None,
     strict_invalid_rows: bool = False,
     store_db: bool = False,
@@ -66,11 +75,47 @@ def run_daily_target_pipeline(
     if source_frame.empty:
         raise ValueError("No daily OHLCV rows found for target generation.")
 
-    invalid_ohlcv_count = int(invalid_daily_ohlcv_mask(normalize_daily_ohlcv(source_frame)).sum())
+    normalized_ohlcv = normalize_daily_ohlcv(source_frame)
+    invalid_ohlcv_count = int(invalid_daily_ohlcv_mask(normalized_ohlcv).sum())
     targets = DailyForwardTargetBuilder(
         target_version=target_version,
         drop_invalid_rows=not strict_invalid_rows,
     ).build(source_frame)
+
+    publication_run_id = f"daily-targets-{uuid4()}"
+    evaluation_time = datetime.now(UTC)
+    publication_scope: dict[str, JsonValue] = {
+        "exchange": "NSE",
+        "target_version": target_version,
+        "incremental": bool(incremental),
+    }
+    contract_path = contract_validation_output or (
+        settings.data_dir
+        / "processed/validation/daily_v1_forward_returns_contract_validation.json"
+    )
+    expected_end = max(normalized_ohlcv["date"].dropna(), default=None)
+    contract_evidence = enforce_publication_contract(
+        targets,
+        contract_id="target.daily_forward_returns.v1",
+        report_path=contract_path,
+        run_id=publication_run_id,
+        scope=publication_scope,
+        eligible_session_dates=expected_publication_sessions(
+            targets,
+            exchange="NSE",
+            expected_end=expected_end,
+        ),
+        additional_results=(
+            failed_quality_rows_result(
+                targets,
+                contract_id="target.daily_forward_returns.v1",
+                run_id=publication_run_id,
+                scope=publication_scope,
+                created_at=evaluation_time,
+            ),
+        ),
+        evaluated_at=evaluation_time,
+    )
 
     db_rows = 0
     deleted_rows = 0
@@ -130,6 +175,7 @@ def run_daily_target_pipeline(
             "targets": output_path,
             "target_audit": audit_output,
             "target_summary": summary_output,
+            "contract_validation": contract_evidence.report_path,
         },
         metrics={
             **summary_dict,
@@ -145,6 +191,9 @@ def run_daily_target_pipeline(
             "computed_rows": int(len(targets)),
             "artifact_rows": int(len(targets_for_artifact)),
             "export_db_snapshot": bool(export_db_snapshot),
+            "contract_validation_run_id": contract_evidence.report.run_id,
+            "contract_validation_status": contract_evidence.report.status,
+            "contract_validation_checks": len(contract_evidence.report.results),
         },
         warnings=warnings,
     )

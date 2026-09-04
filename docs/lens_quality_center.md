@@ -106,5 +106,6 @@ docker compose --env-file /opt/trade/.env -f docker-compose.prod.yml \
   exec -T api trade-research verify-filing-production
 ```
 
-The expected migration head is `20260726_0012`; production readiness must remain
+The Lens migration is `20260726_0012`; the repository migration head is
+`20260904_0013`, and production readiness must remain
 green before the demo.

@@ -245,6 +245,27 @@ class DataPipelineRequest(BaseModel):
     mode: Literal["incremental_missing_only"] = "incremental_missing_only"
 
 
+class DataPipelineSubmission(BaseModel):
+    workflow_id: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+    created: bool
+    status_url: str
+
+
+class DataPipelineWorkflowStatus(BaseModel):
+    workflow_id: str
+    workflow_type: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+    requested_by: str
+    dagster_run_id: str | None = None
+    result_run_id: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
 class DataPipelineHealthResponse(BaseModel):
     provider: Literal["upstox"]
     exchange: Literal["NSE"]
@@ -264,6 +285,21 @@ class DataCoveragePreviewTask(BaseModel):
     status: Literal["queued"]
 
 
+class DataCoverageInstrumentEvidence(BaseModel):
+    symbol: str
+    instrument_key: str
+    requested_exchange_sessions: int = Field(ge=0)
+    expected_eligible_sessions: int = Field(ge=0)
+    valid_stored_eligible_sessions: int = Field(ge=0)
+    invalid_stored_eligible_sessions: int = Field(ge=0)
+    missing_eligible_sessions: int = Field(ge=0)
+    explained_missing_sessions: int = Field(ge=0)
+    actionable_missing_sessions: int = Field(ge=0)
+    off_calendar_stored_sessions: int = Field(ge=0)
+    coverage_ratio: float = Field(ge=0.0, le=1.0)
+    exclusion_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class DataCoveragePreviewResponse(BaseModel):
     provider: str
     exchange: str
@@ -276,6 +312,17 @@ class DataCoveragePreviewResponse(BaseModel):
     symbols_resolved: int = Field(ge=0)
     unresolved_symbols: list[str] = Field(default_factory=list)
     ambiguous_symbols: list[str] = Field(default_factory=list)
+    requested_exchange_sessions: int = Field(ge=0)
+    expected_eligible_sessions: int = Field(ge=0)
+    valid_stored_eligible_sessions: int = Field(ge=0)
+    invalid_stored_eligible_sessions: int = Field(ge=0)
+    missing_eligible_sessions: int = Field(ge=0)
+    explained_missing_sessions: int = Field(ge=0)
+    actionable_missing_sessions: int = Field(ge=0)
+    off_calendar_stored_sessions: int = Field(ge=0)
+    coverage_ratio: float = Field(ge=0.0, le=1.0)
+    eligibility_exclusion_counts: dict[str, int] = Field(default_factory=dict)
+    coverage: list[DataCoverageInstrumentEvidence] = Field(default_factory=list)
     expected_rows: int = Field(ge=0)
     already_present_rows: int = Field(ge=0)
     missing_rows: int = Field(ge=0)
@@ -297,6 +344,10 @@ class DataAvailabilityRow(BaseModel):
     first_stored_ts: datetime | None = None
     latest_stored_ts: datetime | None = None
     stored_rows: int = Field(ge=0)
+    expected_eligible_sessions: int = Field(default=0, ge=0)
+    valid_stored_eligible_sessions: int = Field(default=0, ge=0)
+    invalid_stored_eligible_sessions: int = Field(default=0, ge=0)
+    coverage_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
     calendar_matched_rows: int = Field(default=0, ge=0)
     off_calendar_rows: int = Field(default=0, ge=0)
     expected_rows: int = Field(ge=0)
@@ -317,6 +368,10 @@ class DataAvailabilitySummary(BaseModel):
     symbols_empty: int = Field(ge=0)
     expected_rows: int = Field(ge=0)
     stored_rows: int = Field(ge=0)
+    expected_eligible_sessions: int = Field(default=0, ge=0)
+    valid_stored_eligible_sessions: int = Field(default=0, ge=0)
+    invalid_stored_eligible_sessions: int = Field(default=0, ge=0)
+    coverage_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
     calendar_matched_rows: int = Field(default=0, ge=0)
     off_calendar_rows: int = Field(default=0, ge=0)
     missing_rows: int = Field(ge=0)
@@ -536,6 +591,10 @@ class PipelineScheduleStatusRow(BaseModel):
     job_name: str
     cron_schedule: str
     execution_timezone: str
+    exchange: str
+    freshness_sla_minutes: int = Field(gt=0)
+    upstream_dependencies: list[str] = Field(default_factory=list)
+    alert_owner: str
     desired_status: Literal["running", "stopped"]
     intended_status: Literal["running", "stopped"]
     actual_status: Literal["running", "stopped", "unknown"]
@@ -549,6 +608,8 @@ class PipelineScheduleStatusRow(BaseModel):
     last_run_status: str | None = None
     last_run_at: datetime | None = None
     last_successful_run_at: datetime | None = None
+    freshness_status: Literal["fresh", "stale", "unknown", "not_applicable"]
+    drift_reasons: list[str] = Field(default_factory=list)
     notes: str | None = None
 
 

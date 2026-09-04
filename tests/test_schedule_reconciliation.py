@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from trade_research.config import Settings
 from trade_research.dagster.reconcile import (
     apply_schedule_reconciliation_plan,
@@ -181,6 +183,53 @@ def test_reconciliation_deletes_stopped_stale_origin_before_starting_current(
     ]
 
 
+def test_reconciliation_migrates_stale_selector_under_current_origin(
+    tmp_path: Path,
+) -> None:
+    worker = _Schedule(
+        "yfinance_daily_work_worker_schedule",
+        "shared-worker-origin",
+        "current-worker-selector",
+    )
+    repository = _Repository([worker])
+    instance = _Instance(
+        [
+            _state(
+                worker.name,
+                worker.get_remote_origin_id(),
+                "stale-worker-selector",
+                running=True,
+            )
+        ]
+    )
+    settings = Settings(
+        _env_file=None,
+        yfinance_daily_enabled=True,
+        yfinance_full_us_enabled=True,
+    )
+
+    plan = build_schedule_reconciliation_plan(instance, repository, settings)
+
+    assert [action.action for action in plan.actions] == [
+        "stop_stale",
+        "delete_stale",
+        "start_current",
+    ]
+    apply_schedule_reconciliation_plan(
+        instance,
+        repository,
+        plan,
+        marker_path=tmp_path / "schedule_current_origin.json",
+    )
+    assert instance.stopped == [
+        ("shared-worker-origin", "stale-worker-selector", None)
+    ]
+    assert instance.deleted == [
+        ("shared-worker-origin", "stale-worker-selector")
+    ]
+    assert instance.started == [worker.name]
+
+
 def test_reconciliation_removes_stale_origin_for_desired_stopped_schedule(
     tmp_path: Path,
 ) -> None:
@@ -273,6 +322,38 @@ def test_reconciliation_does_not_delete_unmanaged_active_schedules() -> None:
 
     assert plan.actions == ()
     assert plan.unmanaged_active_schedules == ("removed_schedule",)
+
+
+def test_reconciliation_refuses_to_apply_with_unmanaged_active_schedule(
+    tmp_path: Path,
+) -> None:
+    repository = _Repository([])
+    instance = _Instance(
+        [
+            _state(
+                "removed_schedule",
+                "removed-origin",
+                "removed-selector",
+                running=True,
+            )
+        ]
+    )
+    plan = build_schedule_reconciliation_plan(
+        instance,
+        repository,
+        Settings(_env_file=None),
+    )
+
+    with pytest.raises(RuntimeError, match="unmanaged schedules are active"):
+        apply_schedule_reconciliation_plan(
+            instance,
+            repository,
+            plan,
+            marker_path=tmp_path / "schedule_current_origin.json",
+        )
+
+    assert instance.events == []
+    assert not (tmp_path / "schedule_current_origin.json").exists()
 
 
 def test_recent_daemon_heartbeat_blocks_live_reconciliation() -> None:

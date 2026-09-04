@@ -1,7 +1,7 @@
 """Add the Phase 1 yfinance equities foundation.
 
 Revision ID: 20260717_0001
-Revises: None
+Revises: 20260716_0000
 Create Date: 2026-07-17
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20260717_0001"
-down_revision: str | None = None
+down_revision: str | None = "20260716_0000"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

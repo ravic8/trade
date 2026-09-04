@@ -59,6 +59,32 @@ def test_phase1_tables_and_symbol_columns_are_in_sqlalchemy_metadata() -> None:
     )
 
 
+def test_alembic_upgrade_bootstraps_an_empty_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "empty.sqlite"
+    database_url = f"sqlite:///{database_path}"
+    engine = create_engine(database_url)
+
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = Config("alembic.ini")
+    command.upgrade(config, "head")
+
+    upgraded = inspect(engine)
+    assert {
+        "ohlcv_daily",
+        "pipeline_work_items",
+        "opportunity_targets_daily",
+        "workflow_requests",
+    }.issubset(set(upgraded.get_table_names()))
+    with engine.connect() as connection:
+        revision = connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one()
+    assert revision == "20260904_0013"
+
+
 def test_phase1_feature_flags_are_safe_by_default() -> None:
     settings = Settings(_env_file=None)
 
@@ -189,4 +215,4 @@ def test_upgrade_reconciles_create_all_tables_with_legacy_symbols(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260726_0012"
+    assert revision == "20260904_0013"

@@ -50,6 +50,8 @@ class FakeCoverageStore:
         end_date: date,
         source: str = "upstox",
         exchange: str = "NSE",
+        *,
+        valid_only: bool = False,
     ) -> dict[str, set[date]]:
         return {
             key: {
@@ -87,6 +89,29 @@ class FakeCoverageStore:
             "year": year,
         }
 
+
+class InvalidRowCoverageStore(FakeCoverageStore):
+    def daily_ohlcv_dates_by_instrument(
+        self,
+        instrument_keys: list[str],
+        start_date: date,
+        end_date: date,
+        source: str = "upstox",
+        exchange: str = "NSE",
+        *,
+        valid_only: bool = False,
+    ) -> dict[str, set[date]]:
+        result = super().daily_ohlcv_dates_by_instrument(
+            instrument_keys,
+            start_date,
+            end_date,
+            source=source,
+            exchange=exchange,
+            valid_only=valid_only,
+        )
+        if valid_only:
+            result["NSE_EQ|BBB"] = set()
+        return result
 
 class NoHolidayCoverageStore(FakeCoverageStore):
     def exchange_holidays(
@@ -129,6 +154,18 @@ class MaterializedCoverageStore(FakeCoverageStore):
             )
             current = date.fromordinal(current.toordinal() + 1)
         return rows
+
+
+class ProviderGraceCoverageStore(FakeCoverageStore):
+    def latest_provider_eligible_exchange_session(
+        self,
+        exchange: str,
+        *,
+        provider_grace_minutes: int = 0,
+    ) -> dict:
+        assert exchange == "NSE"
+        assert provider_grace_minutes == 0
+        return {"session_date": date(2026, 1, 2)}
 
 
 def test_daily_coverage_preview_returns_missing_windows_without_fetching() -> None:
@@ -302,3 +339,48 @@ def test_daily_coverage_preview_switches_to_materialized_sessions(monkeypatch) -
     assert preview["calendar_source"] == "materialized_exchange_sessions"
     assert preview["expected_rows"] == 3
     assert preview["missing_rows"] == 1
+
+
+def test_daily_coverage_preview_counts_only_valid_rows_in_explicit_numerator() -> None:
+    preview = build_daily_coverage_preview(
+        CoveragePreviewInput(
+            provider="upstox",
+            exchange="NSE",
+            symbols=("AAA", "BBB"),
+            unit="days",
+            interval=1,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 6),
+        ),
+        store=InvalidRowCoverageStore(),
+    )
+
+    assert preview["expected_eligible_sessions"] == 6
+    assert preview["valid_stored_eligible_sessions"] == 2
+    assert preview["invalid_stored_eligible_sessions"] == 1
+    assert preview["missing_eligible_sessions"] == 4
+    assert preview["coverage_ratio"] == 2 / 6
+    bbb = next(row for row in preview["coverage"] if row["symbol"] == "BBB")
+    assert bbb["valid_stored_eligible_sessions"] == 0
+    assert bbb["invalid_stored_eligible_sessions"] == 1
+
+
+def test_daily_coverage_preview_excludes_sessions_inside_provider_grace() -> None:
+    preview = build_daily_coverage_preview(
+        CoveragePreviewInput(
+            provider="upstox",
+            exchange="NSE",
+            symbols=("AAA",),
+            unit="days",
+            interval=1,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 6),
+        ),
+        store=ProviderGraceCoverageStore(),
+    )
+
+    assert preview["requested_exchange_sessions"] == 3
+    assert preview["expected_eligible_sessions"] == 2
+    assert preview["valid_stored_eligible_sessions"] == 2
+    assert preview["coverage_ratio"] == 1.0
+    assert preview["eligibility_exclusion_counts"] == {"provider_grace": 1}
