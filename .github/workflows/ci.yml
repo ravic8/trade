@@ -120,7 +120,10 @@ jobs:
         with:
           node-version: "22"
       - name: Python dependency audit
-        run: python -m pip install -e . pip-audit && python -m pip_audit
+        run: |
+          python -m pip install --upgrade pip "setuptools>=83" pip-audit
+          python -m pip install -e .
+          python -m pip_audit
       - name: JavaScript dependency audit
         working-directory: apps/web
         run: npm audit --audit-level=critical
@@ -129,13 +132,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Filesystem and Dockerfile scan
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret,misconfig
-          severity: CRITICAL
-          exit-code: "1"
+        run: >-
+          docker run --rm
+          -v "${{ github.workspace }}:/workspace:ro"
+          aquasec/trivy:0.69.3 fs
+          --scanners vuln,secret,misconfig
+          --severity CRITICAL --exit-code 1 /workspace
 
   image-security:
     name: Container image scanning
@@ -145,12 +147,12 @@ jobs:
       - name: Build API image
         run: docker build -f Dockerfile.api -t trade-research-api:ci .
       - name: Scan API image
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: trade-research-api:ci
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.69.3 image
+          --severity CRITICAL --ignore-unfixed --exit-code 1
+          trade-research-api:ci
 
   production-compose:
     name: Production Compose
