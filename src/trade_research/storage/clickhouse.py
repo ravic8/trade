@@ -10,6 +10,12 @@ _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class ClickHouseClient(Protocol):
+    def command(
+        self,
+        command: str,
+        parameters: Mapping[str, Any] | None = None,
+    ) -> Any: ...
+
     def insert(
         self,
         table: str,

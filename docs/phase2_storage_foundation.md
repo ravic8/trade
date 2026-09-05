@@ -1,7 +1,7 @@
 # Phase 2 Storage Foundation
 
-Status: partially implemented; application access and production deployment
-are disabled by default.
+Status: foundation and operational tooling implemented; production evidence,
+deployment, and application access remain disabled by default.
 
 ## Authority boundary
 
@@ -33,6 +33,14 @@ Two independent production gates are intentional:
   identities. Neither identity can delete objects.
 - Python repositories deny writes by default. Object reads verify SHA-256 and
   immutable key retries reject changed content.
+- The bounded canary loads validated PostgreSQL OHLCV, three representative
+  long-form features, and a forward-return target; retries the load; reconciles
+  exact content digests; benchmarks every WP2.7 query family; and stores a
+  digest-verified immutable fixture in the datasets bucket.
+- Production backup quiesces and snapshots ClickHouse when it is running. The
+  isolated restore drill validates the ClickHouse migration/table set and all
+  five versioned research buckets without publishing ports or using production
+  paths.
 
 ## Capacity decision
 
@@ -40,10 +48,18 @@ The last verified Phase 0 observation recorded a 13 GB PostgreSQL database and
 238 GB free on a 455 GB host. That evidence is historical and insufficient for
 unbounded co-hosting. Phase 2 therefore starts with a bounded single-node
 canary on the existing host: 2 CPUs, 2 GiB RAM, no public listener, and no
-production application dependency. Before enabling the deployment gate,
-capture fresh CPU, memory, disk, container-volume, PostgreSQL growth, and
-backup-duration evidence. Stop the rollout if the ClickHouse canary or backup
+production application dependency. Before enabling the deployment gate, use
+the read-only capacity collector to capture fresh CPU, memory, disk,
+container-volume, PostgreSQL growth, and backup-headroom evidence. Record the
+backup duration alongside its report. Stop the rollout if the canary or backup
 headroom would reduce the host below the operating reserve agreed for Phase 1.
+
+```bash
+python scripts/collect_phase2_capacity.py \
+  --projected-feature-count 100 \
+  --retention-years 10 \
+  --report /opt/trade/artifacts/phase2/capacity.json
+```
 
 ## Local validation
 
@@ -67,6 +83,63 @@ The CI `research-storage` job runs the migration twice and verifies table
 coverage, duplicate reconciliation, read-only denial, bucket versioning,
 digest-verified reads, and deletion denial.
 
+## Bounded canary
+
+Run without `--apply` first to validate and describe the PostgreSQL source
+slice. This performs no ClickHouse or object-store write:
+
+```bash
+python scripts/run_phase2_storage_canary.py \
+  --start-date 2026-01-01 \
+  --end-date 2026-03-31 \
+  --exchange NSE \
+  --source upstox \
+  --instrument-limit 25 \
+  --row-limit 25000 \
+  --report /opt/trade/artifacts/phase2/canary-plan.json
+```
+
+For the write run, export the dedicated Dagster ClickHouse and object-store
+credentials, set both enable/write gates, review the bounds, and add `--apply`.
+The script performs two identical inserts so `ReplacingMergeTree FINAL`
+reconciliation proves retry safety. The report covers exchange/date scans,
+percentile distributions, feature/target joins, factor aggregations, dataset
+extraction, concurrent reads, and long-versus-wide-family latency.
+
+After backup and isolated restore have captured the canary, remove only its
+ClickHouse rows with the migration identity and exact reported
+`source_run_id`:
+
+```bash
+CLICKHOUSE_ENABLED=true CLICKHOUSE_WRITE_ENABLED=true \
+CLICKHOUSE_USERNAME=migration \
+python scripts/cleanup_phase2_storage_canary.py \
+  --source-run-id phase2-canary-<20-hex-digest> \
+  --apply
+```
+
+The immutable datasets-bucket fixture is retained as audit and restore
+evidence; the application and Dagster identities have no delete permission.
+
+## Backup and isolated restore
+
+`deploy/backup.sh` stops a running research-profile ClickHouse service,
+archives its persistent directory as `clickhouse.tgz`, archives the shared
+MinIO directory, checksums both, and restarts through its cleanup trap.
+`deploy/restore-drill.sh` can still restore older Phase 1 backups without
+`clickhouse.tgz`. When that archive is present, report schema version 2 also
+requires:
+
+- at least one applied ClickHouse migration and all ten analytical tables;
+- a readable `ohlcv_daily` table;
+- enabled versioning on raw, datasets, models, experiments, and exports;
+- SHA-256 verification of every research object within the configured bound.
+
+Keep `TRADE_RESTORE_MAX_RESEARCH_OBJECTS_PER_BUCKET` above the observed object
+count. A Phase 2 exit report must show
+`research_storage.clickhouse.backup_present=true`; a legacy restore without
+that evidence does not satisfy the Phase 2 exit gate.
+
 ## Production rollout order
 
 1. Capture fresh capacity and Phase 1 backup evidence.
@@ -76,15 +149,15 @@ digest-verified reads, and deletion denial.
    object-store policy isolation.
 5. Run a bounded PostgreSQL-to-ClickHouse canary and reconcile exact keys,
    counts, values, nulls, and SHA-256 manifests.
-6. Extend backup and isolated restore drills to ClickHouse and all five
-   research buckets; keep deletion and lifecycle expiration disabled.
+6. Run the extended backup and isolated restore drill for ClickHouse and all
+   five research buckets; keep deletion and lifecycle expiration disabled.
 7. Observe resource use through a full canary window. Only then consider the
    separate application-access gate.
 
 ## Remaining exit evidence
 
-- fresh production capacity measurements;
-- a bounded production canary and benchmark report;
-- ClickHouse and research-bucket backup plus isolated restore proof;
+- fresh production capacity measurements produced by the collector;
+- a passing bounded production canary and benchmark report;
+- a schema-version-2 ClickHouse/research-bucket isolated restore report;
 - production role-isolation proof;
 - post-deployment CPU, memory, disk, and query-latency evidence.

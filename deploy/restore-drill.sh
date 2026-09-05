@@ -112,6 +112,7 @@ NETWORK="trade-restore-$DRILL_ID"
 POSTGRES_CONTAINER="$NETWORK-postgres"
 MINIO_CONTAINER="$NETWORK-minio"
 QDRANT_CONTAINER="$NETWORK-qdrant"
+CLICKHOUSE_CONTAINER="$NETWORK-clickhouse"
 containers=()
 network_created=false
 
@@ -130,6 +131,11 @@ filing_document_count=0
 approved_fact_count=0
 minio_object_count=0
 minio_versioning_verified=false
+clickhouse_backup_present=false
+clickhouse_migration_count=0
+clickhouse_required_table_count=0
+clickhouse_ohlcv_row_count=0
+research_bucket_result="{}"
 qdrant_reachable=false
 golden_dataset_id=""
 golden_case_count=0
@@ -163,6 +169,11 @@ write_report() {
   REPORT_APPROVED_FACTS="$approved_fact_count" \
   REPORT_MINIO_OBJECTS="$minio_object_count" \
   REPORT_MINIO_VERSIONING="$minio_versioning_verified" \
+  REPORT_CLICKHOUSE_PRESENT="$clickhouse_backup_present" \
+  REPORT_CLICKHOUSE_MIGRATIONS="$clickhouse_migration_count" \
+  REPORT_CLICKHOUSE_TABLES="$clickhouse_required_table_count" \
+  REPORT_CLICKHOUSE_OHLCV="$clickhouse_ohlcv_row_count" \
+  REPORT_RESEARCH_BUCKETS="$research_bucket_result" \
   REPORT_QDRANT="$qdrant_reachable" \
   REPORT_GOLDEN_DATASET="$golden_dataset_id" \
   REPORT_GOLDEN_CASES="$golden_case_count" \
@@ -188,7 +199,7 @@ def boolean(name: str) -> bool:
 
 
 payload = {
-    "schema_version": 1,
+    "schema_version": 2,
     "drill_id": os.environ["REPORT_DRILL_ID"],
     "status": os.environ["REPORT_STATUS"],
     "stage": os.environ["REPORT_STAGE"],
@@ -222,6 +233,15 @@ payload = {
     "object_store": {
         "object_count": integer("REPORT_MINIO_OBJECTS"),
         "versioning_verified": boolean("REPORT_MINIO_VERSIONING"),
+    },
+    "research_storage": {
+        "clickhouse": {
+            "backup_present": boolean("REPORT_CLICKHOUSE_PRESENT"),
+            "migration_count": integer("REPORT_CLICKHOUSE_MIGRATIONS"),
+            "required_table_count": integer("REPORT_CLICKHOUSE_TABLES"),
+            "ohlcv_row_count": integer("REPORT_CLICKHOUSE_OHLCV"),
+        },
+        "object_buckets": json.loads(os.environ["REPORT_RESEARCH_BUCKETS"]),
     },
     "qdrant": {"reachable": boolean("REPORT_QDRANT")},
     "golden_evaluation": {
@@ -352,6 +372,10 @@ PY
   fi
 done
 
+if [[ -d "$RESTORED_DIR/clickhouse" ]]; then
+  clickhouse_backup_present=true
+fi
+
 expected_company="${TRADE_RESTORE_EXPECTED_COMPANY_ID:-NSE:INFY}"
 minimum_source_documents="${TRADE_RESTORE_MIN_SOURCE_DOCUMENTS:-123}"
 minimum_filing_documents="${TRADE_RESTORE_MIN_FILING_DOCUMENTS:-26}"
@@ -472,8 +496,9 @@ log \
 
 postgres_image="${TRADE_RESTORE_POSTGRES_IMAGE:-timescale/timescaledb:latest-pg16}"
 api_image="${PROD_API_IMAGE:-trade-research-api:local}"
-minio_image="${PROD_MINIO_IMAGE:-minio/minio:latest}"
+minio_image="${PROD_MINIO_IMAGE:-minio/minio:RELEASE.2025-07-23T15-54-02Z}"
 qdrant_image="${TRADE_RESTORE_QDRANT_IMAGE:-qdrant/qdrant:latest}"
+clickhouse_image="${PROD_CLICKHOUSE_IMAGE:-clickhouse:25.8.33.6-jammy}"
 db_name="trade_restore"
 db_user="restore_validator"
 db_password="$(
@@ -506,6 +531,18 @@ printf '%s\n' \
   "FILING_S3_ACCESS_KEY_ID=${PROD_FILING_S3_ACCESS_KEY_ID}" \
   "FILING_S3_SECRET_ACCESS_KEY=${PROD_FILING_S3_SECRET_ACCESS_KEY}" \
   "FILING_INDEX_ENABLED=false" \
+  "OBJECT_STORE_ENABLED=$clickhouse_backup_present" \
+  "OBJECT_STORE_WRITE_ENABLED=false" \
+  "OBJECT_STORE_ENDPOINT_URL=http://$MINIO_CONTAINER:9000" \
+  "OBJECT_STORE_REGION=${PROD_OBJECT_STORE_REGION:-us-east-1}" \
+  "OBJECT_STORE_ACCESS_KEY_ID=${PROD_OBJECT_STORE_API_ACCESS_KEY_ID:-}" \
+  "OBJECT_STORE_SECRET_ACCESS_KEY=${PROD_OBJECT_STORE_API_SECRET_ACCESS_KEY:-}" \
+  "OBJECT_STORE_RAW_BUCKET=${PROD_OBJECT_STORE_RAW_BUCKET:-trade-raw}" \
+  "OBJECT_STORE_DATASETS_BUCKET=${PROD_OBJECT_STORE_DATASETS_BUCKET:-trade-datasets}" \
+  "OBJECT_STORE_MODELS_BUCKET=${PROD_OBJECT_STORE_MODELS_BUCKET:-trade-models}" \
+  "OBJECT_STORE_EXPERIMENTS_BUCKET=${PROD_OBJECT_STORE_EXPERIMENTS_BUCKET:-trade-experiments}" \
+  "OBJECT_STORE_EXPORTS_BUCKET=${PROD_OBJECT_STORE_EXPORTS_BUCKET:-trade-exports}" \
+  "OBJECT_STORE_RESTORE_MAX_OBJECTS_PER_BUCKET=${TRADE_RESTORE_MAX_RESEARCH_OBJECTS_PER_BUCKET:-10000}" \
   "LANGFUSE_ENABLED=false" \
   "OTEL_ENABLED=false" \
   > "$API_ENV_FILE"
@@ -602,6 +639,64 @@ approved_fact_count="$(
     "restored approved facts $approved_fact_count are below $minimum_approved_facts"
 log "validated PostgreSQL migration $migration_revision and $approved_fact_count approved facts"
 
+if [[ "$clickhouse_backup_present" == true ]]; then
+  stage="clickhouse_start"
+  log "starting isolated ClickHouse from restored storage without published host ports"
+  docker run -d \
+    --name "$CLICKHOUSE_CONTAINER" \
+    --network "$NETWORK" \
+    --label trade.restore-drill="$DRILL_ID" \
+    -v "$RESTORED_DIR/clickhouse:/var/lib/clickhouse" \
+    "$clickhouse_image" >/dev/null
+  containers+=("$CLICKHOUSE_CONTAINER")
+
+  clickhouse_user="${PROD_CLICKHOUSE_MIGRATION_USER:?set PROD_CLICKHOUSE_MIGRATION_USER}"
+  clickhouse_password="${PROD_CLICKHOUSE_MIGRATION_PASSWORD:?set PROD_CLICKHOUSE_MIGRATION_PASSWORD}"
+  clickhouse_ready=false
+  for _ in {1..60}; do
+    if docker exec "$CLICKHOUSE_CONTAINER" clickhouse-client \
+      --user "$clickhouse_user" \
+      --password "$clickhouse_password" \
+      --query "SELECT 1" >/dev/null 2>&1; then
+      clickhouse_ready=true
+      break
+    fi
+    sleep 2
+  done
+  [[ "$clickhouse_ready" == true ]] || fail "isolated ClickHouse did not become ready"
+
+  stage="clickhouse_validation"
+  clickhouse_migration_count="$(
+    docker exec "$CLICKHOUSE_CONTAINER" clickhouse-client \
+      --user "$clickhouse_user" \
+      --password "$clickhouse_password" \
+      --query "SELECT count() FROM research.schema_migrations"
+  )"
+  clickhouse_required_table_count="$(
+    docker exec "$CLICKHOUSE_CONTAINER" clickhouse-client \
+      --user "$clickhouse_user" \
+      --password "$clickhouse_password" \
+      --query "SELECT count() FROM system.tables WHERE database = 'research' AND name IN ('ohlcv_daily','feature_observations_daily','target_observations_daily','factor_statistics','feature_distributions','predictions_daily','backtest_returns_daily','backtest_positions_daily','experiment_metrics','data_quality_results')"
+  )"
+  clickhouse_ohlcv_row_count="$(
+    docker exec "$CLICKHOUSE_CONTAINER" clickhouse-client \
+      --user "$clickhouse_user" \
+      --password "$clickhouse_password" \
+      --query "SELECT count() FROM research.ohlcv_daily FINAL"
+  )"
+  for numeric_value in \
+    "$clickhouse_migration_count" \
+    "$clickhouse_required_table_count" \
+    "$clickhouse_ohlcv_row_count"; do
+    [[ "$numeric_value" =~ ^[0-9]+$ ]] || fail "restored ClickHouse count is invalid"
+  done
+  (( clickhouse_migration_count >= 1 )) \
+    || fail "restored ClickHouse has no applied schema migration"
+  (( clickhouse_required_table_count == 10 )) \
+    || fail "restored ClickHouse has $clickhouse_required_table_count of 10 required tables"
+  log "validated ClickHouse migrations and all required analytical tables"
+fi
+
 stage="minio_start"
 log "starting isolated MinIO from restored storage without published host ports"
 docker run -d \
@@ -652,6 +747,32 @@ PY
   || fail \
     "restored MinIO objects $minio_object_count are below $minimum_minio_objects"
 log "validated MinIO versioning and $minio_object_count parsed filing objects"
+
+if [[ "$clickhouse_backup_present" == true ]]; then
+  stage="research_bucket_validation"
+  research_bucket_result="$(
+    docker run --rm \
+      --network "$NETWORK" \
+      --env-file "$API_ENV_FILE" \
+      "$api_image" \
+      python -m trade_research.storage.restore_validation
+  )"
+  python3 - "$research_bucket_result" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+expected = {"raw", "datasets", "models", "experiments", "exports"}
+if set(payload) != expected:
+    raise SystemExit("restored research bucket validation is incomplete")
+for namespace, result in payload.items():
+    if result.get("versioning_status") != "Enabled":
+        raise SystemExit(f"restored {namespace} bucket versioning is not enabled")
+    if result.get("object_count") != result.get("digest_verified_count"):
+        raise SystemExit(f"restored {namespace} bucket has unverified objects")
+PY
+  log "validated versioning and object digests across all research buckets"
+fi
 
 stage="qdrant_start"
 log "starting isolated Qdrant from restored storage without published host ports"
