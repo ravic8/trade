@@ -76,9 +76,74 @@ jobs:
           createdb -h localhost -U trade trade_previous
           DATABASE_URL=postgresql+psycopg://trade:trade@localhost:5432/trade_previous python -m alembic upgrade 20260726_0012
           DATABASE_URL=postgresql+psycopg://trade:trade@localhost:5432/trade_previous python -m alembic upgrade head
-          test "$(psql -h localhost -U trade -d trade_previous -Atc "select version_num from alembic_version")" = "20260904_0013"
+          test "$(psql -h localhost -U trade -d trade_previous -Atc "select version_num from alembic_version")" = "20260905_0014"
       - name: Dagster definition-load and asset contracts
         run: python -m pytest tests/test_dagster_definitions.py tests/test_dagster_daily_assets.py -q
+
+  research-storage:
+    name: ClickHouse and object-storage foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLICKHOUSE_ADMIN_USER: admin
+      CLICKHOUSE_ADMIN_PASSWORD: local-clickhouse-admin
+      CLICKHOUSE_MIGRATION_USER: migration
+      CLICKHOUSE_MIGRATION_PASSWORD: local-migration
+      CLICKHOUSE_DAGSTER_USER: dagster_writer
+      CLICKHOUSE_DAGSTER_PASSWORD: local-dagster-writer
+      CLICKHOUSE_API_USER: api_reader
+      CLICKHOUSE_API_PASSWORD: local-api-reader
+      CLICKHOUSE_ANALYST_USER: analyst_reader
+      CLICKHOUSE_ANALYST_PASSWORD: local-analyst-reader
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      OBJECT_STORE_DAGSTER_ACCESS_KEY_ID: local-dagster-artifacts
+      OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY: local-dagster-artifacts-secret
+      OBJECT_STORE_API_ACCESS_KEY_ID: local-api-artifacts
+      OBJECT_STORE_API_SECRET_ACCESS_KEY: local-api-artifacts-secret
+      PHASE2_SERVICE_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate ephemeral MinIO static KMS key
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          import secrets
+
+          key = base64.b64encode(secrets.token_bytes(32)).decode()
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              stream.write(f"MINIO_KMS_SECRET_KEY=phase2-ci:{key}\n")
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - name: Start private storage services
+        run: docker compose --profile research up -d clickhouse minio
+      - name: Reconcile storage identities and buckets
+        run: |
+          docker compose --profile research run --rm clickhouse-init
+          docker compose run --rm minio-research-init
+      - name: Apply ClickHouse migrations twice
+        env:
+          CLICKHOUSE_ENABLED: "true"
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: "8123"
+          CLICKHOUSE_DATABASE: research
+          CLICKHOUSE_USERNAME: migration
+          CLICKHOUSE_PASSWORD: local-migration
+        run: |
+          python scripts/run_clickhouse_migrations.py
+          python scripts/run_clickhouse_migrations.py
+      - name: Validate isolation, retry behavior, and object integrity
+        run: python -m pytest tests/integration/test_phase2_services.py -q
+      - name: Stop ephemeral services
+        if: always()
+        run: docker compose --profile research down -v
 
   web:
     name: Web unit, build, and browser smoke

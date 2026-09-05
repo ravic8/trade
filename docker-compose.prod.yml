@@ -46,6 +46,48 @@ x-filing-environment: &filing-environment
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   TELEMETRY_RELEASE: ${PROD_TELEMETRY_RELEASE:-production}
 
+x-research-read-environment: &research-read-environment
+  CLICKHOUSE_ENABLED: ${PROD_RESEARCH_STORAGE_ENABLED:-false}
+  CLICKHOUSE_WRITE_ENABLED: "false"
+  CLICKHOUSE_HOST: clickhouse
+  CLICKHOUSE_PORT: 8123
+  CLICKHOUSE_DATABASE: research
+  CLICKHOUSE_USERNAME: ${PROD_CLICKHOUSE_API_USER:-api_reader}
+  CLICKHOUSE_PASSWORD: ${PROD_CLICKHOUSE_API_PASSWORD:-}
+  OBJECT_STORE_ENABLED: ${PROD_RESEARCH_STORAGE_ENABLED:-false}
+  OBJECT_STORE_WRITE_ENABLED: "false"
+  OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+  OBJECT_STORE_REGION: ${PROD_OBJECT_STORE_REGION:-us-east-1}
+  OBJECT_STORE_ACCESS_KEY_ID: ${PROD_OBJECT_STORE_API_ACCESS_KEY_ID:-}
+  OBJECT_STORE_SECRET_ACCESS_KEY: ${PROD_OBJECT_STORE_API_SECRET_ACCESS_KEY:-}
+  OBJECT_STORE_SERVER_SIDE_ENCRYPTION: ${PROD_OBJECT_STORE_SERVER_SIDE_ENCRYPTION:-AES256}
+  OBJECT_STORE_RAW_BUCKET: ${PROD_OBJECT_STORE_RAW_BUCKET:-trade-raw}
+  OBJECT_STORE_DATASETS_BUCKET: ${PROD_OBJECT_STORE_DATASETS_BUCKET:-trade-datasets}
+  OBJECT_STORE_MODELS_BUCKET: ${PROD_OBJECT_STORE_MODELS_BUCKET:-trade-models}
+  OBJECT_STORE_EXPERIMENTS_BUCKET: ${PROD_OBJECT_STORE_EXPERIMENTS_BUCKET:-trade-experiments}
+  OBJECT_STORE_EXPORTS_BUCKET: ${PROD_OBJECT_STORE_EXPORTS_BUCKET:-trade-exports}
+
+x-research-write-environment: &research-write-environment
+  CLICKHOUSE_ENABLED: ${PROD_RESEARCH_STORAGE_ENABLED:-false}
+  CLICKHOUSE_WRITE_ENABLED: ${PROD_RESEARCH_STORAGE_ENABLED:-false}
+  CLICKHOUSE_HOST: clickhouse
+  CLICKHOUSE_PORT: 8123
+  CLICKHOUSE_DATABASE: research
+  CLICKHOUSE_USERNAME: ${PROD_CLICKHOUSE_DAGSTER_USER:-dagster_writer}
+  CLICKHOUSE_PASSWORD: ${PROD_CLICKHOUSE_DAGSTER_PASSWORD:-}
+  OBJECT_STORE_ENABLED: ${PROD_RESEARCH_STORAGE_ENABLED:-false}
+  OBJECT_STORE_WRITE_ENABLED: ${PROD_RESEARCH_STORAGE_ENABLED:-false}
+  OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+  OBJECT_STORE_REGION: ${PROD_OBJECT_STORE_REGION:-us-east-1}
+  OBJECT_STORE_ACCESS_KEY_ID: ${PROD_OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-}
+  OBJECT_STORE_SECRET_ACCESS_KEY: ${PROD_OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-}
+  OBJECT_STORE_SERVER_SIDE_ENCRYPTION: ${PROD_OBJECT_STORE_SERVER_SIDE_ENCRYPTION:-AES256}
+  OBJECT_STORE_RAW_BUCKET: ${PROD_OBJECT_STORE_RAW_BUCKET:-trade-raw}
+  OBJECT_STORE_DATASETS_BUCKET: ${PROD_OBJECT_STORE_DATASETS_BUCKET:-trade-datasets}
+  OBJECT_STORE_MODELS_BUCKET: ${PROD_OBJECT_STORE_MODELS_BUCKET:-trade-models}
+  OBJECT_STORE_EXPERIMENTS_BUCKET: ${PROD_OBJECT_STORE_EXPERIMENTS_BUCKET:-trade-experiments}
+  OBJECT_STORE_EXPORTS_BUCKET: ${PROD_OBJECT_STORE_EXPORTS_BUCKET:-trade-exports}
+
 services:
   web:
     image: ${PROD_WEB_IMAGE:-trade-research-web:local}
@@ -99,7 +141,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     environment:
-      <<: *filing-environment
+      <<: [*filing-environment, *research-read-environment]
       APP_ENV: production
       DATA_DIR: /app/data
       DAGSTER_READONLY_HOME: /app/dagster_readonly
@@ -286,6 +328,7 @@ services:
       dockerfile: Dockerfile.api
     command: ["dagster-daemon", "run", "-w", "/app/dagster_home/workspace.yaml"]
     environment:
+      <<: *research-write-environment
       APP_ENV: production
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
@@ -406,6 +449,7 @@ services:
     profiles:
       - admin
     environment:
+      <<: *research-write-environment
       APP_ENV: production
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
@@ -529,6 +573,78 @@ services:
       - analytics_access
     restart: unless-stopped
 
+  clickhouse:
+    image: ${PROD_CLICKHOUSE_IMAGE:-clickhouse:25.8.33.6-jammy}
+    profiles: ["research"]
+    environment:
+      CLICKHOUSE_DB: research
+      CLICKHOUSE_USER: ${PROD_CLICKHOUSE_ADMIN_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${PROD_CLICKHOUSE_ADMIN_PASSWORD:-phase2-disabled}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    expose:
+      - "8123"
+      - "9000"
+    volumes:
+      - ${PROD_CLICKHOUSE_DATA_DIR:-/opt/trade/clickhouse}:/var/lib/clickhouse
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: ${PROD_CLICKHOUSE_MEMORY_LIMIT:-2g}
+    cpus: ${PROD_CLICKHOUSE_CPU_LIMIT:-2.0}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${PROD_CLICKHOUSE_LOG_MAX_SIZE:-50m}
+        max-file: ${PROD_CLICKHOUSE_LOG_MAX_FILES:-5}
+    restart: unless-stopped
+
+  clickhouse-init:
+    image: ${PROD_CLICKHOUSE_IMAGE:-clickhouse:25.8.33.6-jammy}
+    profiles: ["research-setup"]
+    environment:
+      CLICKHOUSE_ADMIN_USER: ${PROD_CLICKHOUSE_ADMIN_USER:-admin}
+      CLICKHOUSE_ADMIN_PASSWORD: ${PROD_CLICKHOUSE_ADMIN_PASSWORD:-phase2-disabled}
+      CLICKHOUSE_MIGRATION_USER: ${PROD_CLICKHOUSE_MIGRATION_USER:-migration}
+      CLICKHOUSE_MIGRATION_PASSWORD: ${PROD_CLICKHOUSE_MIGRATION_PASSWORD:-phase2-disabled}
+      CLICKHOUSE_DAGSTER_USER: ${PROD_CLICKHOUSE_DAGSTER_USER:-dagster_writer}
+      CLICKHOUSE_DAGSTER_PASSWORD: ${PROD_CLICKHOUSE_DAGSTER_PASSWORD:-phase2-disabled}
+      CLICKHOUSE_API_USER: ${PROD_CLICKHOUSE_API_USER:-api_reader}
+      CLICKHOUSE_API_PASSWORD: ${PROD_CLICKHOUSE_API_PASSWORD:-phase2-disabled}
+      CLICKHOUSE_ANALYST_USER: ${PROD_CLICKHOUSE_ANALYST_USER:-analyst_reader}
+      CLICKHOUSE_ANALYST_PASSWORD: ${PROD_CLICKHOUSE_ANALYST_PASSWORD:-phase2-disabled}
+    volumes:
+      - ./clickhouse/bootstrap-access.sh:/bootstrap-access.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap-access.sh"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: "no"
+
+  clickhouse-migrate:
+    image: ${PROD_API_IMAGE:-trade-research-api:local}
+    profiles: ["research-setup"]
+    command: ["python", "/app/scripts/run_clickhouse_migrations.py"]
+    environment:
+      CLICKHOUSE_ENABLED: "true"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: research
+      CLICKHOUSE_USERNAME: ${PROD_CLICKHOUSE_MIGRATION_USER:-migration}
+      CLICKHOUSE_PASSWORD: ${PROD_CLICKHOUSE_MIGRATION_PASSWORD:-phase2-disabled}
+      CLICKHOUSE_CONNECT_TIMEOUT_SECONDS: 10
+      CLICKHOUSE_QUERY_TIMEOUT_SECONDS: 120
+    depends_on:
+      clickhouse-init:
+        condition: service_completed_successfully
+    restart: "no"
+
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -543,11 +659,15 @@ services:
     restart: unless-stopped
 
   minio:
-    image: ${PROD_MINIO_IMAGE:-minio/minio:latest}
+    image: ${PROD_MINIO_IMAGE:-minio/minio:RELEASE.2025-07-23T15-54-02Z}
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${PROD_MINIO_ROOT_USER:?set PROD_MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${PROD_MINIO_ROOT_PASSWORD:?set PROD_MINIO_ROOT_PASSWORD}
+      MINIO_KMS_SERVER: ${PROD_MINIO_KMS_SERVER:-}
+      MINIO_KMS_ENCLAVE: ${PROD_MINIO_KMS_ENCLAVE:-}
+      MINIO_KMS_API_KEY: ${PROD_MINIO_KMS_API_KEY:-}
+      MINIO_KMS_SSE_KEY: ${PROD_MINIO_KMS_SSE_KEY:-}
     volumes:
       - ${PROD_MINIO_DATA_DIR:-/opt/trade/minio}:/data
     healthcheck:
@@ -559,7 +679,7 @@ services:
     restart: unless-stopped
 
   minio-init:
-    image: ${PROD_MINIO_CLIENT_IMAGE:-minio/mc:latest}
+    image: ${PROD_MINIO_CLIENT_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
     depends_on:
       minio:
         condition: service_healthy
@@ -606,6 +726,29 @@ services:
           mc admin user add lens "$$FILING_S3_ACCESS_KEY_ID" "$$FILING_S3_SECRET_ACCESS_KEY"
         fi
         mc admin policy attach lens filing-artifacts --user "$$FILING_S3_ACCESS_KEY_ID"
+    restart: "no"
+
+  minio-research-init:
+    image: ${PROD_MINIO_CLIENT_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    profiles: ["research-setup"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${PROD_MINIO_ROOT_USER:-phase2-disabled}
+      MINIO_ROOT_PASSWORD: ${PROD_MINIO_ROOT_PASSWORD:-phase2-disabled}
+      RAW_BUCKET: ${PROD_OBJECT_STORE_RAW_BUCKET:-trade-raw}
+      DATASETS_BUCKET: ${PROD_OBJECT_STORE_DATASETS_BUCKET:-trade-datasets}
+      MODELS_BUCKET: ${PROD_OBJECT_STORE_MODELS_BUCKET:-trade-models}
+      EXPERIMENTS_BUCKET: ${PROD_OBJECT_STORE_EXPERIMENTS_BUCKET:-trade-experiments}
+      EXPORTS_BUCKET: ${PROD_OBJECT_STORE_EXPORTS_BUCKET:-trade-exports}
+      DAGSTER_ACCESS_KEY: ${PROD_OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-phase2-disabled}
+      DAGSTER_SECRET_KEY: ${PROD_OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-phase2-disabled}
+      API_ACCESS_KEY: ${PROD_OBJECT_STORE_API_ACCESS_KEY_ID:-phase2-disabled}
+      API_SECRET_KEY: ${PROD_OBJECT_STORE_API_SECRET_ACCESS_KEY:-phase2-disabled}
+    volumes:
+      - ./minio/bootstrap-research.sh:/bootstrap-research.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap-research.sh"]
     restart: "no"
 
   otel-collector:

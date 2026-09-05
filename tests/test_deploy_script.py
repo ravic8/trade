@@ -316,7 +316,7 @@ def test_prod_compose_reuses_one_api_image_for_python_services() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     compose = (repository_root / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
-    assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 4
+    assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 5
 
 
 def _call_index(calls: list[str], fragment: str) -> int:

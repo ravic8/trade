@@ -21,7 +21,7 @@ def _create_archive(backup_dir: Path, source: Path) -> None:
         stream.add(source, arcname=source.name)
 
 
-def _create_backup(tmp_path: Path) -> Path:
+def _create_backup(tmp_path: Path, *, include_phase2: bool = True) -> Path:
     payload_root = tmp_path / "payload"
     data_dir = payload_root / "data"
     manifest_dir = data_dir / "filings" / "nse" / "INFY"
@@ -54,7 +54,10 @@ def _create_backup(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
-    for name in ("minio", "qdrant", "artifacts", "dagster_home", "cloudbeaver"):
+    directory_names = ["minio", "qdrant", "artifacts", "dagster_home", "cloudbeaver"]
+    if include_phase2:
+        directory_names.append("clickhouse")
+    for name in directory_names:
         directory = payload_root / name
         directory.mkdir()
         (directory / "state").write_text(name, encoding="utf-8")
@@ -110,15 +113,31 @@ fi
 if [[ "$call" == *"SELECT extversion FROM pg_extension"* ]]; then
   printf '%s\n' '2.17.2'
 elif [[ "$call" == *"SELECT version_num FROM alembic_version"* ]]; then
-  printf '%s\n' '20260904_0013'
+  printf '%s\n' '20260905_0014'
 elif [[ "$call" == *"COUNT(*) FROM filing_documents"* ]]; then
   printf '%s\n' '123'
 elif [[ "$call" == *"COUNT(*) FROM filing_approved_facts"* ]]; then
   printf '%s\n' '1186'
 elif [[ "$call" == *"alembic heads"* ]]; then
-  printf '%s\n' '20260904_0013 (head)'
+  printf '%s\n' '20260905_0014 (head)'
+elif [[ "$call" == *"count() FROM research.schema_migrations"* ]]; then
+  printf '%s\n' '1'
+elif [[ "$call" == *"count() FROM system.tables"* ]]; then
+  printf '%s\n' '10'
+elif [[ "$call" == *"count() FROM research.ohlcv_daily"* ]]; then
+  printf '%s\n' '50'
 elif [[ "$call" == *"trade_research.filings.restore_validation"* ]]; then
   printf '%s\n' '{"versioning_status":"Enabled","object_count":26}'
+elif [[ "$call" == *"trade_research.storage.restore_validation"* ]]; then
+  cat <<'JSON'
+{
+  "raw":{"bucket":"trade-raw","versioning_status":"Enabled","object_count":1,"digest_verified_count":1},
+  "datasets":{"bucket":"trade-datasets","versioning_status":"Enabled","object_count":1,"digest_verified_count":1},
+  "models":{"bucket":"trade-models","versioning_status":"Enabled","object_count":0,"digest_verified_count":0},
+  "experiments":{"bucket":"trade-experiments","versioning_status":"Enabled","object_count":0,"digest_verified_count":0},
+  "exports":{"bucket":"trade-exports","versioning_status":"Enabled","object_count":1,"digest_verified_count":1}
+}
+JSON
 elif [[ "$call" == *"evaluate-filing-golden"* ]]; then
   cat <<'JSON'
 {
@@ -157,6 +176,16 @@ def _environment(
                 "PROD_FILING_S3_SECRET_ACCESS_KEY=restore-app-password",
                 "PROD_FILING_S3_BUCKET=lens-filings",
                 "PROD_FILING_S3_PREFIX=parsed",
+                "PROD_CLICKHOUSE_IMAGE=clickhouse:25.8.33.6-jammy",
+                "PROD_CLICKHOUSE_MIGRATION_USER=migration",
+                "PROD_CLICKHOUSE_MIGRATION_PASSWORD=restore-clickhouse-password",
+                "PROD_OBJECT_STORE_API_ACCESS_KEY_ID=restore-research-reader",
+                "PROD_OBJECT_STORE_API_SECRET_ACCESS_KEY=restore-research-password",
+                "PROD_OBJECT_STORE_RAW_BUCKET=trade-raw",
+                "PROD_OBJECT_STORE_DATASETS_BUCKET=trade-datasets",
+                "PROD_OBJECT_STORE_MODELS_BUCKET=trade-models",
+                "PROD_OBJECT_STORE_EXPERIMENTS_BUCKET=trade-experiments",
+                "PROD_OBJECT_STORE_EXPORTS_BUCKET=trade-exports",
             )
         )
         + "\n",
@@ -208,12 +237,25 @@ def test_restore_drill_is_isolated_and_emits_passing_report(tmp_path: Path) -> N
         "verified_document_count": 1,
         "failed_skipped_count": 1,
     }
-    assert report["postgresql"]["migration_revision"] == "20260904_0013"
+    assert report["postgresql"]["migration_revision"] == "20260905_0014"
     assert report["postgresql"]["timescaledb_version"] == "2.17.2"
     assert report["postgresql"]["approved_fact_count"] == 1186
     assert report["object_store"] == {
         "object_count": 26,
         "versioning_verified": True,
+    }
+    assert report["research_storage"]["clickhouse"] == {
+        "backup_present": True,
+        "migration_count": 1,
+        "required_table_count": 10,
+        "ohlcv_row_count": 50,
+    }
+    assert set(report["research_storage"]["object_buckets"]) == {
+        "raw",
+        "datasets",
+        "models",
+        "experiments",
+        "exports",
     }
     assert report["qdrant"]["reachable"] is True
     assert report["golden_evaluation"]["passed"] is True
@@ -229,7 +271,7 @@ def test_restore_drill_is_isolated_and_emits_passing_report(tmp_path: Path) -> N
     assert "timescaledb_pre_restore()" in docker_calls
     assert "timescaledb_post_restore()" in docker_calls
     assert "network rm trade-restore-" in docker_calls
-    assert docker_calls.count("rm -f trade-restore-") == 3
+    assert docker_calls.count("rm -f trade-restore-") == 4
     assert "--network none --user 0:0" in docker_calls
     assert "--entrypoint python" in docker_calls
     assert ":/restore-work" in docker_calls
@@ -263,6 +305,42 @@ def test_checksum_failure_never_starts_restore_containers(tmp_path: Path) -> Non
     assert report["isolation"]["work_dir_retained"] is True
     assert Path(report["isolation"]["work_dir"]).is_dir()
     assert len(list(restore_root.iterdir())) == 1
+
+
+def test_legacy_phase1_backup_remains_restorable_without_phase2_evidence(
+    tmp_path: Path,
+) -> None:
+    backup_dir = _create_backup(tmp_path, include_phase2=False)
+    fake_bin, docker_log = _create_fake_tools(tmp_path)
+    environment, _restore_root, report_root = _environment(
+        tmp_path,
+        fake_bin,
+        docker_log,
+    )
+
+    completed = subprocess.run(
+        ["bash", str(RESTORE_SCRIPT), str(backup_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(next(report_root.glob("*.json")).read_text(encoding="utf-8"))
+    assert report["status"] == "passed"
+    assert report["research_storage"] == {
+        "clickhouse": {
+            "backup_present": False,
+            "migration_count": 0,
+            "required_table_count": 0,
+            "ohlcv_row_count": 0,
+        },
+        "object_buckets": {},
+    }
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert "trade_research.storage.restore_validation" not in docker_calls
+    assert docker_calls.count("rm -f trade-restore-") == 3
 
 
 def test_failed_database_restore_cleans_containers_and_retains_evidence(
@@ -379,6 +457,7 @@ def test_privileged_restore_data_cleanup_failure_is_reported(tmp_path: Path) -> 
 
 def test_restore_drill_is_documented_and_has_configured_isolated_paths() -> None:
     script = RESTORE_SCRIPT.read_text(encoding="utf-8")
+    backup = (REPOSITORY_ROOT / "deploy" / "backup.sh").read_text(encoding="utf-8")
     example = (REPOSITORY_ROOT / ".env.prod.example").read_text(encoding="utf-8")
     acceptance = (
         REPOSITORY_ROOT / "docs" / "lens_m1_production_acceptance.md"
@@ -391,6 +470,9 @@ def test_restore_drill_is_documented_and_has_configured_isolated_paths() -> None
     assert "TRADE_RESTORE_KEEP=true" in acceptance
     assert "account for one failed download" in acceptance
     assert "trade_research.filings.restore_validation" in script
+    assert "trade_research.storage.restore_validation" in script
+    assert '"clickhouse.tgz"' in backup
+    assert "--profile research stop clickhouse" in backup
     assert "mc find" not in script
     assert "--print" not in script
     assert "| grep" not in script

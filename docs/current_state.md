@@ -65,9 +65,11 @@ assumption that must be replaced with point-in-time eligibility.
 | BigQuery analytics | Outbound replica | Feature-gated; never authoritative |
 | Qdrant | Retrieval experiment store | End-to-end document ingestion remains incomplete |
 
-ClickHouse and S3-compatible object storage are proposed in
-`docs/stabilization_validation_workflow_implementation_plan.md`; they are not
-present in the current repository or production Compose topology.
+The Phase 2 ClickHouse and general S3-compatible object-storage foundation is
+present in the repository but disabled by default. PostgreSQL remains the
+operational and daily-OHLCV authority, existing API reads do not depend on
+ClickHouse, and no production activation or canary acceptance is implied by
+the repository implementation. See `docs/phase2_storage_foundation.md`.
 
 ## Provider state
 
@@ -164,9 +166,10 @@ Detailed evidence is in `docs/phase0_production_audit.md`.
 - `dagster-daemon`;
 - optional profile `dagster-webserver`;
 - `postgres`;
+- profile-gated `clickhouse` plus one-shot identity and migration services;
 - `redis`;
 - `qdrant`;
-- `minio` and one-shot `minio-init`;
+- `minio`, filing initialization, and profile-gated research-bucket initialization;
 - `otel-collector`;
 - `prometheus`;
 - `alertmanager`;
@@ -180,8 +183,11 @@ Important boundaries:
 - CloudBeaver has no directly published production port;
 - MinIO, OpenTelemetry, Prometheus, and Alertmanager have no directly
   published production ports;
+- ClickHouse has no production host port and has explicit CPU, memory, query,
+  and log-retention limits;
 - PostgreSQL uses a loopback host port for SSH-tunneled administration;
-- API, filing worker, Dagster daemon, and Dagster webserver share the API image;
+- API, filing worker, Dagster daemon, Dagster webserver, and the ClickHouse
+  migration runner share the API image;
 - deployment applies Alembic migrations before starting the full stack.
 
 The GitHub deployment workflow joins Tailscale and uses SSH to synchronize and
