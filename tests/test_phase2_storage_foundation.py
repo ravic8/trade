@@ -176,3 +176,15 @@ def test_phase2_settings_fail_closed() -> None:
         Settings(object_store_enabled=True)
     with pytest.raises(ValueError, match="writes require"):
         Settings(object_store_write_enabled=True)
+
+
+def test_clickhouse_role_limits_use_validated_numeric_literals() -> None:
+    script = (
+        Path(__file__).parents[1] / "clickhouse" / "bootstrap-access.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "invalid numeric ClickHouse role limit" in script
+    assert "{max_seconds:UInt64}" not in script
+    assert "{max_memory:UInt64}" not in script
+    assert "{readonly_value:UInt8}" not in script
+    assert "max_execution_time = $max_seconds" in script

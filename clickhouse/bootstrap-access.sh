@@ -44,13 +44,16 @@ upsert_user() {
   max_seconds="$4"
   max_memory="$5"
   readonly_value="$6"
+  case "$max_seconds:$max_memory:$readonly_value" in
+    *[!0-9:]* | *::* | :* | *:)
+      printf 'invalid numeric ClickHouse role limit\n' >&2
+      exit 1
+      ;;
+  esac
   client \
     --param_user_name "$user_name" \
     --param_user_password "$user_password" \
     --param_role_name "$role_name" \
-    --param_max_seconds "$max_seconds" \
-    --param_max_memory "$max_memory" \
-    --param_readonly_value "$readonly_value" \
     --multiquery \
     --query "
       CREATE USER IF NOT EXISTS {user_name:Identifier}
@@ -58,9 +61,9 @@ upsert_user() {
       ALTER USER {user_name:Identifier}
         IDENTIFIED WITH sha256_password BY {user_password:String}
         SETTINGS
-          max_execution_time = {max_seconds:UInt64},
-          max_memory_usage = {max_memory:UInt64},
-          readonly = {readonly_value:UInt8};
+          max_execution_time = $max_seconds,
+          max_memory_usage = $max_memory,
+          readonly = $readonly_value;
       GRANT {role_name:Identifier} TO {user_name:Identifier};
       ALTER USER {user_name:Identifier} DEFAULT ROLE {role_name:Identifier};
     "
