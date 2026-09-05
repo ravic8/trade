@@ -184,6 +184,9 @@ def test_clickhouse_role_limits_use_validated_numeric_literals() -> None:
     ).read_text(encoding="utf-8")
 
     assert "invalid numeric ClickHouse role limit" in script
+    assert "invalid ClickHouse identifier" in script
+    assert "{user_name:Identifier}" not in script
+    assert "{role_name:Identifier}" not in script
     assert "{max_seconds:UInt64}" not in script
     assert "{max_memory:UInt64}" not in script
     assert "{readonly_value:UInt8}" not in script

@@ -24,6 +24,15 @@ client() {
     "$@"
 }
 
+validate_identifier() {
+  case "$1" in
+    "" | [0-9]* | *[!A-Za-z0-9_]*)
+      printf 'invalid ClickHouse identifier: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+}
+
 client --multiquery --query "
 CREATE DATABASE IF NOT EXISTS research;
 CREATE ROLE IF NOT EXISTS migration;
@@ -44,6 +53,8 @@ upsert_user() {
   max_seconds="$4"
   max_memory="$5"
   readonly_value="$6"
+  validate_identifier "$user_name"
+  validate_identifier "$role_name"
   case "$max_seconds:$max_memory:$readonly_value" in
     *[!0-9:]* | *::* | :* | *:)
       printf 'invalid numeric ClickHouse role limit\n' >&2
@@ -51,21 +62,19 @@ upsert_user() {
       ;;
   esac
   client \
-    --param_user_name "$user_name" \
     --param_user_password "$user_password" \
-    --param_role_name "$role_name" \
     --multiquery \
     --query "
-      CREATE USER IF NOT EXISTS {user_name:Identifier}
+      CREATE USER IF NOT EXISTS $user_name
         IDENTIFIED WITH sha256_password BY {user_password:String};
-      ALTER USER {user_name:Identifier}
+      ALTER USER $user_name
         IDENTIFIED WITH sha256_password BY {user_password:String}
         SETTINGS
           max_execution_time = $max_seconds,
           max_memory_usage = $max_memory,
           readonly = $readonly_value;
-      GRANT {role_name:Identifier} TO {user_name:Identifier};
-      ALTER USER {user_name:Identifier} DEFAULT ROLE {role_name:Identifier};
+      GRANT $role_name TO $user_name;
+      ALTER USER $user_name DEFAULT ROLE $role_name;
     "
 }
 
