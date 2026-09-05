@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -16,6 +17,12 @@ from trade_research.control_plane.tables import (
     market_data_replication_checkpoints_table,
 )
 from trade_research.market_data.adapters import yfinance_frame_to_candles
+from trade_research.market_data.aggregation import (
+    IntradayAggregationRequest,
+    aggregate_nse_minute_candles,
+    nse_bucket_expected_minutes,
+    nse_bucket_start,
+)
 from trade_research.market_data.contracts import CandleInterval, MarketCandle, ProviderRequest
 from trade_research.market_data.ingestion import (
     ValidatedMarketDataBatch,
@@ -598,3 +605,208 @@ def test_replication_mismatch_is_persisted_and_fails_closed(monkeypatch) -> None
     assert checkpoint["destination_row_count"] == 0
     assert checkpoint["destination_digest"] is not None
     assert "row_count" in checkpoint["error_message"]
+
+
+def _minute_candles(count: int, *, start: datetime) -> list[MarketCandle]:
+    provider_request = ProviderRequest(
+        request_id="minute-source",
+        provider="yfinance",
+        exchange="NSE",
+        interval=CandleInterval.ONE_MINUTE,
+        window_start=start,
+        window_end=start + timedelta(minutes=count),
+        provider_symbols=("RELIANCE.NS",),
+        retrieved_at=start + timedelta(hours=8),
+        adapter_version="yfinance-v1",
+    )
+    base = _candle(provider_request, timestamp=start)
+    candles: list[MarketCandle] = []
+    for offset in range(count):
+        open_price = Decimal(100 + offset)
+        candles.append(
+            replace(
+                base,
+                timestamp=start + timedelta(minutes=offset),
+                open=open_price,
+                high=open_price + Decimal("2"),
+                low=open_price - Decimal("1"),
+                close=open_price + Decimal("1"),
+                volume=offset + 1,
+            )
+        )
+    return candles
+
+
+def test_python_golden_aggregation_uses_nse_session_anchor_and_ohlcv_rules() -> None:
+    start = datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
+    request = IntradayAggregationRequest(
+        instrument_id="NSE_EQ|RELIANCE",
+        interval=CandleInterval.FIVE_MINUTES,
+        window_start=start,
+        window_end=start + timedelta(minutes=5),
+    )
+
+    result = aggregate_nse_minute_candles(request, _minute_candles(5, start=start))
+
+    assert len(result) == 1
+    candle = result[0]
+    assert candle.candle_timestamp == start
+    assert candle.open == Decimal("100")
+    assert candle.high == Decimal("106")
+    assert candle.low == Decimal("99")
+    assert candle.close == Decimal("105")
+    assert candle.volume == 15
+    assert candle.source_rows == candle.expected_source_rows == 5
+    assert candle.complete is True
+
+
+def test_python_aggregation_excludes_or_marks_a_bucket_with_a_missing_minute() -> None:
+    start = datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
+    candles = _minute_candles(5, start=start)
+    complete_only = IntradayAggregationRequest(
+        instrument_id="NSE_EQ|RELIANCE",
+        interval=CandleInterval.FIVE_MINUTES,
+        window_start=start,
+        window_end=start + timedelta(minutes=5),
+    )
+    include_partial = replace(complete_only, complete_only=False)
+
+    assert aggregate_nse_minute_candles(complete_only, candles[:-1]) == ()
+    partial = aggregate_nse_minute_candles(include_partial, candles[:-1])
+
+    assert len(partial) == 1
+    assert partial[0].complete is False
+    assert partial[0].source_rows == 4
+    assert partial[0].expected_source_rows == 5
+
+
+def test_final_nse_hour_bucket_expects_only_fifteen_minutes() -> None:
+    final_bucket = datetime(2026, 9, 5, 9, 45, tzinfo=UTC)
+
+    assert nse_bucket_start(final_bucket, CandleInterval.ONE_HOUR) == final_bucket
+    assert nse_bucket_expected_minutes(final_bucket, CandleInterval.ONE_HOUR) == 15
+
+    request = IntradayAggregationRequest(
+        instrument_id="NSE_EQ|RELIANCE",
+        interval=CandleInterval.ONE_HOUR,
+        window_start=final_bucket,
+        window_end=final_bucket + timedelta(minutes=15),
+    )
+    result = aggregate_nse_minute_candles(
+        request,
+        _minute_candles(15, start=final_bucket),
+    )
+    assert len(result) == 1
+    assert result[0].complete is True
+    assert result[0].expected_source_rows == 15
+
+
+@pytest.mark.parametrize(
+    ("interval", "expected"),
+    [
+        (CandleInterval.FIVE_MINUTES, datetime(2026, 9, 5, 4, 10, tzinfo=UTC)),
+        (CandleInterval.FIFTEEN_MINUTES, datetime(2026, 9, 5, 4, 0, tzinfo=UTC)),
+        (CandleInterval.THIRTY_MINUTES, datetime(2026, 9, 5, 3, 45, tzinfo=UTC)),
+        (CandleInterval.ONE_HOUR, datetime(2026, 9, 5, 3, 45, tzinfo=UTC)),
+    ],
+)
+def test_all_supported_intervals_anchor_to_nse_open(
+    interval: CandleInterval,
+    expected: datetime,
+) -> None:
+    assert nse_bucket_start(
+        datetime(2026, 9, 5, 4, 14, tzinfo=UTC),
+        interval,
+    ) == expected
+
+
+class _AggregateClickHouseClient:
+    def __init__(self) -> None:
+        self.query_text = ""
+        self.parameters: dict = {}
+
+    def query(self, query: str, parameters=None) -> SimpleNamespace:
+        self.query_text = query
+        self.parameters = parameters
+        return SimpleNamespace(
+            column_names=[
+                "workspace_id",
+                "instrument_id",
+                "exchange",
+                "symbol",
+                "provider_symbol",
+                "currency",
+                "candle_timestamp",
+                "session_date",
+                "interval",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "provider",
+                "provider_timestamp",
+                "source_rows",
+                "expected_source_rows",
+                "complete",
+                "source_content_digests",
+                "source_run_ids",
+                "raw_artifact_ids",
+            ],
+            result_rows=[
+                (
+                    "default",
+                    "NSE_EQ|RELIANCE",
+                    "NSE",
+                    "RELIANCE",
+                    "RELIANCE.NS",
+                    "INR",
+                    datetime(2026, 9, 5, 3, 45, tzinfo=UTC),
+                    date(2026, 9, 5),
+                    "15m",
+                    Decimal("100"),
+                    Decimal("105"),
+                    Decimal("99"),
+                    Decimal("104"),
+                    1000,
+                    "yfinance",
+                    datetime(2026, 9, 5, 12, tzinfo=UTC),
+                    15,
+                    15,
+                    1,
+                    ["a" * 64],
+                    ["run-1"],
+                    ["artifact-1"],
+                )
+            ],
+        )
+
+    def insert(self, _table: str, _data, _column_names) -> None:
+        return None
+
+    def command(self, _command: str, parameters=None) -> None:
+        return None
+
+
+def test_clickhouse_aggregation_is_on_demand_from_validated_one_minute_rows() -> None:
+    client = _AggregateClickHouseClient()
+    repository = ClickHouseMarketDataRepository(client)
+    start = datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
+    request = IntradayAggregationRequest(
+        instrument_id="NSE_EQ|RELIANCE",
+        interval=CandleInterval.FIFTEEN_MINUTES,
+        window_start=start,
+        window_end=start + timedelta(hours=1),
+    )
+
+    rows = repository.aggregate_nse_intraday(request)
+
+    assert len(rows) == 1
+    assert rows[0].interval is CandleInterval.FIFTEEN_MINUTES
+    assert rows[0].complete is True
+    assert rows[0].source_run_ids == ("run-1",)
+    assert "FROM research.ohlcv_intraday FINAL" in client.query_text
+    assert "interval = '1m'" in client.query_text
+    assert "09:15:00" in client.query_text
+    assert client.parameters["bucket_minutes"] == 15
+    assert client.parameters["complete_only"] == 1

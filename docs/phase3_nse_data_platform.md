@@ -44,6 +44,14 @@ gate is disabled.
 - The NSE minute path is available through
   `trade-research fetch-yfinance-nse-minute` and the
   `yfinance_nse_minute_job` Dagster job. Its schedule is stopped by default.
+- Validated `1m` rows can now be aggregated on request into `5m`, `15m`,
+  `30m`, or `1h` candles through ClickHouse and
+  `GET /api/data/candles/aggregate`. Buckets are anchored to the NSE 09:15 IST
+  open, carry source-run/raw-artifact lineage and a deterministic source
+  digest, and expose source-versus-expected minute counts. Incomplete buckets
+  are excluded by default and can be requested explicitly for diagnosis. The
+  Python golden implementation covers the same OHLCV and final-partial-bucket
+  rules used by the ClickHouse query.
 
 ## Fail-closed activation
 
@@ -82,6 +90,7 @@ Persisted NSE universe + materialized completed sessions
   -> PostgreSQL daily canonical commit (daily only)
   -> validated ClickHouse daily or 1m replica
   -> PostgreSQL replication checkpoint (count + digest + watermark)
+  -> request-time NSE session aggregation (5m / 15m / 30m / 1h)
 ```
 
 ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
@@ -90,8 +99,6 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 - Add daily Upstox-versus-yfinance reconciliation evidence and a signed NSE
   cutover/rollback gate for the agreed observation window.
-- Add request-driven `5m`, `15m`, `30m`, and `1h` aggregation from validated
-  `1m` data with deterministic golden fixtures.
 - Expose daily/minute freshness, unexplained gaps, duplicate counts, quarantine,
   raw lineage, and ClickHouse replication lag in the authenticated UI.
 - Add historical partition-level PostgreSQL-to-ClickHouse reconciliation and

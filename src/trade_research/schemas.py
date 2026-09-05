@@ -396,6 +396,43 @@ class DataAvailabilityResponse(BaseModel):
     summary: DataAvailabilitySummary
 
 
+class MarketDataAggregateCandle(BaseModel):
+    instrument_id: str
+    exchange: Literal["NSE"] = "NSE"
+    symbol: str
+    provider_symbol: str
+    currency: str
+    candle_timestamp: datetime
+    session_date: date
+    interval: Literal["5m", "15m", "30m", "1h"]
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int = Field(ge=0)
+    provider: str
+    provider_timestamp: datetime
+    source_rows: int = Field(ge=0)
+    expected_source_rows: int = Field(ge=1)
+    complete: bool
+    source_digest: str = Field(min_length=64, max_length=64)
+    source_run_ids: list[str] = Field(default_factory=list)
+    raw_artifact_ids: list[str] = Field(default_factory=list)
+
+
+class MarketDataAggregateResponse(BaseModel):
+    workspace_id: str
+    instrument_id: str
+    provider: str
+    exchange: Literal["NSE"] = "NSE"
+    source_interval: Literal["1m"] = "1m"
+    interval: Literal["5m", "15m", "30m", "1h"]
+    window_start: datetime
+    window_end: datetime
+    complete_only: bool
+    rows: list[MarketDataAggregateCandle] = Field(default_factory=list)
+
+
 class DataBulkFetchPreviewRow(DataAvailabilityRow):
     avg_daily_turnover: float | None = Field(default=None, ge=0.0)
     tasks: list[DataCoveragePreviewTask] = Field(default_factory=list)

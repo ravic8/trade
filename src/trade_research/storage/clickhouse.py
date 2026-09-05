@@ -6,6 +6,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
 from trade_research.config import Settings
+from trade_research.market_data.aggregation import (
+    AggregatedMarketCandle,
+    IntradayAggregationRequest,
+)
 from trade_research.market_data.contracts import MarketCandle, candle_content_sha256
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -325,6 +329,102 @@ class ClickHouseMarketDataRepository(_Repository):
             "digest": hashlib.sha256("\n".join(sorted(digests)).encode()).hexdigest(),
             "watermark": max(watermarks) if watermarks else None,
         }
+
+    def aggregate_nse_intraday(
+        self,
+        request: IntradayAggregationRequest,
+    ) -> list[AggregatedMarketCandle]:
+        """Derive session-anchored OHLCV aggregates from validated NSE 1m rows."""
+
+        result = self._client.query(
+            f"""
+            WITH {{bucket_minutes:UInt16}} AS bucket_minutes
+            SELECT
+                workspace_id,
+                instrument_id,
+                exchange,
+                argMin(symbol, source_candle_timestamp) AS symbol,
+                argMin(provider_symbol, source_candle_timestamp) AS provider_symbol,
+                argMin(currency, source_candle_timestamp) AS currency,
+                toTimeZone(bucket_timestamp_local, 'UTC') AS candle_timestamp,
+                session_date,
+                {{target_interval:String}} AS interval,
+                argMin(open, source_candle_timestamp) AS open,
+                max(high) AS high,
+                min(low) AS low,
+                argMax(close, source_candle_timestamp) AS close,
+                sum(volume) AS volume,
+                source AS provider,
+                max(provider_timestamp) AS provider_timestamp,
+                count() AS source_rows,
+                least(
+                    bucket_minutes,
+                    375 - dateDiff('minute', session_open, bucket_timestamp_local)
+                ) AS expected_source_rows,
+                source_rows = expected_source_rows AS complete,
+                arraySort(groupArray(toString(content_sha256))) AS source_content_digests,
+                arraySort(groupUniqArray(source_run_id)) AS source_run_ids,
+                arraySort(groupUniqArrayIf(raw_artifact_id, raw_artifact_id != ''))
+                    AS raw_artifact_ids
+            FROM
+            (
+                SELECT
+                    *,
+                    candle_timestamp AS source_candle_timestamp,
+                    toDateTime(
+                        concat(toString(session_date), ' 09:15:00'),
+                        'Asia/Kolkata'
+                    ) AS session_open,
+                    addMinutes(
+                        session_open,
+                        intDiv(
+                            dateDiff(
+                                'minute',
+                                session_open,
+                                toTimeZone(candle_timestamp, 'Asia/Kolkata')
+                            ),
+                            bucket_minutes
+                        ) * bucket_minutes
+                    ) AS bucket_timestamp_local
+                FROM {self._database}.ohlcv_intraday FINAL
+                WHERE workspace_id = {{workspace_id:String}}
+                  AND exchange = 'NSE'
+                  AND instrument_id = {{instrument_id:String}}
+                  AND source = {{provider:String}}
+                  AND interval = '1m'
+                  AND candle_timestamp >= {{window_start:DateTime64(6, 'UTC')}}
+                  AND candle_timestamp < {{window_end:DateTime64(6, 'UTC')}}
+            )
+            GROUP BY
+                workspace_id,
+                instrument_id,
+                exchange,
+                session_date,
+                source,
+                session_open,
+                bucket_timestamp_local
+            HAVING {{complete_only:UInt8}} = 0 OR complete
+            ORDER BY candle_timestamp, instrument_id
+            LIMIT {{limit:UInt32}}
+            """,
+            parameters={
+                "workspace_id": request.workspace_id,
+                "instrument_id": request.instrument_id,
+                "provider": request.provider,
+                "window_start": request.window_start,
+                "window_end": request.window_end,
+                "bucket_minutes": request.interval_minutes,
+                "target_interval": request.interval.value,
+                "complete_only": int(request.complete_only),
+                "limit": request.limit,
+            },
+        )
+        return [
+            AggregatedMarketCandle.from_mapping(
+                dict(zip(result.column_names, row, strict=True))
+            )
+            for row in result.result_rows
+        ]
 
 
 class ClickHouseExperimentRepository(_Repository):

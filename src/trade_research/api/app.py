@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from math import cos, sin
 from time import monotonic
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -38,6 +38,8 @@ from trade_research.market_calendar import (
     fetch_exchange_holidays,
     validated_exchange_calendar_years,
 )
+from trade_research.market_data.aggregation import IntradayAggregationRequest
+from trade_research.market_data.contracts import CandleInterval
 from trade_research.operations import WorkflowRequestStore
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
@@ -65,6 +67,8 @@ from trade_research.schemas import (
     DataPipelineWorkflowStatus,
     DataUniverseMemberRow,
     DataUniverseRow,
+    MarketDataAggregateCandle,
+    MarketDataAggregateResponse,
     OperationsAdaptiveRateStateRow,
     OperationsFreshnessRow,
     OperationsLifecycleEventRow,
@@ -85,6 +89,10 @@ from trade_research.schemas import (
     ScreenerResult,
     SourcesPayload,
     UniverseReconciliationResponse,
+)
+from trade_research.storage.clickhouse import (
+    ClickHouseMarketDataRepository,
+    create_clickhouse_client,
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
@@ -526,6 +534,90 @@ def data_availability(
         total=payload["total"],
         rows=payload["rows"],
         summary=payload["summary"],
+    )
+
+
+@app.get(
+    "/api/data/candles/aggregate",
+    response_model=MarketDataAggregateResponse,
+)
+def aggregate_nse_intraday_candles(
+    http_request: Request,
+    instrument_id: Annotated[str, Query(min_length=1, max_length=255)],
+    interval: Annotated[Literal["5m", "15m", "30m", "1h"], Query()],
+    window_start: Annotated[datetime, Query()],
+    window_end: Annotated[datetime, Query()],
+    provider: Annotated[str, Query(min_length=1, max_length=64)] = "yfinance",
+    complete_only: Annotated[bool, Query()] = True,
+    limit: Annotated[int, Query(ge=1, le=100_000)] = 5_000,
+) -> MarketDataAggregateResponse:
+    """Return NSE session-anchored aggregates derived from validated 1m candles."""
+
+    current_settings = get_settings()
+    if not (
+        current_settings.phase3_market_data_enabled
+        and current_settings.clickhouse_enabled
+    ):
+        raise HTTPException(status_code=503, detail="Phase 3 market data is unavailable")
+    workspace_id = http_request.headers.get("X-Workspace-ID", "default").strip()
+    if not workspace_id or len(workspace_id) > 64:
+        raise HTTPException(status_code=400, detail="X-Workspace-ID is invalid")
+    try:
+        aggregation_request = IntradayAggregationRequest(
+            instrument_id=instrument_id,
+            interval=CandleInterval(interval),
+            window_start=window_start,
+            window_end=window_end,
+            provider=provider,
+            workspace_id=workspace_id,
+            complete_only=complete_only,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        candles = _clickhouse_market_data_repository().aggregate_nse_intraday(
+            aggregation_request
+        )
+    except Exception as exc:
+        logger.exception("NSE intraday aggregation query failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Aggregated candle data is unavailable",
+        ) from exc
+    return MarketDataAggregateResponse(
+        workspace_id=workspace_id,
+        instrument_id=instrument_id,
+        provider=aggregation_request.provider,
+        interval=interval,
+        window_start=aggregation_request.window_start,
+        window_end=aggregation_request.window_end,
+        complete_only=complete_only,
+        rows=[
+            MarketDataAggregateCandle(
+                instrument_id=candle.instrument_id,
+                symbol=candle.symbol,
+                provider_symbol=candle.provider_symbol,
+                currency=candle.currency,
+                candle_timestamp=candle.candle_timestamp,
+                session_date=candle.session_date,
+                interval=interval,
+                open=float(candle.open),
+                high=float(candle.high),
+                low=float(candle.low),
+                close=float(candle.close),
+                volume=candle.volume,
+                provider=candle.provider,
+                provider_timestamp=candle.provider_timestamp,
+                source_rows=candle.source_rows,
+                expected_source_rows=candle.expected_source_rows,
+                complete=candle.complete,
+                source_digest=candle.source_digest,
+                source_run_ids=list(candle.source_run_ids),
+                raw_artifact_ids=list(candle.raw_artifact_ids),
+            )
+            for candle in candles
+        ],
     )
 
 
@@ -2107,6 +2199,14 @@ def _to_screener_result(row: dict) -> dict:
 def _store() -> TimescaleStore:
     settings = get_settings()
     return TimescaleStore(settings.database_url)
+
+
+def _clickhouse_market_data_repository() -> ClickHouseMarketDataRepository:
+    current_settings = get_settings()
+    return ClickHouseMarketDataRepository(
+        create_clickhouse_client(current_settings),
+        database=current_settings.clickhouse_database,
+    )
 
 
 def _workflow_store() -> WorkflowRequestStore:
