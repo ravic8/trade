@@ -193,7 +193,8 @@ workflow, analytical, vector-store, object-store, and workspace services are
 stopped briefly while their state is archived. Provider
 credentials are stored encrypted in Postgres. Restore of those credentials
 requires the matching PROD_APP_SECRET_KEY from the server environment, which
-is intentionally not copied into this backup.
+is intentionally not copied into this backup. Encrypted MinIO objects likewise
+require the matching external KMS configuration, which is not copied here.
 EOF
 
 (

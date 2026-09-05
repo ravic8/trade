@@ -66,6 +66,7 @@ python scripts/collect_phase2_capacity.py \
 Run the real service validation on a host with Docker:
 
 ```bash
+export MINIO_KMS_SECRET_KEY=phase2-local:<base64-encoded-32-byte-test-key>
 docker compose --profile research up -d clickhouse minio
 docker compose --profile research run --rm clickhouse-init
 docker compose run --rm minio-research-init
@@ -81,7 +82,8 @@ PHASE2_SERVICE_TESTS=1 python -m pytest \
 
 The CI `research-storage` job runs the migration twice and verifies table
 coverage, duplicate reconciliation, read-only denial, bucket versioning,
-digest-verified reads, and deletion denial.
+digest-verified reads, SSE-S3 writes, and deletion denial. CI generates an
+ephemeral MinIO static KMS key; static keys are never used for production.
 
 ## Bounded canary
 
@@ -144,6 +146,8 @@ that evidence does not satisfy the Phase 2 exit gate.
 
 1. Capture fresh capacity and Phase 1 backup evidence.
 2. Install all dedicated credentials in `/opt/trade/.env`.
+   Configure `PROD_MINIO_KMS_*` for a production MinIO KMS/KES deployment;
+   Phase 2 object writes intentionally fail without a configured key manager.
 3. Set only `PROD_RESEARCH_STORAGE_DEPLOY_ENABLED=true` and deploy.
 4. Confirm PostgreSQL and ClickHouse migration heads, role isolation, and
    object-store policy isolation.

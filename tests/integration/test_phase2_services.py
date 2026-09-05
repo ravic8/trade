@@ -108,7 +108,7 @@ def test_clickhouse_roles_migrations_and_retry_reconciliation() -> None:
         )
 
     analyst = _clickhouse("CLICKHOUSE_ANALYST_USER", "CLICKHOUSE_ANALYST_PASSWORD")
-    assert analyst.query("SELECT count() FROM feature_observations_daily").first_item >= 1
+    assert analyst.query("SELECT count() FROM feature_observations_daily").first_row[0] >= 1
     with pytest.raises(DatabaseError):
         analyst.command("TRUNCATE TABLE feature_observations_daily")
 

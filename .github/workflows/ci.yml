@@ -104,6 +104,17 @@ jobs:
       PHASE2_SERVICE_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
+      - name: Generate ephemeral MinIO static KMS key
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          import secrets
+
+          key = base64.b64encode(secrets.token_bytes(32)).decode()
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              stream.write(f"MINIO_KMS_SECRET_KEY=phase2-ci:{key}\n")
+          PY
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
