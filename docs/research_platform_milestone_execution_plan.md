@@ -755,13 +755,14 @@ docker-compose.prod.yml
 # Phase 3 — Market Data Stabilization and yfinance Cutover
 
 **Indicative effort:** 1–2 implementation weeks plus observation window
-**Primary result:** Scheduled, measurable, recoverable daily market data for all
-three exchanges
+**Primary result:** Scheduled, measurable, recoverable NSE daily and minute
+market data for the V1 research workflow
 
 ## 3.1 Objective
 
-Make yfinance the controlled standard provider for NSE, TSX, and US daily
-equities while preserving correctness and rollback.
+Make yfinance the controlled NSE provider for daily and available-retention
+minute equities while preserving correctness, evidence, and rollback. TSX and
+US remain existing product capabilities but are outside the V1 Phase 3 scope.
 
 ## 3.2 Preconditions
 
@@ -839,9 +840,9 @@ completed sessions and a representative universe:
 - listing boundary;
 - missing and repeated rows.
 
-### WP3.5 — Exchange canaries
+### WP3.5 — NSE daily and minute canaries
 
-For NSE, TSX, and US:
+For NSE daily and `1m` data:
 
 1. bounded universe;
 2. bounded history;
@@ -925,8 +926,8 @@ Per exchange:
 
 ## 3.8 Exit criteria
 
-- Dagster schedules successfully maintain all exchanges.
-- yfinance is primary where its cutover gate passed.
+- Dagster schedules successfully maintain NSE daily and minute data.
+- yfinance is primary only after the NSE cutover gate passes.
 - Every missing session has an explainable quality state.
 - Queue retries and quarantine are bounded and visible.
 - Latest-session UI values agree with PostgreSQL.

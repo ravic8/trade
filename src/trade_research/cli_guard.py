@@ -51,6 +51,7 @@ COMMAND_EFFECTS: dict[str, CommandEffect] = {
     "fetch-yfinance-missing": CommandEffect.MUTATING,
     "fetch-dukascopy-intraday": CommandEffect.MUTATING,
     "fetch-yfinance-intraday": CommandEffect.MUTATING,
+    "fetch-yfinance-nse-minute": CommandEffect.MUTATING,
     "build-daily-features": CommandEffect.MUTATING,
     "build-daily-targets": CommandEffect.MUTATING,
     "build-opportunity-targets": CommandEffect.MUTATING,

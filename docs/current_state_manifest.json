@@ -65,6 +65,7 @@
     "north_america_daily_yfinance_schedule",
     "fx_intraday_dukascopy_schedule",
     "yfinance_fx_intraday_schedule",
+    "yfinance_nse_minute_schedule",
     "nse_universe_refresh_schedule",
     "tsx_universe_refresh_schedule",
     "us_universe_refresh_schedule",

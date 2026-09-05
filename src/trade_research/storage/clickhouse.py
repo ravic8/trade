@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
 from trade_research.config import Settings
+from trade_research.market_data.contracts import MarketCandle, candle_content_sha256
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -129,6 +130,161 @@ class ClickHouseFeatureRepository(_Repository):
             },
         )
         return [dict(zip(result.column_names, row, strict=True)) for row in result.result_rows]
+
+
+class ClickHouseMarketDataRepository(_Repository):
+    """Append validated canonical candles to the analytical replica."""
+
+    DAILY_COLUMNS = (
+        "workspace_id",
+        "instrument_id",
+        "exchange",
+        "symbol",
+        "provider_symbol",
+        "currency",
+        "session_date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "source",
+        "provider_timestamp",
+        "request_id",
+        "raw_artifact_id",
+        "adapter_version",
+        "source_run_id",
+        "content_sha256",
+        "version",
+    )
+    INTRADAY_COLUMNS = (
+        "workspace_id",
+        "instrument_id",
+        "exchange",
+        "symbol",
+        "provider_symbol",
+        "currency",
+        "candle_timestamp",
+        "session_date",
+        "interval",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "source",
+        "provider_timestamp",
+        "request_id",
+        "raw_artifact_id",
+        "adapter_version",
+        "source_run_id",
+        "content_sha256",
+        "version",
+    )
+
+    def insert_validated(
+        self,
+        candles: Iterable[MarketCandle],
+        *,
+        source_run_id: str,
+        workspace_id: str = "default",
+        version: int,
+    ) -> int:
+        materialized = list(candles)
+        daily = [candle for candle in materialized if not candle.interval.is_intraday]
+        intraday = [candle for candle in materialized if candle.interval.is_intraday]
+        inserted = self._insert(
+            "ohlcv_daily",
+            (
+                self._row(
+                    candle,
+                    source_run_id=source_run_id,
+                    workspace_id=workspace_id,
+                    version=version,
+                )
+                for candle in daily
+            ),
+            self.DAILY_COLUMNS,
+        )
+        inserted += self._insert(
+            "ohlcv_intraday",
+            (
+                self._row(
+                    candle,
+                    source_run_id=source_run_id,
+                    workspace_id=workspace_id,
+                    version=version,
+                )
+                for candle in intraday
+            ),
+            self.INTRADAY_COLUMNS,
+        )
+        return inserted
+
+    @staticmethod
+    def _row(
+        candle: MarketCandle,
+        *,
+        source_run_id: str,
+        workspace_id: str,
+        version: int,
+    ) -> dict[str, Any]:
+        row = {
+            "workspace_id": workspace_id,
+            "instrument_id": candle.instrument_id,
+            "exchange": candle.exchange,
+            "symbol": candle.symbol or candle.provider_symbol,
+            "provider_symbol": candle.provider_symbol,
+            "currency": candle.currency,
+            "session_date": candle.session_date,
+            "open": candle.open,
+            "high": candle.high,
+            "low": candle.low,
+            "close": candle.close,
+            "volume": candle.volume,
+            "source": candle.provider,
+            "provider_timestamp": candle.provider_timestamp,
+            "request_id": candle.request_id,
+            "raw_artifact_id": candle.raw_artifact_id or "",
+            "adapter_version": candle.adapter_version,
+            "source_run_id": source_run_id,
+            "content_sha256": candle_content_sha256(candle),
+            "version": version,
+        }
+        if candle.interval.is_intraday:
+            row["candle_timestamp"] = candle.timestamp
+            row["interval"] = candle.interval.value
+        return row
+
+    def count_rows(
+        self,
+        *,
+        exchange: str,
+        interval: str,
+        source_run_id: str,
+        workspace_id: str = "default",
+    ) -> int:
+        table = "ohlcv_daily" if interval == "1d" else "ohlcv_intraday"
+        interval_filter = (
+            "" if interval == "1d" else " AND interval = {interval:String}"
+        )
+        result = self._client.query(
+            f"""
+            SELECT count()
+            FROM {self._database}.{table} FINAL
+            WHERE workspace_id = {{workspace_id:String}}
+              AND exchange = {{exchange:String}}
+              AND source_run_id = {{source_run_id:String}}
+              {interval_filter}
+            """,
+            parameters={
+                "workspace_id": workspace_id,
+                "exchange": exchange,
+                "source_run_id": source_run_id,
+                "interval": interval,
+            },
+        )
+        return int(result.result_rows[0][0]) if result.result_rows else 0
 
 
 class ClickHouseExperimentRepository(_Repository):

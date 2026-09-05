@@ -18,6 +18,11 @@ from trade_research.data.provider_history import (
     verified_provider_history_start,
 )
 from trade_research.data.rate_limits import build_provider_rate_limiter
+from trade_research.market_data.contracts import CandleInterval
+from trade_research.market_data.ingestion import (
+    prepare_yfinance_batch,
+    replicate_validated_batch,
+)
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.yfinance_daily import (
     YFinanceBatchProvider,
@@ -749,8 +754,40 @@ def _execute_claimed_exchange_work(
         batch_size=min(25, settings.yfinance_work_claim_size),
         settings=settings,
     )
-    frame = pd.concat(execution.frames, ignore_index=True) if execution.frames else pd.DataFrame()
-    frame = _completed_session_rows(frame, completed_session)
+    raw_frame = (
+        pd.concat(execution.frames, ignore_index=True) if execution.frames else pd.DataFrame()
+    )
+    frame = _completed_session_rows(raw_frame, completed_session)
+    validated = None
+    if settings.phase3_market_data_enabled and exchange == "NSE":
+        window_start = min(item["window_start"] for item in executable_work)
+        window_end = max(item["window_end"] for item in executable_work)
+        session_rows = db.exchange_sessions(exchange, window_start, window_end)
+        eligible_sessions = {
+            row["session_date"]
+            for row in session_rows
+            if row["is_trading_day"] and str(row["validation_status"]).startswith("valid")
+        }
+        validated = prepare_yfinance_batch(
+            settings=settings,
+            database_engine=db.engine,
+            frame=frame,
+            raw_frame=raw_frame,
+            exchange=exchange,
+            interval=CandleInterval.ONE_DAY,
+            run_id=run_id,
+            window_start=window_start,
+            window_end=window_end,
+            provider_symbols=[str(item["provider_symbol"]) for item in executable_work],
+            canonical_instrument_ids={
+                str(item["provider_symbol"]): str(item["canonical_instrument_id"])
+                for item in executable_work
+            },
+            eligible_sessions=eligible_sessions,
+            retrieved_at=_as_utc(at or datetime.now(UTC)),
+            adapter_version=settings.phase3_yfinance_adapter_version,
+        )
+        frame = validated.frame
     ticker_outcomes = _require_daily_incremental_target_session(
         ticker_outcomes=execution.ticker_outcomes,
         work_items=executable_work,
@@ -770,6 +807,13 @@ def _execute_claimed_exchange_work(
         if not frame.empty
         else 0
     )
+    if validated is not None:
+        replicate_validated_batch(
+            settings,
+            validated,
+            source_run_id=run_id,
+            version=int(_as_utc(at or datetime.now(UTC)).timestamp() * 1_000_000),
+        )
     _record_successful_provider_history_evidence(
         db=db,
         settings=settings,

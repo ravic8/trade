@@ -54,7 +54,7 @@ class YFinanceDailyProvider:
 
 
 class YFinanceIntradayProvider:
-    """Fetch 5-minute intraday OHLCV candles from yfinance."""
+    """Fetch bounded intraday OHLCV candles from yfinance."""
 
     def __init__(self, auto_adjust: bool = False) -> None:
         self.auto_adjust = auto_adjust
@@ -68,8 +68,8 @@ class YFinanceIntradayProvider:
     ) -> pd.DataFrame:
         if not instruments:
             return pd.DataFrame()
-        if interval != "5m":
-            raise ValueError("Only interval=5m is supported for yfinance intraday.")
+        if interval not in {"1m", "5m"}:
+            raise ValueError("Only interval=1m or interval=5m is supported for yfinance intraday.")
         try:
             import yfinance as yf
         except ImportError as exc:  # pragma: no cover - exercised in installed runtime

@@ -45,6 +45,7 @@ from trade_research.pipelines.yfinance_daily import (
     run_yfinance_missing_ohlcv_pipeline,
 )
 from trade_research.pipelines.yfinance_intraday import run_yfinance_intraday_ohlcv_pipeline
+from trade_research.pipelines.yfinance_nse_minute import run_yfinance_nse_minute_pipeline
 from trade_research.pipelines.yfinance_work_queue import (
     run_yfinance_daily_work_planner,
     run_yfinance_daily_work_queue,
@@ -85,5 +86,6 @@ __all__ = [
     "run_yfinance_nse_canary_planner",
     "run_yfinance_tsx_canary_planner",
     "run_yfinance_intraday_ohlcv_pipeline",
+    "run_yfinance_nse_minute_pipeline",
     "run_yfinance_missing_ohlcv_pipeline",
 ]

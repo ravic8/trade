@@ -73,6 +73,7 @@ from trade_research.pipelines import (
     run_yfinance_intraday_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
     run_yfinance_nse_canary_planner,
+    run_yfinance_nse_minute_pipeline,
     run_yfinance_provider_history_evidence_bootstrap,
     run_yfinance_tsx_canary_planner,
 )
@@ -1859,6 +1860,42 @@ def fetch_yfinance_intraday(
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
     if store_db:
         console.print(f"Upserted ohlcv_intraday rows: {result.metrics['timescale_rows']}")
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("fetch-yfinance-nse-minute")
+def fetch_yfinance_nse_minute(
+    from_datetime: Annotated[
+        str | None,
+        typer.Option(help="Optional ISO start within configured yfinance 1m retention."),
+    ] = None,
+    to_datetime: Annotated[
+        str | None,
+        typer.Option(help="Optional ISO end; defaults to the current time."),
+    ] = None,
+    symbol_limit: Annotated[
+        int | None,
+        typer.Option(min=1, max=500, help="Bounded active NSE symbol count."),
+    ] = None,
+) -> None:
+    """Fetch validated NSE 1m candles with raw evidence and ClickHouse replication."""
+
+    try:
+        result = run_yfinance_nse_minute_pipeline(
+            from_datetime=from_datetime,
+            to_datetime=to_datetime,
+            symbol_limit=symbol_limit,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(
+        f"NSE 1m: {result.metrics['validated_rows']} validated, "
+        f"{result.metrics['clickhouse_rows']} replicated"
+    )
+    console.print(f"Eligible sessions: {result.metrics['eligible_sessions']}")
+    console.print(f"Raw snapshot: {result.metrics['raw_snapshot_uri']}")
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
 

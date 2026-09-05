@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     object_store_exports_bucket: str = "trade-exports"
     object_store_server_side_encryption: Literal["AES256", "aws:kms"] = "AES256"
 
+    # Phase 3 fails closed because accepted market data must retain raw evidence
+    # and replicate to ClickHouse. It is intentionally disabled until both
+    # Phase 2 write planes are production-ready.
+    phase3_market_data_enabled: bool = False
+    phase3_yfinance_adapter_version: str = "yfinance-v1"
+    yfinance_nse_minute_enabled: bool = False
+    yfinance_nse_minute_lookback_days: int = Field(default=7, ge=1, le=8)
+    yfinance_nse_minute_max_symbols_per_run: int = Field(default=100, ge=1, le=500)
+
     filing_enabled: bool = True
     filing_default_workspace_id: str = "default"
     filing_manifest_path: Path = Path("data/filings/nse/INFY/manifest.json")
@@ -301,6 +310,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OBJECT_STORE_ACCESS_KEY_ID and OBJECT_STORE_SECRET_ACCESS_KEY are "
                 "required when OBJECT_STORE_ENABLED=true"
+            )
+        if self.phase3_market_data_enabled and not (
+            self.object_store_write_enabled and self.clickhouse_write_enabled
+        ):
+            raise ValueError(
+                "Phase 3 market data requires object-store and ClickHouse writes"
+            )
+        if self.yfinance_nse_minute_enabled and not self.phase3_market_data_enabled:
+            raise ValueError(
+                "NSE minute ingestion requires PHASE3_MARKET_DATA_ENABLED=true"
             )
         if self.bigquery_enabled and not self.bigquery_project_id:
             raise ValueError("BIGQUERY_PROJECT_ID is required when BIGQUERY_ENABLED=true")
