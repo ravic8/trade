@@ -14,6 +14,10 @@ from trade_research.market_data.ingestion import (
     prepare_yfinance_batch,
     replicate_validated_batch,
 )
+from trade_research.market_data.quality import (
+    MarketDataQualityRepository,
+    nse_minute_missing_quality_outcomes,
+)
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.yfinance_intraday import _fetch_yfinance_intraday_with_controls
 from trade_research.storage import TimescaleStore
@@ -121,6 +125,10 @@ def run_yfinance_nse_minute_pipeline(
         failures=failures,
     )
     frame = _completed_session_rows(raw_frame, eligible_sessions)
+    canonical_instrument_ids = {
+        instrument.yahoo_symbol: str(row["canonical_instrument_id"])
+        for instrument, row in zip(instruments, selected_rows, strict=True)
+    }
     validated = prepare_yfinance_batch(
         settings=settings,
         database_engine=db.engine,
@@ -132,18 +140,33 @@ def run_yfinance_nse_minute_pipeline(
         window_start=start,
         window_end=end,
         provider_symbols=[instrument.yahoo_symbol for instrument in instruments],
-        canonical_instrument_ids={
-            instrument.yahoo_symbol: str(row["canonical_instrument_id"])
-            for instrument, row in zip(instruments, selected_rows, strict=True)
-        },
+        canonical_instrument_ids=canonical_instrument_ids,
         eligible_sessions=eligible_sessions,
         retrieved_at=observed_at,
         adapter_version=settings.phase3_yfinance_adapter_version,
     )
+    failed_instrument_keys = {str(failure.get("instrument_key") or "") for failure in failures}
+    unavailable_provider_symbols = {
+        instrument.yahoo_symbol
+        for instrument in instruments
+        if instrument.instrument_key in failed_instrument_keys
+    }
+    MarketDataQualityRepository(db.engine).record(
+        nse_minute_missing_quality_outcomes(
+            request=validated.request,
+            source_run_id=str(run_id),
+            canonical_instrument_ids=canonical_instrument_ids,
+            eligible_sessions=eligible_sessions,
+            accepted=validated.candles,
+            unavailable_provider_symbols=unavailable_provider_symbols,
+        )
+    )
     clickhouse_rows = replicate_validated_batch(
         settings,
         validated,
+        database_engine=db.engine,
         source_run_id=str(run_id),
+        source_store="validated_batch",
         version=int(observed_at.timestamp() * 1_000_000),
     )
     status = "completed_with_failures" if failures else (

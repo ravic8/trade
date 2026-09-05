@@ -74,8 +74,10 @@ the repository implementation. See `docs/phase2_storage_foundation.md`.
 The Phase 3 NSE data-platform implementation has started behind disabled,
 fail-closed feature gates. The repository now contains provider-neutral candle
 contracts, immutable raw yfinance snapshots, common candle validation, a
-validated ClickHouse daily replica path, and bounded NSE `1m` ingestion. It is
-not production-active and does not yet satisfy the Phase 3 exit gate. See
+validated ClickHouse daily replica path, bounded NSE `1m` ingestion,
+candle-level missing/error explanations, and fail-closed per-batch replication
+checkpoints with count, digest, and watermark evidence. It is not
+production-active and does not yet satisfy the Phase 3 exit gate. See
 `docs/phase3_nse_data_platform.md`.
 
 ## Provider state

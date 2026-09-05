@@ -2005,7 +2005,7 @@ Maintain this table in the document or a linked tracking issue:
 | Phase 0 | not_started |  |  |  |  |
 | Phase 1 | repository_ready; production_verification_pending | trade-research-platform | 2026-09-04 |  | `docs/phase1_exit_checklist.md` |
 | Phase 2 | not_started |  |  |  |  |
-| Phase 3 | not_started |  |  |  |  |
+| Phase 3 | in_progress | trade-research-platform | 2026-09-05 |  | `docs/phase3_nse_data_platform.md` |
 | Phase 4 | not_started |  |  |  |  |
 | Phase 5 | not_started |  |  |  |  |
 | Phase 6 | not_started |  |  |  |  |

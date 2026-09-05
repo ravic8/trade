@@ -130,12 +130,27 @@ def test_nse_minute_pipeline_snapshots_raw_but_replicates_completed_sessions(
     def prepare(**kwargs):
         captured.update(kwargs)
         return SimpleNamespace(
+            request=object(),
             frame=kwargs["frame"],
             candles=(object(),),
             raw_snapshot=SimpleNamespace(storage_uri="s3://trade-raw/minute.json"),
         )
 
     monkeypatch.setattr(nse_minute, "prepare_yfinance_batch", prepare)
+    monkeypatch.setattr(
+        nse_minute,
+        "nse_minute_missing_quality_outcomes",
+        lambda **_kwargs: [],
+    )
+
+    class QualityRepository:
+        def __init__(self, _engine) -> None:
+            pass
+
+        def record(self, outcomes) -> int:
+            return len(outcomes)
+
+    monkeypatch.setattr(nse_minute, "MarketDataQualityRepository", QualityRepository)
     monkeypatch.setattr(
         nse_minute,
         "replicate_validated_batch",

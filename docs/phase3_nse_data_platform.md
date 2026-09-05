@@ -29,6 +29,14 @@ gate is disabled.
   to daily candles and creates the normalized `ohlcv_intraday` table.
 - The existing durable yfinance daily worker uses the new snapshot, validation,
   and ClickHouse-replication boundary when Phase 3 is enabled.
+- PostgreSQL now stores an idempotent candle-quality ledger. Accepted candles
+  and validation findings are classified as `valid`, `duplicate`, `invalid`,
+  `outside_session`, or `stale`; every absent expected daily or NSE minute
+  candle is classified as `missing` or `provider_unavailable` with its reason.
+- Each ClickHouse write records a durable replication checkpoint with the
+  source and destination row count, deterministic candle digest, watermark,
+  watermark lag, write latency, and terminal `reconciled`, `mismatch`, or
+  `failed` state. A mismatch fails the ingestion attempt closed.
 - A bounded NSE `1m` pipeline resolves the persisted active NSE universe,
   enforces the configured yfinance retention window, retains the unfiltered raw
   response, accepts only completed materialized sessions, validates timestamps
@@ -70,24 +78,25 @@ Persisted NSE universe + materialized completed sessions
   -> immutable raw response snapshot + PostgreSQL manifest
   -> provider-independent candle adapter
   -> OHLC/session/timezone/duplicate validation
+  -> PostgreSQL candle-quality outcomes
   -> PostgreSQL daily canonical commit (daily only)
   -> validated ClickHouse daily or 1m replica
+  -> PostgreSQL replication checkpoint (count + digest + watermark)
 ```
 
 ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 ## Remaining Phase 3 work
 
-- Persist per-session and per-instrument quality outcomes so every missing
-  candle has an explainable status.
 - Add daily Upstox-versus-yfinance reconciliation evidence and a signed NSE
   cutover/rollback gate for the agreed observation window.
 - Add request-driven `5m`, `15m`, `30m`, and `1h` aggregation from validated
   `1m` data with deterministic golden fixtures.
 - Expose daily/minute freshness, unexplained gaps, duplicate counts, quarantine,
   raw lineage, and ClickHouse replication lag in the authenticated UI.
-- Add reconciliation watermarks and key-digest equality between PostgreSQL and
-  ClickHouse daily data.
+- Add historical partition-level PostgreSQL-to-ClickHouse reconciliation and
+  repair; the current checkpoint proves equality for each newly committed
+  validated daily batch.
 - Record observed yfinance minute availability instead of treating the
   configured retention bound as a provider guarantee.
 - Build Python/Rust golden datasets before considering a Rust hot path.

@@ -23,6 +23,11 @@ from trade_research.market_data.ingestion import (
     prepare_yfinance_batch,
     replicate_validated_batch,
 )
+from trade_research.market_data.quality import (
+    DailyExpectedWindow,
+    MarketDataQualityRepository,
+    daily_missing_quality_outcomes,
+)
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.yfinance_daily import (
     YFinanceBatchProvider,
@@ -793,6 +798,40 @@ def _execute_claimed_exchange_work(
         work_items=executable_work,
         frame=frame,
     )
+    if validated is not None:
+        outcomes_by_id = {
+            str(outcome["work_item_id"]): outcome
+            for outcome in ticker_outcomes
+            if outcome.get("work_item_id")
+        }
+        quality_windows: list[DailyExpectedWindow] = []
+        for item in executable_work:
+            outcome = outcomes_by_id.get(str(item["work_item_id"]), {})
+            provider_available = outcome.get("status") in {"success", "incomplete_session"}
+            quality_windows.append(
+                DailyExpectedWindow(
+                    instrument_id=str(item["canonical_instrument_id"]),
+                    provider_symbol=str(item["provider_symbol"]),
+                    window_start=item["window_start"],
+                    window_end=item["window_end"],
+                    provider_available=provider_available,
+                    reason_code=(
+                        None
+                        if outcome.get("status") == "success"
+                        else str(outcome.get("status") or "missing_outcome")
+                    ),
+                    retryable=bool(outcome.get("retryable", True)),
+                )
+            )
+        MarketDataQualityRepository(db.engine).record(
+            daily_missing_quality_outcomes(
+                request=validated.request,
+                source_run_id=run_id,
+                windows=quality_windows,
+                eligible_sessions=eligible_sessions,
+                accepted=validated.candles,
+            )
+        )
     written = (
         _retry_database_write(
             lambda: db.upsert_daily_ohlcv(frame, exchange=exchange, source="yfinance")
@@ -811,7 +850,9 @@ def _execute_claimed_exchange_work(
         replicate_validated_batch(
             settings,
             validated,
+            database_engine=db.engine,
             source_run_id=run_id,
+            source_store="postgresql",
             version=int(_as_utc(at or datetime.now(UTC)).timestamp() * 1_000_000),
         )
     _record_successful_provider_history_evidence(

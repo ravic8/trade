@@ -3,8 +3,11 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Table,
@@ -223,4 +226,81 @@ audit_events_table = Table(
     Column("request_id", String(255)),
     Column("event_metadata", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+market_data_quality_outcomes_table = Table(
+    "market_data_quality_outcomes",
+    metadata,
+    Column("quality_outcome_id", String(64), primary_key=True),
+    Column("workspace_id", String(64), nullable=False),
+    Column("source_run_id", String(255), nullable=False),
+    Column("request_id", String(255), nullable=False),
+    Column("provider", String(64), nullable=False),
+    Column("exchange", String(32), nullable=False),
+    Column("interval", String(16), nullable=False),
+    Column("instrument_id", String(255), nullable=False),
+    Column("provider_symbol", String(255), nullable=False),
+    Column("session_date", Date, nullable=False),
+    Column("candle_timestamp", DateTime(timezone=True)),
+    Column("status", String(32), nullable=False),
+    Column("reason_code", String(100), nullable=False),
+    Column("severity", String(16), nullable=False),
+    Column("expected", Boolean, nullable=False),
+    Column("retryable", Boolean, nullable=False),
+    Column("raw_artifact_id", String(36)),
+    Column("details", JSON, nullable=False),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+market_data_replication_checkpoints_table = Table(
+    "market_data_replication_checkpoints",
+    metadata,
+    Column("replication_checkpoint_id", String(64), primary_key=True),
+    Column("workspace_id", String(64), nullable=False),
+    Column("source_run_id", String(255), nullable=False),
+    Column("source_store", String(64), nullable=False),
+    Column("destination_store", String(64), nullable=False),
+    Column("dataset_key", String(100), nullable=False),
+    Column("exchange", String(32), nullable=False),
+    Column("interval", String(16), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("source_row_count", BigInteger, nullable=False),
+    Column("destination_row_count", BigInteger),
+    Column("source_digest", String(64), nullable=False),
+    Column("destination_digest", String(64)),
+    Column("source_watermark", DateTime(timezone=True)),
+    Column("destination_watermark", DateTime(timezone=True)),
+    Column("watermark_lag_seconds", Float),
+    Column("replication_latency_ms", Float),
+    Column("error_message", Text),
+    Column("details", JSON, nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+Index(
+    "idx_market_data_quality_run_status",
+    market_data_quality_outcomes_table.c.source_run_id,
+    market_data_quality_outcomes_table.c.status,
+)
+Index(
+    "idx_market_data_quality_instrument_session",
+    market_data_quality_outcomes_table.c.exchange,
+    market_data_quality_outcomes_table.c.interval,
+    market_data_quality_outcomes_table.c.instrument_id,
+    market_data_quality_outcomes_table.c.session_date,
+)
+Index(
+    "idx_market_data_replication_run",
+    market_data_replication_checkpoints_table.c.source_run_id,
+    market_data_replication_checkpoints_table.c.dataset_key,
+)
+Index(
+    "idx_market_data_replication_status_updated",
+    market_data_replication_checkpoints_table.c.status,
+    market_data_replication_checkpoints_table.c.updated_at,
 )

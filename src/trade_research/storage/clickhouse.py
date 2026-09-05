@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Protocol
@@ -285,6 +286,45 @@ class ClickHouseMarketDataRepository(_Repository):
             },
         )
         return int(result.result_rows[0][0]) if result.result_rows else 0
+
+    def batch_summary(
+        self,
+        *,
+        exchange: str,
+        interval: str,
+        source_run_id: str,
+        workspace_id: str = "default",
+    ) -> dict[str, Any]:
+        table = "ohlcv_daily" if interval == "1d" else "ohlcv_intraday"
+        watermark_column = "session_date" if interval == "1d" else "candle_timestamp"
+        interval_filter = "" if interval == "1d" else " AND interval = {interval:String}"
+        result = self._client.query(
+            f"""
+            SELECT content_sha256, {watermark_column}
+            FROM {self._database}.{table} FINAL
+            WHERE workspace_id = {{workspace_id:String}}
+              AND exchange = {{exchange:String}}
+              AND source_run_id = {{source_run_id:String}}
+              {interval_filter}
+            ORDER BY content_sha256
+            """,
+            parameters={
+                "workspace_id": workspace_id,
+                "exchange": exchange,
+                "source_run_id": source_run_id,
+                "interval": interval,
+            },
+        )
+        digests = [
+            value.decode("ascii") if isinstance(value, bytes) else str(value)
+            for value, _watermark in result.result_rows
+        ]
+        watermarks = [row[1] for row in result.result_rows if row[1] is not None]
+        return {
+            "row_count": len(result.result_rows),
+            "digest": hashlib.sha256("\n".join(sorted(digests)).encode()).hexdigest(),
+            "watermark": max(watermarks) if watermarks else None,
+        }
 
 
 class ClickHouseExperimentRepository(_Repository):
