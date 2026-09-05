@@ -30,6 +30,7 @@ import {
   useDataInstrumentSearch,
   useDataPipelineRunDetail,
   useOperationsLifecycleEvents,
+  useMarketDataHealth,
   useOperationsOverview,
   useOperationsRateLimits,
   useOperationsWorkItems,
@@ -49,6 +50,8 @@ import type {
   OperationsExchange,
   OperationsFreshnessRow,
   OperationsLifecycleEventRow,
+  MarketDataHealthResponse,
+  MarketDataQualityHealthRow,
   OperationsOverviewResponse,
   OperationsQueueGroup,
   OperationsUniverseSnapshotRow,
@@ -60,7 +63,14 @@ import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { formatDateTime } from "../utils/format";
 
-type DataTab = "overview" | "coverage" | "work" | "runs" | "lifecycle" | "warehouse";
+type DataTab =
+  | "overview"
+  | "market-data"
+  | "coverage"
+  | "work"
+  | "runs"
+  | "lifecycle"
+  | "warehouse";
 
 type MarketOption = {
   exchange: OperationsExchange;
@@ -142,11 +152,20 @@ function formatDate(value: string | null | undefined): string {
   });
 }
 
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 ** 2).toFixed(1)} MB`;
+}
+
 function statusClass(status: string): string {
   const normalized = status.toLowerCase();
   if (
     normalized.includes("fail") ||
     normalized.includes("error") ||
+    normalized.includes("mismatch") ||
+    normalized === "missing" ||
+    normalized === "invalid" ||
     normalized === "terminal"
   ) {
     return "failed";
@@ -154,6 +173,11 @@ function statusClass(status: string): string {
   if (normalized.includes("running") || normalized === "queued") return "running";
   if (
     normalized.includes("warn") ||
+    normalized.includes("degraded") ||
+    normalized === "duplicate" ||
+    normalized === "provider_unavailable" ||
+    normalized === "outside_session" ||
+    normalized === "stale" ||
     normalized.includes("partial") ||
     normalized.includes("inactive") ||
     normalized === "retry_wait" ||
@@ -167,6 +191,7 @@ function statusClass(status: string): string {
     normalized === "stopped" ||
     normalized === "shared_run"
   ) return "neutral";
+  if (normalized === "unknown") return "neutral";
   return "completed";
 }
 
@@ -226,6 +251,9 @@ export function DataPipelinePage() {
   const rateQuery = useOperationsRateLimits();
   const schedulesQuery = usePipelineScheduleStatus(activeTab === "overview");
   const bigQuerySyncQuery = useBigQuerySyncOverview(activeTab === "warehouse");
+  const marketDataHealthQuery = useMarketDataHealth(
+    activeTab === "market-data" && exchange === "NSE",
+  );
   const availabilityParams = useMemo<DataAvailabilityParams>(
     () => ({
       provider: "yfinance",
@@ -292,6 +320,10 @@ export function DataPipelinePage() {
     rate?.circuit_state === "closed" &&
     openWork === 0 &&
     terminalWork === 0;
+  const phase3Healthy =
+    exchange !== "NSE" ||
+    !marketDataHealthQuery.data ||
+    marketDataHealthQuery.data.health_status === "healthy";
 
   function selectExchange(nextExchange: OperationsExchange) {
     setExchange(nextExchange);
@@ -309,6 +341,7 @@ export function DataPipelinePage() {
     void queryClient.invalidateQueries({ queryKey: ["data-availability"] });
     void queryClient.invalidateQueries({ queryKey: ["pipeline-schedule-status"] });
     void queryClient.invalidateQueries({ queryKey: ["data-operations-bigquery-sync"] });
+    void queryClient.invalidateQueries({ queryKey: ["phase3-market-data-health"] });
   }
 
   return (
@@ -319,11 +352,11 @@ export function DataPipelinePage() {
         subtitle="Coverage, freshness, durable work, and provider health for every equity universe."
         actions={
           <div className="operations-header-actions">
-            <span className={`operations-live-pill ${isHealthy ? "healthy" : "attention"}`}>
+            <span className={`operations-live-pill ${isHealthy && phase3Healthy ? "healthy" : "attention"}`}>
               <span aria-hidden="true" />
               {overviewQuery.isLoading
                 ? "Checking"
-                : isHealthy
+                : isHealthy && phase3Healthy
                   ? "Systems healthy"
                   : "Needs attention"}
             </span>
@@ -379,6 +412,19 @@ export function DataPipelinePage() {
           onEndDateChange={setCoverageEnd}
           onRefresh={() => void availabilityQuery.refetch()}
         />
+      ) : null}
+
+      {activeTab === "market-data" ? (
+        exchange === "NSE" ? (
+          <MarketDataHealthView
+            health={marketDataHealthQuery.data ?? null}
+            isLoading={marketDataHealthQuery.isLoading}
+            error={marketDataHealthQuery.error}
+            onRefresh={() => void marketDataHealthQuery.refetch()}
+          />
+        ) : (
+          <EmptyState label="Phase 3 minute and replica health is currently available for NSE only." />
+        )
       ) : null}
 
       {activeTab === "work" ? (
@@ -510,6 +556,7 @@ function DataTabs({
 }) {
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: Activity },
+    { id: "market-data" as const, label: "NSE Data", icon: DatabaseZap },
     { id: "coverage" as const, label: "Coverage", icon: Database },
     { id: "work" as const, label: "Work Queue", icon: ListChecks },
     { id: "runs" as const, label: "Runs", icon: History },
@@ -535,6 +582,136 @@ function DataTabs({
         );
       })}
     </div>
+  );
+}
+
+function MarketDataHealthView({
+  health,
+  isLoading,
+  error,
+  onRefresh,
+}: {
+  health: MarketDataHealthResponse | null;
+  isLoading: boolean;
+  error: Error | null;
+  onRefresh: () => void;
+}) {
+  if (isLoading && !health) return <LoadingState />;
+  if (error) {
+    return (
+      <section className="operations-alert failed">
+        <AlertTriangle size={20} />
+        <div><strong>Phase 3 health is unavailable</strong><span>{error.message}</span></div>
+      </section>
+    );
+  }
+  if (!health) return <EmptyState label="No Phase 3 health snapshot is available." />;
+  const daily = health.quality.find((row) => row.interval === "1d");
+  const minute = health.quality.find((row) => row.interval === "1m");
+  const unexplainedGaps = health.quality.reduce(
+    (total, row) => total + row.unexplained_gap_count,
+    0,
+  );
+  const quarantined = health.quality.reduce(
+    (total, row) => total + row.quarantined_count,
+    0,
+  );
+  return (
+    <>
+      <section className={`operations-alert ${statusClass(health.health_status) === "failed" ? "failed" : health.health_status === "healthy" ? "healthy" : "warning"}`}>
+        {health.health_status === "healthy" ? <CheckCircle2 size={21} /> : <AlertTriangle size={21} />}
+        <div>
+          <strong>Phase 3 market data is {humanize(health.health_status).toLowerCase()}</strong>
+          <span>
+            {health.enabled ? "Production feature enabled" : "Production feature gated"} · {health.clickhouse_enabled ? "ClickHouse configured" : "ClickHouse disabled"} · checked {formatDateTime(health.checked_at)}
+          </span>
+        </div>
+        <button className="operations-text-button" type="button" onClick={onRefresh}>Refresh</button>
+      </section>
+
+      <div className="metric-grid data-metric-grid">
+        <MetricCard icon={Activity} label="1m Completeness" value={formatPercent(minute?.completeness_ratio)} detail={`${formatNumber(minute?.affected_instruments)} instruments in latest run`} />
+        <MetricCard icon={CalendarClock} label="Daily Watermark" value={formatDate(daily?.latest_session_date)} detail={daily ? `Observed ${formatDateTime(daily.observed_at)}` : "No daily quality run"} />
+        <MetricCard icon={AlertTriangle} label="Unexplained Gaps" value={formatNumber(unexplainedGaps)} detail="Missing expected candles in latest runs" />
+        <MetricCard icon={ShieldCheck} label="Quarantined" value={formatNumber(quarantined)} detail="Duplicate, invalid, stale, or off-session" />
+      </div>
+
+      <div className="operations-overview-grid">
+        <QualityIntervalCard title="Daily Quality" row={daily} />
+        <QualityIntervalCard title="Minute Quality" row={minute} />
+      </div>
+
+      <section className="data-card">
+        <div className="data-card-header"><div><h2>ClickHouse Replication</h2><p>Latest count, digest, watermark, and latency reconciliation</p></div></div>
+        <div className="operations-table-wrap">
+          <table className="operations-table compact">
+            <thead><tr><th>Dataset</th><th>Status</th><th>Rows</th><th>Digest</th><th>Lag</th><th>Latency</th><th>Updated</th></tr></thead>
+            <tbody>
+              {health.replication.length ? health.replication.map((row) => (
+                <tr key={`${row.interval}-${row.dataset_key}`}>
+                  <td><strong>{row.dataset_key}</strong><small>{row.interval} · {row.source_store} → {row.destination_store}</small></td>
+                  <td><span className={`status-pill ${statusClass(row.status)}`}>{humanize(row.status)}</span></td>
+                  <td>{formatNumber(row.source_row_count)} / {formatNumber(row.destination_row_count)}<small>{row.counts_match === false ? "Mismatch" : "Source / replica"}</small></td>
+                  <td>{row.digests_match === null ? "Pending" : row.digests_match ? "Match" : "Mismatch"}</td>
+                  <td>{row.watermark_lag_seconds === null ? "—" : `${row.watermark_lag_seconds.toFixed(1)} s`}</td>
+                  <td>{row.replication_latency_ms === null ? "—" : `${Math.round(row.replication_latency_ms)} ms`}</td>
+                  <td>{formatDateTime(row.updated_at)}{row.error_message ? <small>{row.error_message}</small> : null}</td>
+                </tr>
+              )) : <tr><td colSpan={7}>No replication checkpoint has been recorded.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="operations-overview-grid wide-left">
+        <section className="data-card">
+          <div className="data-card-header"><div><h2>Quality Exceptions</h2><p>Explained gaps and quarantined candles from the latest run</p></div></div>
+          <div className="operations-table-wrap">
+            <table className="operations-table compact">
+              <thead><tr><th>Reason</th><th>Status</th><th>Interval</th><th>Rows</th><th>Instruments</th><th>Latest session</th></tr></thead>
+              <tbody>
+                {health.issues.length ? health.issues.map((row) => (
+                  <tr key={`${row.interval}-${row.status}-${row.reason_code}`}>
+                    <td><strong>{humanize(row.reason_code)}</strong><small>{row.retryable ? "Retryable" : "Final"}</small></td>
+                    <td><span className={`status-pill ${statusClass(row.status)}`}>{humanize(row.status)}</span></td>
+                    <td>{row.interval}</td><td>{formatNumber(row.occurrences)}</td><td>{formatNumber(row.affected_instruments)}</td><td>{formatDate(row.latest_session_date)}</td>
+                  </tr>
+                )) : <tr><td colSpan={6}>No quality exceptions in the latest runs.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section className="data-card">
+          <div className="data-card-header"><div><h2>Raw Lineage</h2><p>Immutable manifests; storage locations remain private</p></div></div>
+          <div className="operations-stack-list">
+            {health.raw_lineage.length ? health.raw_lineage.map((row) => (
+              <article key={row.artifact_manifest_id}>
+                <div><strong>{row.artifact_manifest_id.slice(0, 12)}</strong><small>{row.sha256.slice(0, 16)}… · {formatBytes(row.size_bytes)}</small></div>
+                <span className={`status-pill ${row.object_versioned ? "completed" : "warning"}`}>{row.object_versioned ? "Versioned" : "Unversioned"}</span>
+              </article>
+            )) : <p className="operations-empty-copy">No raw manifest is linked to the latest runs.</p>}
+          </div>
+        </section>
+      </div>
+    </>
+  );
+}
+
+function QualityIntervalCard({ title, row }: { title: string; row: MarketDataQualityHealthRow | undefined }) {
+  return (
+    <section className="data-card operations-detail-card">
+      <div className="data-card-header">
+        <div><h2>{title}</h2><p>{row ? `Latest run ${row.source_run_id.slice(0, 12)}` : "No quality run recorded"}</p></div>
+        <span className={`status-pill ${statusClass(row?.health_status ?? "unknown")}`}>{humanize(row?.health_status ?? "unknown")}</span>
+      </div>
+      <dl className="operations-definition-list">
+        <div><dt>Completeness</dt><dd>{formatPercent(row?.completeness_ratio)}</dd></div>
+        <div><dt>Validated candles</dt><dd>{formatNumber(row?.status_counts.valid)}</dd></div>
+        <div><dt>Provider unavailable</dt><dd>{formatNumber(row?.status_counts.provider_unavailable)}</dd></div>
+        <div><dt>Latest candle</dt><dd>{row?.latest_candle_timestamp ? formatDateTime(row.latest_candle_timestamp) : formatDate(row?.latest_session_date)}</dd></div>
+        <div><dt>Raw snapshots</dt><dd>{formatNumber(row?.raw_artifact_count)}</dd></div>
+      </dl>
+    </section>
   );
 }
 

@@ -295,6 +295,23 @@ Index(
     market_data_quality_outcomes_table.c.session_date,
 )
 Index(
+    "idx_market_data_quality_scope_observed",
+    market_data_quality_outcomes_table.c.workspace_id,
+    market_data_quality_outcomes_table.c.provider,
+    market_data_quality_outcomes_table.c.exchange,
+    market_data_quality_outcomes_table.c.interval,
+    market_data_quality_outcomes_table.c.observed_at,
+)
+Index(
+    "idx_market_data_quality_scope_run_status",
+    market_data_quality_outcomes_table.c.workspace_id,
+    market_data_quality_outcomes_table.c.provider,
+    market_data_quality_outcomes_table.c.exchange,
+    market_data_quality_outcomes_table.c.interval,
+    market_data_quality_outcomes_table.c.source_run_id,
+    market_data_quality_outcomes_table.c.status,
+)
+Index(
     "idx_market_data_replication_run",
     market_data_replication_checkpoints_table.c.source_run_id,
     market_data_replication_checkpoints_table.c.dataset_key,
@@ -302,5 +319,12 @@ Index(
 Index(
     "idx_market_data_replication_status_updated",
     market_data_replication_checkpoints_table.c.status,
+    market_data_replication_checkpoints_table.c.updated_at,
+)
+Index(
+    "idx_market_data_replication_scope_updated",
+    market_data_replication_checkpoints_table.c.workspace_id,
+    market_data_replication_checkpoints_table.c.exchange,
+    market_data_replication_checkpoints_table.c.interval,
     market_data_replication_checkpoints_table.c.updated_at,
 )

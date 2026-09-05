@@ -40,6 +40,7 @@ from trade_research.market_calendar import (
 )
 from trade_research.market_data.aggregation import IntradayAggregationRequest
 from trade_research.market_data.contracts import CandleInterval
+from trade_research.market_data.health import MarketDataHealthRepository
 from trade_research.operations import WorkflowRequestStore
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
@@ -69,6 +70,11 @@ from trade_research.schemas import (
     DataUniverseRow,
     MarketDataAggregateCandle,
     MarketDataAggregateResponse,
+    MarketDataHealthResponse,
+    MarketDataQualityHealthRow,
+    MarketDataQualityIssueRow,
+    MarketDataRawLineageRow,
+    MarketDataReplicationHealthRow,
     OperationsAdaptiveRateStateRow,
     OperationsFreshnessRow,
     OperationsLifecycleEventRow,
@@ -1132,6 +1138,60 @@ def data_operations_bigquery_sync(
         location=current_settings.bigquery_location,
         runs=[BigQuerySyncRunRow(**row) for row in runs],
         partitions=[BigQuerySyncPartitionRow(**row) for row in partitions],
+    )
+
+
+@app.get(
+    "/api/data/operations/market-data-health",
+    response_model=MarketDataHealthResponse,
+)
+def market_data_health(
+    http_request: Request,
+    provider: Annotated[str, Query(min_length=1, max_length=64)] = "yfinance",
+    exchange: Annotated[str, Query(min_length=1, max_length=32)] = "NSE",
+    issue_limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    lineage_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> MarketDataHealthResponse:
+    canonical_exchange = _canonical_data_exchange(exchange)
+    if canonical_exchange != "NSE":
+        raise HTTPException(
+            status_code=400,
+            detail="Phase 3 market-data health is available only for NSE",
+        )
+    canonical_provider = provider.strip().lower()
+    if canonical_provider != "yfinance":
+        raise HTTPException(
+            status_code=400,
+            detail="Phase 3 market-data health currently supports yfinance",
+        )
+    workspace_id = http_request.headers.get("X-Workspace-ID", "default").strip()
+    if not workspace_id or len(workspace_id) > 64:
+        raise HTTPException(status_code=400, detail="X-Workspace-ID is invalid")
+    current_settings = get_settings()
+    try:
+        snapshot = _market_data_health_repository().snapshot(
+            workspace_id=workspace_id,
+            provider=canonical_provider,
+            exchange=canonical_exchange,
+            issue_limit=issue_limit,
+            lineage_limit=lineage_limit,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return MarketDataHealthResponse(
+        enabled=current_settings.phase3_market_data_enabled,
+        clickhouse_enabled=current_settings.clickhouse_enabled,
+        workspace_id=snapshot.workspace_id,
+        provider=snapshot.provider,
+        exchange=snapshot.exchange,
+        health_status=snapshot.health_status,
+        checked_at=datetime.now(UTC),
+        quality=[MarketDataQualityHealthRow(**vars(row)) for row in snapshot.quality],
+        issues=[MarketDataQualityIssueRow(**vars(row)) for row in snapshot.issues],
+        raw_lineage=[MarketDataRawLineageRow(**vars(row)) for row in snapshot.raw_lineage],
+        replication=[
+            MarketDataReplicationHealthRow(**vars(row)) for row in snapshot.replication
+        ],
     )
 
 
@@ -2207,6 +2267,10 @@ def _clickhouse_market_data_repository() -> ClickHouseMarketDataRepository:
         create_clickhouse_client(current_settings),
         database=current_settings.clickhouse_database,
     )
+
+
+def _market_data_health_repository() -> MarketDataHealthRepository:
+    return MarketDataHealthRepository(_store().engine)
 
 
 def _workflow_store() -> WorkflowRequestStore:

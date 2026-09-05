@@ -78,9 +78,11 @@ validated ClickHouse daily replica path, bounded NSE `1m` ingestion,
 candle-level missing/error explanations, and fail-closed per-batch replication
 checkpoints with count, digest, and watermark evidence. Session-anchored `5m`,
 `15m`, `30m`, and `1h` aggregates are available on request from validated
-ClickHouse `1m` rows with explicit completeness and lineage. It is not
-production-active and does not yet satisfy the Phase 3 exit gate. See
-`docs/phase3_nse_data_platform.md`.
+ClickHouse `1m` rows with explicit completeness and lineage. The authenticated
+Data Console exposes latest-run daily/minute freshness, completeness, explained
+and unexplained gaps, quarantine counts, safe raw-manifest lineage, and current
+ClickHouse replication evidence. It is not production-active and does not yet
+satisfy the Phase 3 exit gate. See `docs/phase3_nse_data_platform.md`.
 
 ## Provider state
 

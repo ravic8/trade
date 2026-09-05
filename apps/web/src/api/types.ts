@@ -734,6 +734,85 @@ export type BigQuerySyncOverviewResponse = {
   partitions: BigQuerySyncPartitionRow[];
 };
 
+export type MarketDataHealthStatus = "healthy" | "degraded" | "failed" | "unknown";
+
+export type MarketDataQualityHealthRow = {
+  interval: string;
+  source_run_id: string;
+  request_count: number;
+  total_outcomes: number;
+  expected_outcomes: number;
+  affected_instruments: number;
+  latest_session_date: string | null;
+  latest_candle_timestamp: string | null;
+  observed_at: string;
+  completeness_ratio: number | null;
+  unexplained_gap_count: number;
+  quarantined_count: number;
+  raw_artifact_count: number;
+  status_counts: Record<string, number>;
+  health_status: MarketDataHealthStatus;
+};
+
+export type MarketDataQualityIssueRow = {
+  interval: string;
+  source_run_id: string;
+  status: string;
+  reason_code: string;
+  severity: string;
+  retryable: boolean;
+  occurrences: number;
+  affected_instruments: number;
+  first_session_date: string;
+  latest_session_date: string;
+  observed_at: string;
+};
+
+export type MarketDataRawLineageRow = {
+  artifact_manifest_id: string;
+  artifact_type: string;
+  sha256: string;
+  size_bytes: number;
+  media_type: string;
+  object_versioned: boolean;
+  created_at: string;
+};
+
+export type MarketDataReplicationHealthRow = {
+  interval: string;
+  source_run_id: string;
+  dataset_key: string;
+  source_store: string;
+  destination_store: string;
+  status: string;
+  source_row_count: number;
+  destination_row_count: number | null;
+  counts_match: boolean | null;
+  digests_match: boolean | null;
+  source_watermark: string | null;
+  destination_watermark: string | null;
+  watermark_lag_seconds: number | null;
+  replication_latency_ms: number | null;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type MarketDataHealthResponse = {
+  enabled: boolean;
+  clickhouse_enabled: boolean;
+  workspace_id: string;
+  provider: string;
+  exchange: string;
+  health_status: MarketDataHealthStatus;
+  checked_at: string;
+  quality: MarketDataQualityHealthRow[];
+  issues: MarketDataQualityIssueRow[];
+  raw_lineage: MarketDataRawLineageRow[];
+  replication: MarketDataReplicationHealthRow[];
+};
+
 export type OperationsWorkItemsParams = {
   provider?: "yfinance";
   exchange: OperationsExchange;

@@ -52,6 +52,13 @@ gate is disabled.
   are excluded by default and can be requested explicitly for diagnosis. The
   Python golden implementation covers the same OHLCV and final-partial-bucket
   rules used by the ClickHouse query.
+- The authenticated Data Console now has an NSE Data view backed by
+  `GET /api/data/operations/market-data-health`. It reports the latest quality
+  run for each interval, observed/session/candle freshness, the Phase 3
+  `>=99.5%` completeness measure, unexplained gaps, provider-unavailable rows,
+  quarantined duplicate/invalid/stale/off-session rows, immutable raw-manifest
+  IDs and digests, and the latest ClickHouse count/digest/watermark/latency
+  checkpoint. Object-store locations are deliberately not returned.
 
 ## Fail-closed activation
 
@@ -99,8 +106,6 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 - Add daily Upstox-versus-yfinance reconciliation evidence and a signed NSE
   cutover/rollback gate for the agreed observation window.
-- Expose daily/minute freshness, unexplained gaps, duplicate counts, quarantine,
-  raw lineage, and ClickHouse replication lag in the authenticated UI.
 - Add historical partition-level PostgreSQL-to-ClickHouse reconciliation and
   repair; the current checkpoint proves equality for each newly committed
   validated daily batch.

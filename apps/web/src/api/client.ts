@@ -49,6 +49,7 @@ import type {
   MLRunId,
   MLSummaryResponse,
   MarketStatus,
+  MarketDataHealthResponse,
   OperationsAdaptiveRateStateRow,
   OperationsExchange,
   OperationsLifecycleEventsParams,
@@ -532,6 +533,12 @@ export function getOperationsRateLimits(): Promise<OperationsAdaptiveRateStateRo
 
 export function getBigQuerySyncOverview(): Promise<BigQuerySyncOverviewResponse> {
   return strictFetchJson("/api/data/operations/bigquery-sync");
+}
+
+export function getMarketDataHealth(): Promise<MarketDataHealthResponse> {
+  return strictFetchJson(
+    "/api/data/operations/market-data-health?provider=yfinance&exchange=NSE",
+  );
 }
 
 export async function postChatQuery(payload: ChatQueryRequest): Promise<ChatQueryResponse> {

@@ -51,6 +51,23 @@ def upgrade() -> None:
         "market_data_quality_outcomes",
         ["exchange", "interval", "instrument_id", "session_date"],
     )
+    op.create_index(
+        "idx_market_data_quality_scope_observed",
+        "market_data_quality_outcomes",
+        ["workspace_id", "provider", "exchange", "interval", "observed_at"],
+    )
+    op.create_index(
+        "idx_market_data_quality_scope_run_status",
+        "market_data_quality_outcomes",
+        [
+            "workspace_id",
+            "provider",
+            "exchange",
+            "interval",
+            "source_run_id",
+            "status",
+        ],
+    )
     op.create_table(
         "market_data_replication_checkpoints",
         sa.Column("replication_checkpoint_id", sa.String(length=64), primary_key=True),
@@ -87,9 +104,18 @@ def upgrade() -> None:
         "market_data_replication_checkpoints",
         ["status", "updated_at"],
     )
+    op.create_index(
+        "idx_market_data_replication_scope_updated",
+        "market_data_replication_checkpoints",
+        ["workspace_id", "exchange", "interval", "updated_at"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "idx_market_data_replication_scope_updated",
+        table_name="market_data_replication_checkpoints",
+    )
     op.drop_index(
         "idx_market_data_replication_status_updated",
         table_name="market_data_replication_checkpoints",
@@ -99,6 +125,14 @@ def downgrade() -> None:
         table_name="market_data_replication_checkpoints",
     )
     op.drop_table("market_data_replication_checkpoints")
+    op.drop_index(
+        "idx_market_data_quality_scope_run_status",
+        table_name="market_data_quality_outcomes",
+    )
+    op.drop_index(
+        "idx_market_data_quality_scope_observed",
+        table_name="market_data_quality_outcomes",
+    )
     op.drop_index(
         "idx_market_data_quality_instrument_session",
         table_name="market_data_quality_outcomes",

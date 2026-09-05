@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchJson, getDailyOpportunities } from "./client";
+import { fetchJson, getDailyOpportunities, getMarketDataHealth } from "./client";
 
 describe("getDailyOpportunities", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -46,6 +46,26 @@ describe("fetchJson", () => {
 
     await expect(fetchJson("/api/market/status", [{ demo: true }], false)).rejects.toThrow(
       "Request failed: 503",
+    );
+  });
+});
+
+describe("getMarketDataHealth", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses the NSE yfinance operational endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ health_status: "unknown", quality: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await getMarketDataHealth();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/data/operations/market-data-health?provider=yfinance&exchange=NSE",
+      undefined,
     );
   });
 });

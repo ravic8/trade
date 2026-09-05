@@ -80,6 +80,19 @@ def test_alembic_upgrade_bootstraps_an_empty_database(
         "market_data_quality_outcomes",
         "market_data_replication_checkpoints",
     }.issubset(set(upgraded.get_table_names()))
+    assert {
+        "idx_market_data_quality_scope_observed",
+        "idx_market_data_quality_scope_run_status",
+    }.issubset(
+        {
+            index["name"]
+            for index in upgraded.get_indexes("market_data_quality_outcomes")
+        }
+    )
+    assert "idx_market_data_replication_scope_updated" in {
+        index["name"]
+        for index in upgraded.get_indexes("market_data_replication_checkpoints")
+    }
     with engine.connect() as connection:
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"

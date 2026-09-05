@@ -793,6 +793,83 @@ class BigQuerySyncOverviewResponse(BaseModel):
     partitions: list[BigQuerySyncPartitionRow] = Field(default_factory=list)
 
 
+class MarketDataQualityHealthRow(BaseModel):
+    interval: str
+    source_run_id: str
+    request_count: int = Field(ge=0)
+    total_outcomes: int = Field(ge=0)
+    expected_outcomes: int = Field(ge=0)
+    affected_instruments: int = Field(ge=0)
+    latest_session_date: date | None = None
+    latest_candle_timestamp: datetime | None = None
+    observed_at: datetime
+    completeness_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    unexplained_gap_count: int = Field(ge=0)
+    quarantined_count: int = Field(ge=0)
+    raw_artifact_count: int = Field(ge=0)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    health_status: Literal["healthy", "degraded", "failed", "unknown"]
+
+
+class MarketDataQualityIssueRow(BaseModel):
+    interval: str
+    source_run_id: str
+    status: str
+    reason_code: str
+    severity: str
+    retryable: bool
+    occurrences: int = Field(ge=0)
+    affected_instruments: int = Field(ge=0)
+    first_session_date: date
+    latest_session_date: date
+    observed_at: datetime
+
+
+class MarketDataRawLineageRow(BaseModel):
+    artifact_manifest_id: str
+    artifact_type: str
+    sha256: str
+    size_bytes: int = Field(ge=0)
+    media_type: str
+    object_versioned: bool
+    created_at: datetime
+
+
+class MarketDataReplicationHealthRow(BaseModel):
+    interval: str
+    source_run_id: str
+    dataset_key: str
+    source_store: str
+    destination_store: str
+    status: str
+    source_row_count: int = Field(ge=0)
+    destination_row_count: int | None = Field(default=None, ge=0)
+    counts_match: bool | None = None
+    digests_match: bool | None = None
+    source_watermark: datetime | None = None
+    destination_watermark: datetime | None = None
+    watermark_lag_seconds: float | None = Field(default=None, ge=0)
+    replication_latency_ms: float | None = Field(default=None, ge=0)
+    error_message: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
+class MarketDataHealthResponse(BaseModel):
+    enabled: bool
+    clickhouse_enabled: bool
+    workspace_id: str
+    provider: str
+    exchange: str
+    health_status: Literal["healthy", "degraded", "failed", "unknown"]
+    checked_at: datetime
+    quality: list[MarketDataQualityHealthRow] = Field(default_factory=list)
+    issues: list[MarketDataQualityIssueRow] = Field(default_factory=list)
+    raw_lineage: list[MarketDataRawLineageRow] = Field(default_factory=list)
+    replication: list[MarketDataReplicationHealthRow] = Field(default_factory=list)
+
+
 class OperationsAdaptiveRateStateRow(BaseModel):
     provider: str
     current_rpm: int = Field(ge=0)

@@ -14,6 +14,10 @@ from trade_research.market_data.contracts import (
     ProviderRequest,
     candle_content_sha256,
 )
+from trade_research.market_data.health import (
+    MarketDataHealthRepository,
+    MarketDataHealthSnapshot,
+)
 from trade_research.market_data.raw_snapshots import RawSnapshotWriter, StoredRawSnapshot
 from trade_research.market_data.validation import (
     CandleValidationIssue,
@@ -30,6 +34,8 @@ __all__ = [
     "IntradayAggregationRequest",
     "MarketCandle",
     "MarketDataValidationError",
+    "MarketDataHealthRepository",
+    "MarketDataHealthSnapshot",
     "ProviderRequest",
     "RawSnapshotWriter",
     "StoredRawSnapshot",

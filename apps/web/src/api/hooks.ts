@@ -29,6 +29,7 @@ import {
   getMLRobustness,
   getMLSummary,
   getMarketStatus,
+  getMarketDataHealth,
   getOperationsLifecycleEvents,
   getOperationsOverview,
   getOperationsRateLimits,
@@ -303,6 +304,15 @@ export function useBigQuerySyncOverview(enabled = true) {
   return useQuery({
     queryKey: ["data-operations-bigquery-sync"],
     queryFn: getBigQuerySyncOverview,
+    enabled,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useMarketDataHealth(enabled = true) {
+  return useQuery({
+    queryKey: ["phase3-market-data-health", "NSE", "yfinance"],
+    queryFn: getMarketDataHealth,
     enabled,
     refetchInterval: 60_000,
   });
