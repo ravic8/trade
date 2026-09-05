@@ -119,7 +119,15 @@ class ClickHouseMigrator:
             GROUP BY version
             """
         )
-        applied = {int(row[0]): (str(row[1]), str(row[2])) for row in result.result_rows}
+        def text_value(value: Any) -> str:
+            if isinstance(value, bytes):
+                return value.decode("utf-8").rstrip("\x00")
+            return str(value).rstrip("\x00")
+
+        applied = {
+            int(row[0]): (text_value(row[1]), text_value(row[2]))
+            for row in result.result_rows
+        }
         completed: list[int] = []
         for migration in migrations:
             recorded = applied.get(migration.version)

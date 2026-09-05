@@ -122,6 +122,22 @@ def test_clickhouse_migration_checksum_drift_is_rejected() -> None:
         ClickHouseMigrator(client, database="research").apply(migrations)
 
 
+def test_clickhouse_migration_accepts_fixed_string_bytes_on_retry() -> None:
+    directory = Path(__file__).parents[1] / "clickhouse" / "migrations"
+    migrations = discover_migrations(directory, database="research")
+    client = FakeClickHouse()
+    migration = migrations[0]
+    client.applied = [
+        (
+            migration.version,
+            migration.name.encode(),
+            migration.sha256.encode(),
+        )
+    ]
+
+    assert ClickHouseMigrator(client, database="research").apply(migrations) == []
+
+
 def test_clickhouse_repository_denies_writes_by_default() -> None:
     client = FakeClickHouse()
     repository = ClickHouseFeatureRepository(client)
