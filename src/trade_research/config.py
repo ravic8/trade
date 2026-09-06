@@ -251,6 +251,7 @@ class Settings(BaseSettings):
         default=0.98, ge=0, le=1
     )
     nse_provider_comparison_maximum_session_lag: int = Field(default=1, ge=0, le=10)
+    nse_cutover_required_passing_windows: int = Field(default=5, ge=2, le=30)
     tsx_official_issuer_url: str = "https://www.tsx.com/en/resource/571"
     tsx_official_directory_base_url: str = (
         "https://www.tsx.com/json/company-directory"

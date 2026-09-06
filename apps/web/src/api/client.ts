@@ -50,6 +50,9 @@ import type {
   MLSummaryResponse,
   MarketStatus,
   MarketDataHealthResponse,
+  NseCutoverApprovalRequest,
+  NseCutoverRollbackRequest,
+  NseProviderCutoverStatus,
   OperationsAdaptiveRateStateRow,
   OperationsExchange,
   OperationsLifecycleEventsParams,
@@ -539,6 +542,36 @@ export function getMarketDataHealth(): Promise<MarketDataHealthResponse> {
   return strictFetchJson(
     "/api/data/operations/market-data-health?provider=yfinance&exchange=NSE",
   );
+}
+
+export function getNseProviderCutoverStatus(): Promise<NseProviderCutoverStatus> {
+  return strictFetchJson("/api/data/operations/nse-provider-cutover");
+}
+
+export function approveNseProviderCutover(
+  payload: NseCutoverApprovalRequest,
+): Promise<NseProviderCutoverStatus> {
+  return strictFetchJson("/api/admin/nse-provider-cutover/approve", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function rollbackNseProviderCutover(
+  payload: NseCutoverRollbackRequest,
+): Promise<NseProviderCutoverStatus> {
+  return strictFetchJson("/api/admin/nse-provider-cutover/rollback", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function postChatQuery(payload: ChatQueryRequest): Promise<ChatQueryResponse> {

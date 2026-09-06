@@ -26,16 +26,19 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import {
   useBigQuerySyncOverview,
+  useApproveNseProviderCutover,
   useDataAvailability,
   useDataInstrumentSearch,
   useDataPipelineRunDetail,
   useOperationsLifecycleEvents,
   useMarketDataHealth,
+  useNseProviderCutoverStatus,
   useOperationsOverview,
   useOperationsRateLimits,
   useOperationsWorkItems,
   usePipelineScheduleStatus,
   useProviderRuns,
+  useRollbackNseProviderCutover,
 } from "../api/hooks";
 import type {
   BigQuerySyncOverviewResponse,
@@ -52,6 +55,7 @@ import type {
   OperationsLifecycleEventRow,
   MarketDataHealthResponse,
   MarketDataQualityHealthRow,
+  NseProviderCutoverStatus,
   OperationsOverviewResponse,
   OperationsQueueGroup,
   OperationsUniverseSnapshotRow,
@@ -242,6 +246,7 @@ export function DataPipelinePage() {
   const [lifecycleType, setLifecycleType] = useState("");
   const [lifecycleSymbol, setLifecycleSymbol] = useState("");
   const [lifecycleOffset, setLifecycleOffset] = useState(0);
+  const [cutoverReason, setCutoverReason] = useState("");
   const debouncedCoverageQuery = useDebouncedValue(coverageQuery);
   const debouncedWorkSymbol = useDebouncedValue(workSymbol);
   const debouncedLifecycleSymbol = useDebouncedValue(lifecycleSymbol);
@@ -254,6 +259,11 @@ export function DataPipelinePage() {
   const marketDataHealthQuery = useMarketDataHealth(
     activeTab === "market-data" && exchange === "NSE",
   );
+  const cutoverQuery = useNseProviderCutoverStatus(
+    activeTab === "market-data" && exchange === "NSE",
+  );
+  const approveCutover = useApproveNseProviderCutover();
+  const rollbackCutover = useRollbackNseProviderCutover();
   const availabilityParams = useMemo<DataAvailabilityParams>(
     () => ({
       provider: "yfinance",
@@ -342,6 +352,37 @@ export function DataPipelinePage() {
     void queryClient.invalidateQueries({ queryKey: ["pipeline-schedule-status"] });
     void queryClient.invalidateQueries({ queryKey: ["data-operations-bigquery-sync"] });
     void queryClient.invalidateQueries({ queryKey: ["phase3-market-data-health"] });
+    void queryClient.invalidateQueries({ queryKey: ["nse-provider-cutover"] });
+  }
+
+  async function approveProviderCutover() {
+    const eligibility = cutoverQuery.data?.eligibility;
+    if (!eligibility) return;
+    try {
+      await approveCutover.mutateAsync({
+        reason: cutoverReason.trim(),
+        expected_evidence_bundle_sha256: eligibility.evidence_bundle_sha256,
+      });
+      setCutoverReason("");
+      await cutoverQuery.refetch();
+    } catch {
+      // Mutation state renders the server's fail-closed explanation.
+    }
+  }
+
+  async function rollbackProviderCutover() {
+    const decision = cutoverQuery.data?.active_decision;
+    if (!decision) return;
+    try {
+      await rollbackCutover.mutateAsync({
+        reason: cutoverReason.trim(),
+        expected_current_decision_sha256: decision.decision_sha256,
+      });
+      setCutoverReason("");
+      await cutoverQuery.refetch();
+    } catch {
+      // Mutation state renders the server's fail-closed explanation.
+    }
   }
 
   return (
@@ -418,9 +459,21 @@ export function DataPipelinePage() {
         exchange === "NSE" ? (
           <MarketDataHealthView
             health={marketDataHealthQuery.data ?? null}
+            cutover={cutoverQuery.data ?? null}
             isLoading={marketDataHealthQuery.isLoading}
             error={marketDataHealthQuery.error}
-            onRefresh={() => void marketDataHealthQuery.refetch()}
+            cutoverError={
+              cutoverQuery.error ?? approveCutover.error ?? rollbackCutover.error
+            }
+            cutoverReason={cutoverReason}
+            isCutoverPending={approveCutover.isPending || rollbackCutover.isPending}
+            onCutoverReasonChange={setCutoverReason}
+            onApprove={() => void approveProviderCutover()}
+            onRollback={() => void rollbackProviderCutover()}
+            onRefresh={() => {
+              void marketDataHealthQuery.refetch();
+              void cutoverQuery.refetch();
+            }}
           />
         ) : (
           <EmptyState label="Phase 3 minute and replica health is currently available for NSE only." />
@@ -587,13 +640,27 @@ function DataTabs({
 
 function MarketDataHealthView({
   health,
+  cutover,
   isLoading,
   error,
+  cutoverError,
+  cutoverReason,
+  isCutoverPending,
+  onCutoverReasonChange,
+  onApprove,
+  onRollback,
   onRefresh,
 }: {
   health: MarketDataHealthResponse | null;
+  cutover: NseProviderCutoverStatus | null;
   isLoading: boolean;
   error: Error | null;
+  cutoverError: Error | null;
+  cutoverReason: string;
+  isCutoverPending: boolean;
+  onCutoverReasonChange: (value: string) => void;
+  onApprove: () => void;
+  onRollback: () => void;
   onRefresh: () => void;
 }) {
   if (isLoading && !health) return <LoadingState />;
@@ -635,6 +702,79 @@ function MarketDataHealthView({
         <MetricCard icon={AlertTriangle} label="Unexplained Gaps" value={formatNumber(unexplainedGaps)} detail="Missing expected candles in latest runs" />
         <MetricCard icon={ShieldCheck} label="Quarantined" value={formatNumber(quarantined)} detail="Duplicate, invalid, stale, or off-session" />
       </div>
+
+      <section className="data-card">
+        <div className="data-card-header">
+          <div>
+            <h2>NSE Primary Provider Cutover</h2>
+            <p>Append-only evidence, authenticated approval, and explicit rollback</p>
+          </div>
+          <span className={`status-pill ${statusClass(cutover?.effective_primary === "yfinance" ? "completed" : "warning")}`}>
+            Effective {cutover?.effective_primary ?? "unknown"}
+          </span>
+        </div>
+        {cutover ? (
+          <>
+            <dl className="operations-definition-list">
+              <div><dt>Configured primary</dt><dd>{humanize(cutover.configured_primary)}</dd></div>
+              <div><dt>Passing windows</dt><dd>{cutover.eligibility.passing_windows} / {cutover.eligibility.required_passing_windows}</dd></div>
+              <div><dt>Approval state</dt><dd>{cutover.yfinance_approved ? "Approved" : "Not approved"}</dd></div>
+              <div><dt>Latest decision</dt><dd>{cutover.active_decision ? humanize(cutover.active_decision.action) : "None"}</dd></div>
+            </dl>
+            {cutover.eligibility.blocking_issues.map((issue) => (
+              <p className="form-error operations-form-error" key={issue}>{issue}</p>
+            ))}
+            {cutoverError ? <p className="form-error operations-form-error">{cutoverError.message}</p> : null}
+            <div className="data-filter-row">
+              <label>
+                Decision reason
+                <input
+                  type="text"
+                  value={cutoverReason}
+                  maxLength={2000}
+                  placeholder="Explain the approval or rollback"
+                  onChange={(event) => onCutoverReasonChange(event.target.value)}
+                />
+              </label>
+              {!cutover.yfinance_approved ? (
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={!cutover.eligibility.eligible || cutoverReason.trim().length < 10 || isCutoverPending}
+                  onClick={onApprove}
+                >
+                  <ShieldCheck size={16} />Approve yfinance
+                </button>
+              ) : (
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={cutoverReason.trim().length < 10 || isCutoverPending}
+                  onClick={onRollback}
+                >
+                  <AlertTriangle size={16} />Rollback to Upstox
+                </button>
+              )}
+            </div>
+            <div className="operations-table-wrap">
+              <table className="operations-table compact">
+                <thead><tr><th>Window</th><th>Status</th><th>Overlap</th><th>Close match</th><th>Evidence digest</th></tr></thead>
+                <tbody>
+                  {cutover.evidence.length ? cutover.evidence.map((row) => (
+                    <tr key={row.evidence_id}>
+                      <td>{formatDate(row.window_start)} – {formatDate(row.window_end)}</td>
+                      <td><span className={`status-pill ${statusClass(row.status)}`}>{humanize(row.comparison_state)}</span></td>
+                      <td>{formatPercent(typeof row.metrics.row_overlap_ratio === "number" ? row.metrics.row_overlap_ratio : null)}</td>
+                      <td>{formatPercent(typeof row.metrics.close_match_ratio === "number" ? row.metrics.close_match_ratio : null)}</td>
+                      <td>{row.evidence_sha256.slice(0, 16)}…</td>
+                    </tr>
+                  )) : <tr><td colSpan={5}>No cutover comparison evidence has been recorded.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : <EmptyState label="No cutover evidence is available." />}
+      </section>
 
       <div className="operations-overview-grid">
         <QualityIntervalCard title="Daily Quality" row={daily} />

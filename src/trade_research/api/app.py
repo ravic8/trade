@@ -40,6 +40,10 @@ from trade_research.market_calendar import (
 )
 from trade_research.market_data.aggregation import IntradayAggregationRequest
 from trade_research.market_data.contracts import CandleInterval
+from trade_research.market_data.cutover import (
+    CutoverStatus,
+    NseProviderCutoverRepository,
+)
 from trade_research.market_data.health import MarketDataHealthRepository
 from trade_research.operations import WorkflowRequestStore
 from trade_research.research.artifacts import ResearchArtifactReader
@@ -75,6 +79,12 @@ from trade_research.schemas import (
     MarketDataQualityIssueRow,
     MarketDataRawLineageRow,
     MarketDataReplicationHealthRow,
+    NseCutoverApprovalRequest,
+    NseCutoverDecisionResponse,
+    NseCutoverEligibilityResponse,
+    NseCutoverRollbackRequest,
+    NseProviderCutoverStatusResponse,
+    NseProviderEvidenceRow,
     OperationsAdaptiveRateStateRow,
     OperationsFreshnessRow,
     OperationsLifecycleEventRow,
@@ -1195,6 +1205,90 @@ def market_data_health(
     )
 
 
+@app.get(
+    "/api/data/operations/nse-provider-cutover",
+    response_model=NseProviderCutoverStatusResponse,
+)
+def nse_provider_cutover_status(
+    http_request: Request,
+    evidence_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> NseProviderCutoverStatusResponse:
+    workspace_id = _workspace_id(http_request)
+    current_settings = get_settings()
+    try:
+        status = _nse_provider_cutover_repository(workspace_id).status(
+            configured_primary=current_settings.nse_daily_primary_source,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+            evidence_limit=evidence_limit,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _nse_cutover_status_response(status)
+
+
+@app.post(
+    "/api/admin/nse-provider-cutover/approve",
+    response_model=NseProviderCutoverStatusResponse,
+)
+def approve_nse_yfinance_cutover(
+    body: NseCutoverApprovalRequest,
+    http_request: Request,
+    admin_email: Annotated[str, Depends(_require_admin)],
+) -> NseProviderCutoverStatusResponse:
+    workspace_id = _workspace_id(http_request)
+    idempotency_key = _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _nse_provider_cutover_repository(workspace_id)
+    try:
+        repository.approve(
+            actor_email=admin_email,
+            reason=body.reason,
+            idempotency_key=idempotency_key,
+            expected_evidence_bundle_sha256=body.expected_evidence_bundle_sha256,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+        )
+        status = repository.status(
+            configured_primary=current_settings.nse_daily_primary_source,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _nse_cutover_status_response(status)
+
+
+@app.post(
+    "/api/admin/nse-provider-cutover/rollback",
+    response_model=NseProviderCutoverStatusResponse,
+)
+def rollback_nse_yfinance_cutover(
+    body: NseCutoverRollbackRequest,
+    http_request: Request,
+    admin_email: Annotated[str, Depends(_require_admin)],
+) -> NseProviderCutoverStatusResponse:
+    workspace_id = _workspace_id(http_request)
+    idempotency_key = _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _nse_provider_cutover_repository(workspace_id)
+    try:
+        repository.rollback(
+            actor_email=admin_email,
+            reason=body.reason,
+            idempotency_key=idempotency_key,
+            expected_current_decision_sha256=body.expected_current_decision_sha256,
+        )
+        status = repository.status(
+            configured_primary=current_settings.nse_daily_primary_source,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _nse_cutover_status_response(status)
+
+
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
 def data_pipeline_health() -> DataPipelineHealthResponse:
     settings = get_settings()
@@ -2271,6 +2365,45 @@ def _clickhouse_market_data_repository() -> ClickHouseMarketDataRepository:
 
 def _market_data_health_repository() -> MarketDataHealthRepository:
     return MarketDataHealthRepository(_store().engine)
+
+
+def _nse_provider_cutover_repository(
+    workspace_id: str,
+) -> NseProviderCutoverRepository:
+    return NseProviderCutoverRepository(_store().engine, workspace_id=workspace_id)
+
+
+def _workspace_id(request: Request) -> str:
+    workspace_id = request.headers.get("X-Workspace-ID", "default").strip()
+    if not workspace_id or len(workspace_id) > 64:
+        raise HTTPException(status_code=400, detail="X-Workspace-ID is invalid")
+    return workspace_id
+
+
+def _required_idempotency_key(request: Request) -> str:
+    key = request.headers.get("X-Idempotency-Key", "").strip()
+    if len(key) < 8 or len(key) > 200:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Idempotency-Key must contain between 8 and 200 characters",
+        )
+    return key
+
+
+def _nse_cutover_status_response(
+    status: CutoverStatus,
+) -> NseProviderCutoverStatusResponse:
+    decision = status.active_decision
+    return NseProviderCutoverStatusResponse(
+        configured_primary=status.configured_primary,
+        effective_primary=status.effective_primary,
+        yfinance_approved=status.yfinance_approved,
+        eligibility=NseCutoverEligibilityResponse(**vars(status.eligibility)),
+        active_decision=(
+            NseCutoverDecisionResponse(**vars(decision)) if decision is not None else None
+        ),
+        evidence=[NseProviderEvidenceRow(**row) for row in status.evidence],
+    )
 
 
 def _workflow_store() -> WorkflowRequestStore:

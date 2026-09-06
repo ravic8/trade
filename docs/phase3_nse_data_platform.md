@@ -6,9 +6,9 @@ Phase 3 is in progress on `codex/phase-3-nse-data-platform`. This phase follows
 the approved V1 boundary: NSE only, research/backtesting only, daily candles and
 yfinance minute candles within provider-available retention.
 
-The first repository slice is implemented but not activated in production.
-Existing PostgreSQL daily authority remains unchanged while the Phase 3 feature
-gate is disabled.
+The implemented repository slices are not activated in production. Existing
+PostgreSQL daily authority remains unchanged while the Phase 3 feature gate is
+disabled.
 
 ## Implemented foundation
 
@@ -67,6 +67,22 @@ gate is disabled.
   bounded and only upserts missing or value-divergent authoritative rows;
   unexpected destination-only rows are never silently deleted and keep the
   checkpoint in `mismatch` for manual review.
+- Every completed Upstox-versus-yfinance readiness comparison is now retained
+  as content-addressed, append-only evidence. Repeating an identical comparison
+  reuses the same evidence ID instead of increasing the observation count.
+- Cutover eligibility requires five consecutive distinct passing session
+  windows by default. An authenticated administrator must approve the exact
+  evidence-bundle digest; the approval and its actor, reason, timestamp, and
+  decision digest are retained in both the decision and audit ledgers.
+- Setting `NSE_DAILY_PRIMARY_SOURCE=yfinance` is not sufficient by itself. The
+  daily boundary fails closed and reports Upstox as the effective primary until
+  an active approval exists. A stale-safe authenticated rollback decision
+  immediately restores Upstox as the effective provider.
+- The NSE Data view exposes configured versus effective primary, eligibility,
+  evidence history, approval identity, and approval/rollback controls. The
+  read endpoint is `GET /api/data/operations/nse-provider-cutover`; mutations
+  use the admin endpoints under `/api/admin/nse-provider-cutover/` and require
+  `X-Idempotency-Key`.
 
 ## Fail-closed activation
 
@@ -93,6 +109,14 @@ Production uses the corresponding `PROD_` variables. Enabling the minute gate
 causes schedule reconciliation to desire `yfinance_nse_minute_schedule` as
 running. Start with a lower symbol maximum for the canary.
 
+The provider observation gate defaults to:
+
+```text
+NSE_CUTOVER_REQUIRED_PASSING_WINDOWS=5
+```
+
+This counts distinct comparison-window end sessions, not command invocations.
+
 ## Data flow
 
 ```text
@@ -106,14 +130,14 @@ Persisted NSE universe + materialized completed sessions
   -> validated ClickHouse daily or 1m replica
   -> PostgreSQL replication checkpoint (count + digest + watermark)
   -> request-time NSE session aggregation (5m / 15m / 30m / 1h)
+  -> content-addressed Upstox/yfinance comparison evidence
+  -> authenticated evidence-bundle approval or explicit rollback
 ```
 
 ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 ## Remaining Phase 3 work
 
-- Add daily Upstox-versus-yfinance reconciliation evidence and a signed NSE
-  cutover/rollback gate for the agreed observation window.
 - Record observed yfinance minute availability instead of treating the
   configured retention bound as a provider guarantee.
 - Build Python/Rust golden datasets before considering a Rust hot path.

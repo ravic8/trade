@@ -870,6 +870,60 @@ class MarketDataHealthResponse(BaseModel):
     replication: list[MarketDataReplicationHealthRow] = Field(default_factory=list)
 
 
+class NseProviderEvidenceRow(BaseModel):
+    evidence_id: str
+    window_start: date
+    window_end: date
+    status: Literal["pass", "fail"]
+    comparison_state: str
+    ready: bool
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    blocking_issues: list[str] = Field(default_factory=list)
+    evidence_sha256: str
+    observed_at: datetime
+
+
+class NseCutoverEligibilityResponse(BaseModel):
+    eligible: bool
+    required_passing_windows: int = Field(ge=2)
+    passing_windows: int = Field(ge=0)
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_bundle_sha256: str
+    blocking_issues: list[str] = Field(default_factory=list)
+
+
+class NseCutoverDecisionResponse(BaseModel):
+    decision_id: str
+    action: Literal["approve_yfinance_primary", "rollback_to_upstox"]
+    from_provider: str
+    to_provider: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_bundle_sha256: str
+    actor_email: str
+    reason: str
+    decision_sha256: str
+    created_at: datetime
+
+
+class NseProviderCutoverStatusResponse(BaseModel):
+    configured_primary: str
+    effective_primary: str
+    yfinance_approved: bool
+    eligibility: NseCutoverEligibilityResponse
+    active_decision: NseCutoverDecisionResponse | None = None
+    evidence: list[NseProviderEvidenceRow] = Field(default_factory=list)
+
+
+class NseCutoverApprovalRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2_000)
+    expected_evidence_bundle_sha256: str = Field(min_length=64, max_length=64)
+
+
+class NseCutoverRollbackRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2_000)
+    expected_current_decision_sha256: str = Field(min_length=64, max_length=64)
+
+
 class OperationsAdaptiveRateStateRow(BaseModel):
     provider: str
     current_rpm: int = Field(ge=0)

@@ -813,6 +813,60 @@ export type MarketDataHealthResponse = {
   replication: MarketDataReplicationHealthRow[];
 };
 
+export type NseProviderEvidenceRow = {
+  evidence_id: string;
+  window_start: string;
+  window_end: string;
+  status: "pass" | "fail";
+  comparison_state: string;
+  ready: boolean;
+  metrics: Record<string, unknown>;
+  blocking_issues: string[];
+  evidence_sha256: string;
+  observed_at: string;
+};
+
+export type NseCutoverEligibility = {
+  eligible: boolean;
+  required_passing_windows: number;
+  passing_windows: number;
+  evidence_ids: string[];
+  evidence_bundle_sha256: string;
+  blocking_issues: string[];
+};
+
+export type NseCutoverDecision = {
+  decision_id: string;
+  action: "approve_yfinance_primary" | "rollback_to_upstox";
+  from_provider: string;
+  to_provider: string;
+  evidence_ids: string[];
+  evidence_bundle_sha256: string;
+  actor_email: string;
+  reason: string;
+  decision_sha256: string;
+  created_at: string;
+};
+
+export type NseProviderCutoverStatus = {
+  configured_primary: string;
+  effective_primary: string;
+  yfinance_approved: boolean;
+  eligibility: NseCutoverEligibility;
+  active_decision: NseCutoverDecision | null;
+  evidence: NseProviderEvidenceRow[];
+};
+
+export type NseCutoverApprovalRequest = {
+  reason: string;
+  expected_evidence_bundle_sha256: string;
+};
+
+export type NseCutoverRollbackRequest = {
+  reason: string;
+  expected_current_decision_sha256: string;
+};
+
 export type OperationsWorkItemsParams = {
   provider?: "yfinance";
   exchange: OperationsExchange;

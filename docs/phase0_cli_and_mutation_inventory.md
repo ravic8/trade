@@ -53,7 +53,7 @@ All commands are defined in `src/trade_research/cli.py`.
 | `run-yfinance-daily-worker` | planner/worker mutation | provider calls, OHLCV, attempts/runs | worker job |
 | `plan-yfinance-tsx-canary` | planner/worker mutation | canary work items | controlled workflow request |
 | `plan-yfinance-nse-canary` | planner/worker mutation | canary work items | controlled workflow request |
-| `check-nse-yfinance-cutover` | read only | none | validation gate/UI |
+| `check-nse-yfinance-cutover` | evidence mutation | content-addressed comparison evidence | validation gate/Dagster/UI |
 | `refresh-yfinance-history-evidence` | provider/derived mutation | history evidence | validation asset |
 | `provider-history-status` | read only | none | Data UI |
 | `fetch-yfinance-missing` | provider ingestion | missing OHLCV and run evidence | repair workflow |

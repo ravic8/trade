@@ -282,6 +282,45 @@ market_data_replication_checkpoints_table = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+nse_provider_comparison_evidence_table = Table(
+    "nse_provider_comparison_evidence",
+    metadata,
+    Column("evidence_id", String(64), primary_key=True),
+    Column("workspace_id", String(64), nullable=False),
+    Column("window_start", Date, nullable=False),
+    Column("window_end", Date, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("comparison_state", String(64), nullable=False),
+    Column("ready", Boolean, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    Column("blocking_issues", JSON, nullable=False),
+    Column("evidence_sha256", String(64), nullable=False, unique=True),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+nse_provider_cutover_decisions_table = Table(
+    "nse_provider_cutover_decisions",
+    metadata,
+    Column("decision_id", String(64), primary_key=True),
+    Column("workspace_id", String(64), nullable=False),
+    Column("idempotency_key", String(200), nullable=False),
+    Column("action", String(32), nullable=False),
+    Column("from_provider", String(64), nullable=False),
+    Column("to_provider", String(64), nullable=False),
+    Column("evidence_ids", JSON, nullable=False),
+    Column("evidence_bundle_sha256", String(64), nullable=False),
+    Column("actor_email", String(255), nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("decision_sha256", String(64), nullable=False, unique=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "workspace_id",
+        "idempotency_key",
+        name="uq_nse_cutover_decisions_workspace_idempotency",
+    ),
+)
+
 Index(
     "idx_market_data_quality_run_status",
     market_data_quality_outcomes_table.c.source_run_id,
@@ -327,4 +366,15 @@ Index(
     market_data_replication_checkpoints_table.c.exchange,
     market_data_replication_checkpoints_table.c.interval,
     market_data_replication_checkpoints_table.c.updated_at,
+)
+Index(
+    "idx_nse_provider_evidence_scope_window",
+    nse_provider_comparison_evidence_table.c.workspace_id,
+    nse_provider_comparison_evidence_table.c.window_end,
+    nse_provider_comparison_evidence_table.c.observed_at,
+)
+Index(
+    "idx_nse_provider_decisions_scope_created",
+    nse_provider_cutover_decisions_table.c.workspace_id,
+    nse_provider_cutover_decisions_table.c.created_at,
 )
