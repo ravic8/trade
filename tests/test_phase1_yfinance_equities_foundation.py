@@ -93,6 +93,12 @@ def test_alembic_upgrade_bootstraps_an_empty_database(
         index["name"]
         for index in upgraded.get_indexes("market_data_replication_checkpoints")
     }
+    assert "idx_ohlcv_daily_source_exchange_date" in {
+        index["name"] for index in upgraded.get_indexes("ohlcv_daily")
+    }
+    assert "idx_symbols_exchange_provider_instrument" in {
+        index["name"] for index in upgraded.get_indexes("symbols")
+    }
     with engine.connect() as connection:
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"

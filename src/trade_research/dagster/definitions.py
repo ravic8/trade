@@ -35,7 +35,10 @@ from trade_research.dagster.daily_assets import (
     yfinance_us_completed_session_work_plan,
     yfinance_us_daily_ohlcv,
 )
-from trade_research.dagster.market_data_assets import yfinance_nse_minute_ohlcv
+from trade_research.dagster.market_data_assets import (
+    nse_daily_clickhouse_partition_reconciliation,
+    yfinance_nse_minute_ohlcv,
+)
 from trade_research.dagster.workflow_requests import (
     data_pipeline_request_job,
     data_pipeline_request_sensor,
@@ -84,6 +87,11 @@ us_universe_refresh_job = define_asset_job(
 yfinance_daily_work_planner_job = define_asset_job(
     name="yfinance_daily_work_planner_job",
     selection=[yfinance_daily_work_plan],
+)
+
+nse_daily_clickhouse_partition_reconciliation_job = define_asset_job(
+    name="nse_daily_clickhouse_partition_reconciliation_job",
+    selection=[nse_daily_clickhouse_partition_reconciliation],
 )
 
 yfinance_nse_completed_session_work_planner_job = define_asset_job(
@@ -374,6 +382,7 @@ defs = Definitions(
         yfinance_fx_crypto_intraday_ohlcv,
         yfinance_fx_intraday_gap_validation,
         yfinance_nse_minute_ohlcv,
+        nse_daily_clickhouse_partition_reconciliation,
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
@@ -390,6 +399,7 @@ defs = Definitions(
         fx_intraday_dukascopy_job,
         yfinance_fx_intraday_job,
         yfinance_nse_minute_job,
+        nse_daily_clickhouse_partition_reconciliation_job,
         nse_universe_refresh_job,
         tsx_universe_refresh_job,
         us_universe_refresh_job,

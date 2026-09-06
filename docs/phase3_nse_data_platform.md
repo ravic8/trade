@@ -59,6 +59,14 @@ gate is disabled.
   quarantined duplicate/invalid/stale/off-session rows, immutable raw-manifest
   IDs and digests, and the latest ClickHouse count/digest/watermark/latency
   checkpoint. Object-store locations are deliberately not returned.
+- Historical NSE yfinance daily data can now be reconciled one ClickHouse
+  calendar-month partition at a time with the manual-only
+  `nse_daily_clickhouse_partition_reconciliation_job`. Audit mode compares
+  PostgreSQL authority with the ClickHouse `FINAL` view using a deterministic
+  business-field digest and records a durable checkpoint. Repair mode is
+  bounded and only upserts missing or value-divergent authoritative rows;
+  unexpected destination-only rows are never silently deleted and keep the
+  checkpoint in `mismatch` for manual review.
 
 ## Fail-closed activation
 
@@ -106,9 +114,6 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 - Add daily Upstox-versus-yfinance reconciliation evidence and a signed NSE
   cutover/rollback gate for the agreed observation window.
-- Add historical partition-level PostgreSQL-to-ClickHouse reconciliation and
-  repair; the current checkpoint proves equality for each newly committed
-  validated daily batch.
 - Record observed yfinance minute availability instead of treating the
   configured retention bound as a provider guarantee.
 - Build Python/Rust golden datasets before considering a Rust hot path.

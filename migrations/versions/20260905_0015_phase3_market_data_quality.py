@@ -17,6 +17,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.create_index(
+        "idx_ohlcv_daily_source_exchange_date",
+        "ohlcv_daily",
+        ["source", "exchange", "date"],
+    )
+    op.create_index(
+        "idx_symbols_exchange_provider_instrument",
+        "symbols",
+        ["exchange", "provider_instrument_key"],
+    )
     op.create_table(
         "market_data_quality_outcomes",
         sa.Column("quality_outcome_id", sa.String(length=64), primary_key=True),
@@ -142,3 +152,11 @@ def downgrade() -> None:
         table_name="market_data_quality_outcomes",
     )
     op.drop_table("market_data_quality_outcomes")
+    op.drop_index(
+        "idx_symbols_exchange_provider_instrument",
+        table_name="symbols",
+    )
+    op.drop_index(
+        "idx_ohlcv_daily_source_exchange_date",
+        table_name="ohlcv_daily",
+    )

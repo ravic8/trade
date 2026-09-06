@@ -170,6 +170,53 @@ def test_clickhouse_nse_session_aggregation_query() -> None:
     assert rows[0].complete is True
 
 
+def test_clickhouse_daily_partition_read_uses_final_replica_state() -> None:
+    writer = ClickHouseMarketDataRepository(
+        _clickhouse("CLICKHOUSE_DAGSTER_USER", "CLICKHOUSE_DAGSTER_PASSWORD"),
+        write_enabled=True,
+    )
+    reader = ClickHouseMarketDataRepository(
+        _clickhouse("CLICKHOUSE_API_USER", "CLICKHOUSE_API_PASSWORD")
+    )
+    candle = MarketCandle(
+        instrument_id="phase3-ci-daily-reliance",
+        provider_symbol="RELIANCE.NS",
+        symbol="RELIANCE",
+        exchange="NSE",
+        session_date=date(2026, 9, 7),
+        open=Decimal("100"),
+        high=Decimal("105"),
+        low=Decimal("99"),
+        close=Decimal("104"),
+        volume=1000,
+        currency="INR",
+        provider="yfinance",
+        provider_timestamp=datetime(2026, 9, 7, 12, tzinfo=UTC),
+        request_id="phase3-ci-daily-request",
+        adapter_version="phase3-ci",
+        interval=CandleInterval.ONE_DAY,
+    )
+    writer.insert_validated(
+        [candle],
+        source_run_id="phase3-ci-daily-run",
+        workspace_id="phase3-ci",
+        version=1,
+    )
+
+    rows = reader.read_daily_partition(
+        workspace_id="phase3-ci",
+        provider="yfinance",
+        exchange="NSE",
+        window_start=date(2026, 9, 1),
+        window_end=date(2026, 9, 30),
+    )
+
+    selected = [row for row in rows if row["instrument_id"] == candle.instrument_id]
+    assert len(selected) == 1
+    assert selected[0]["close"] == Decimal("104")
+    assert selected[0]["provider_symbol"] == "RELIANCE.NS"
+
+
 def test_object_store_roles_versioning_integrity_and_deletion_denial() -> None:
     writer_client = _s3(
         "OBJECT_STORE_DAGSTER_ACCESS_KEY_ID",

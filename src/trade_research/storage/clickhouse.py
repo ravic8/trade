@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import date
 from typing import Any, Protocol
 
 from trade_research.config import Settings
@@ -329,6 +330,52 @@ class ClickHouseMarketDataRepository(_Repository):
             "digest": hashlib.sha256("\n".join(sorted(digests)).encode()).hexdigest(),
             "watermark": max(watermarks) if watermarks else None,
         }
+
+    def read_daily_partition(
+        self,
+        *,
+        workspace_id: str,
+        provider: str,
+        exchange: str,
+        window_start: date,
+        window_end: date,
+    ) -> list[dict[str, Any]]:
+        """Read one bounded daily partition using common source/replica fields."""
+
+        result = self._client.query(
+            f"""
+            SELECT
+                instrument_id,
+                provider_symbol,
+                symbol,
+                exchange,
+                session_date,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                source,
+                provider_timestamp
+            FROM {self._database}.ohlcv_daily FINAL
+            WHERE workspace_id = {{workspace_id:String}}
+              AND exchange = {{exchange:String}}
+              AND source = {{provider:String}}
+              AND session_date BETWEEN {{window_start:Date}} AND {{window_end:Date}}
+            ORDER BY session_date, instrument_id
+            """,
+            parameters={
+                "workspace_id": workspace_id,
+                "provider": provider,
+                "exchange": exchange,
+                "window_start": window_start,
+                "window_end": window_end,
+            },
+        )
+        return [
+            dict(zip(result.column_names, row, strict=True))
+            for row in result.result_rows
+        ]
 
     def aggregate_nse_intraday(
         self,

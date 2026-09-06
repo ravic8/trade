@@ -81,8 +81,11 @@ checkpoints with count, digest, and watermark evidence. Session-anchored `5m`,
 ClickHouse `1m` rows with explicit completeness and lineage. The authenticated
 Data Console exposes latest-run daily/minute freshness, completeness, explained
 and unexplained gaps, quarantine counts, safe raw-manifest lineage, and current
-ClickHouse replication evidence. It is not production-active and does not yet
-satisfy the Phase 3 exit gate. See `docs/phase3_nse_data_platform.md`.
+ClickHouse replication evidence. A manual-only Dagster job can audit one
+calendar-month historical daily partition and safely upsert missing or divergent
+replica rows while leaving unexpected destination-only rows fail-closed for
+manual review. It is not production-active and does not yet satisfy the Phase 3
+exit gate. See `docs/phase3_nse_data_platform.md`.
 
 ## Provider state
 

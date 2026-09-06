@@ -951,6 +951,18 @@ class TimescaleStore:
             )
             connection.execute(
                 text(
+                    "CREATE INDEX IF NOT EXISTS idx_ohlcv_daily_source_exchange_date "
+                    "ON ohlcv_daily (source, exchange, date)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_symbols_exchange_provider_instrument "
+                    "ON symbols (exchange, provider_instrument_key)"
+                )
+            )
+            connection.execute(
+                text(
                     "CREATE INDEX IF NOT EXISTS idx_ohlcv_intraday_symbol_ts "
                     "ON ohlcv_intraday (symbol, interval, ts DESC)"
                 )
