@@ -348,6 +348,25 @@ market_data_availability_observations_table = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+phase3_readiness_evidence_table = Table(
+    "phase3_readiness_evidence",
+    metadata,
+    Column("evidence_id", String(64), primary_key=True),
+    Column("workspace_id", String(64), nullable=False),
+    Column("evidence_type", String(32), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("source_run_ids", JSON, nullable=False),
+    Column("session_dates", JSON, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    Column("blocking_issues", JSON, nullable=False),
+    Column("evidence_refs", JSON, nullable=False),
+    Column("actor_email", String(255)),
+    Column("reason", Text),
+    Column("evidence_sha256", String(64), nullable=False, unique=True),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 Index(
     "idx_market_data_quality_run_status",
     market_data_quality_outcomes_table.c.source_run_id,
@@ -417,4 +436,10 @@ Index(
     "idx_market_data_availability_run_instrument",
     market_data_availability_observations_table.c.source_run_id,
     market_data_availability_observations_table.c.instrument_id,
+)
+Index(
+    "idx_phase3_readiness_scope_observed",
+    phase3_readiness_evidence_table.c.workspace_id,
+    phase3_readiness_evidence_table.c.evidence_type,
+    phase3_readiness_evidence_table.c.observed_at,
 )

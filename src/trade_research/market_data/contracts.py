@@ -125,3 +125,36 @@ def candle_content_sha256(candle: MarketCandle) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def candle_business_sha256(candle: MarketCandle) -> str:
+    """Hash stable candle values while excluding request and raw-object lineage.
+
+    Request IDs, retrieval timestamps, and raw artifact IDs are intentionally
+    different on a safe rerun. Excluding them lets the readiness gate prove that
+    two independent requests produced the same canonical market observations.
+    """
+
+    payload = {
+        "instrument_id": candle.instrument_id,
+        "provider_symbol": candle.provider_symbol,
+        "symbol": candle.symbol,
+        "exchange": candle.exchange,
+        "currency": candle.currency,
+        "provider": candle.provider,
+        "adapter_version": candle.adapter_version,
+        "interval": candle.interval.value,
+        "session_date": candle.session_date.isoformat(),
+        "timestamp": (
+            candle.timestamp.astimezone(UTC).isoformat()
+            if candle.timestamp is not None
+            else None
+        ),
+        "open": format(candle.open, "f"),
+        "high": format(candle.high, "f"),
+        "low": format(candle.low, "f"),
+        "close": format(candle.close, "f"),
+        "volume": candle.volume,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

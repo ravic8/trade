@@ -309,6 +309,7 @@ def test_deploy_reports_build_migration_and_total_timings() -> None:
 
     assert "production image build completed in" in script
     assert "database migrations completed in" in script
+    assert "trade-research phase3-readiness" in script
     assert "deployment completed in" in script
 
 

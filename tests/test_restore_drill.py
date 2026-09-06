@@ -113,13 +113,13 @@ fi
 if [[ "$call" == *"SELECT extversion FROM pg_extension"* ]]; then
   printf '%s\n' '2.17.2'
 elif [[ "$call" == *"SELECT version_num FROM alembic_version"* ]]; then
-  printf '%s\n' '20260906_0017'
+  printf '%s\n' '20260906_0018'
 elif [[ "$call" == *"COUNT(*) FROM filing_documents"* ]]; then
   printf '%s\n' '123'
 elif [[ "$call" == *"COUNT(*) FROM filing_approved_facts"* ]]; then
   printf '%s\n' '1186'
 elif [[ "$call" == *"alembic heads"* ]]; then
-  printf '%s\n' '20260906_0017 (head)'
+  printf '%s\n' '20260906_0018 (head)'
 elif [[ "$call" == *"count() FROM research.schema_migrations"* ]]; then
   printf '%s\n' '1'
 elif [[ "$call" == *"count() FROM system.tables"* ]]; then
@@ -237,7 +237,7 @@ def test_restore_drill_is_isolated_and_emits_passing_report(tmp_path: Path) -> N
         "verified_document_count": 1,
         "failed_skipped_count": 1,
     }
-    assert report["postgresql"]["migration_revision"] == "20260906_0017"
+    assert report["postgresql"]["migration_revision"] == "20260906_0018"
     assert report["postgresql"]["timescaledb_version"] == "2.17.2"
     assert report["postgresql"]["approved_fact_count"] == 1186
     assert report["object_store"] == {

@@ -311,6 +311,11 @@ migration_started_seconds=$SECONDS
   alembic -c /app/alembic.ini upgrade head
 log "database migrations completed in $((SECONDS - migration_started_seconds))s"
 
+if [[ "${PROD_PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}" == "true" ]]; then
+  log "verifying durable Phase 3 production-readiness evidence"
+  "${compose[@]}" run --rm --no-deps api trade-research phase3-readiness
+fi
+
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   log "starting private Phase 2 storage services"
   "${compose[@]}" up -d clickhouse minio

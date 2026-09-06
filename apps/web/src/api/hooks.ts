@@ -36,6 +36,7 @@ import {
   getOperationsOverview,
   getOperationsRateLimits,
   getOperationsWorkItems,
+  getPhase3Readiness,
   getPipelineScheduleStatus,
   getProviderRequestLogs,
   getProviderRequestSummary,
@@ -327,6 +328,15 @@ export function useNseProviderCutoverStatus(enabled = true) {
   return useQuery({
     queryKey: ["nse-provider-cutover"],
     queryFn: getNseProviderCutoverStatus,
+    enabled,
+    refetchInterval: 60_000,
+  });
+}
+
+export function usePhase3Readiness(enabled = true) {
+  return useQuery({
+    queryKey: ["phase3-readiness"],
+    queryFn: getPhase3Readiness,
     enabled,
     refetchInterval: 60_000,
   });

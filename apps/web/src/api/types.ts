@@ -886,6 +886,37 @@ export type NseCutoverRollbackRequest = {
   expected_current_decision_sha256: string;
 };
 
+export type Phase3ReadinessEvidenceRow = {
+  evidence_id: string;
+  evidence_type: "bounded_canary" | "rollback_restore_drill";
+  status: "pass" | "fail";
+  source_run_ids: Record<string, string>;
+  session_dates: string[];
+  metrics: Record<string, unknown>;
+  blocking_issues: string[];
+  evidence_refs: Record<string, unknown>;
+  actor_email: string | null;
+  reason: string | null;
+  evidence_sha256: string;
+  observed_at: string;
+};
+
+export type Phase3ReadinessGateRow = {
+  name: string;
+  passed: boolean;
+  reason: string;
+  evidence_ids: string[];
+};
+
+export type Phase3ReadinessResponse = {
+  ready_for_production: boolean;
+  activation_enabled: boolean;
+  checked_at: string;
+  gates: Phase3ReadinessGateRow[];
+  blocking_issues: string[];
+  evidence: Phase3ReadinessEvidenceRow[];
+};
+
 export type OperationsWorkItemsParams = {
   provider?: "yfinance";
   exchange: OperationsExchange;

@@ -48,6 +48,7 @@ from trade_research.market_data.aggregation_golden import (
     load_aggregation_golden,
     load_candidate_output,
 )
+from trade_research.market_data.readiness import Phase3ReadinessRepository
 from trade_research.modeling.backtest import BacktestConfig
 from trade_research.modeling.baselines import BaselineRunConfig
 from trade_research.modeling.latest_predictions import LatestPredictionConfig
@@ -1547,6 +1548,26 @@ def check_nse_yfinance_cutover() -> None:
     for issue in result.blocking_issues:
         console.print(f"[red]Blocked: {issue}[/red]")
     if result.status == "fail":
+        raise typer.Exit(code=1)
+
+
+@app.command("phase3-readiness")
+def phase3_readiness() -> None:
+    """Evaluate the durable Phase 3 promotion gates without changing evidence."""
+
+    current_settings = get_settings()
+    store = TimescaleStore(current_settings.database_url)
+    readiness = Phase3ReadinessRepository(store.engine).readiness(
+        required_passing_windows=current_settings.nse_cutover_required_passing_windows
+    )
+    console.print(
+        "Phase 3 production readiness: "
+        + ("[green]READY[/green]" if readiness.ready_for_production else "[red]BLOCKED[/red]")
+    )
+    for gate in readiness.gates:
+        state = "PASS" if gate.passed else "BLOCKED"
+        console.print(f"{gate.name}: {state} — {gate.reason}")
+    if not readiness.ready_for_production:
         raise typer.Exit(code=1)
 
 

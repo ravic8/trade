@@ -23,6 +23,7 @@ from trade_research.market_data.replication import (
     ReplicationCheckpoint,
     assert_replication_matches,
     candle_batch_summary,
+    candle_business_batch_summary,
     checkpoint_id,
     watermark_lag_seconds,
 )
@@ -142,6 +143,7 @@ def replicate_validated_batch(
     )
     candles = list(batch.candles)
     source = candle_batch_summary(candles)
+    business = candle_business_batch_summary(candles)
     dataset_key = "ohlcv_intraday" if batch.request.interval.is_intraday else "ohlcv_daily"
     started_at = datetime.now(UTC)
     replication_id = checkpoint_id(
@@ -168,6 +170,10 @@ def replicate_validated_batch(
         source_row_count=source["row_count"],
         source_digest=source["digest"],
         source_watermark=source["watermark"],
+        details={
+            "business_row_count": business["row_count"],
+            "business_digest": business["digest"],
+        },
         started_at=started_at,
     )
     if checkpoint_repository is not None:

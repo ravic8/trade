@@ -557,6 +557,8 @@ def test_replication_records_reconciled_count_digest_and_watermark(monkeypatch) 
     assert checkpoint["source_row_count"] == checkpoint["destination_row_count"] == 1
     assert checkpoint["source_digest"] == checkpoint["destination_digest"]
     assert checkpoint["watermark_lag_seconds"] == 0
+    assert checkpoint["details"]["business_row_count"] == 1
+    assert len(checkpoint["details"]["business_digest"]) == 64
 
 
 def test_replication_mismatch_is_persisted_and_fails_closed(monkeypatch) -> None:

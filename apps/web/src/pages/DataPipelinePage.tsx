@@ -36,6 +36,7 @@ import {
   useOperationsOverview,
   useOperationsRateLimits,
   useOperationsWorkItems,
+  usePhase3Readiness,
   usePipelineScheduleStatus,
   useProviderRuns,
   useRollbackNseProviderCutover,
@@ -60,6 +61,7 @@ import type {
   OperationsQueueGroup,
   OperationsUniverseSnapshotRow,
   OperationsWorkItemRow,
+  Phase3ReadinessResponse,
   PipelineScheduleStatusRow,
 } from "../api/types";
 import { EmptyState, LoadingState } from "../components/DataState";
@@ -262,6 +264,9 @@ export function DataPipelinePage() {
   const cutoverQuery = useNseProviderCutoverStatus(
     activeTab === "market-data" && exchange === "NSE",
   );
+  const readinessQuery = usePhase3Readiness(
+    activeTab === "market-data" && exchange === "NSE",
+  );
   const approveCutover = useApproveNseProviderCutover();
   const rollbackCutover = useRollbackNseProviderCutover();
   const availabilityParams = useMemo<DataAvailabilityParams>(
@@ -353,6 +358,7 @@ export function DataPipelinePage() {
     void queryClient.invalidateQueries({ queryKey: ["data-operations-bigquery-sync"] });
     void queryClient.invalidateQueries({ queryKey: ["phase3-market-data-health"] });
     void queryClient.invalidateQueries({ queryKey: ["nse-provider-cutover"] });
+    void queryClient.invalidateQueries({ queryKey: ["phase3-readiness"] });
   }
 
   async function approveProviderCutover() {
@@ -460,10 +466,11 @@ export function DataPipelinePage() {
           <MarketDataHealthView
             health={marketDataHealthQuery.data ?? null}
             cutover={cutoverQuery.data ?? null}
+            readiness={readinessQuery.data ?? null}
             isLoading={marketDataHealthQuery.isLoading}
             error={marketDataHealthQuery.error}
             cutoverError={
-              cutoverQuery.error ?? approveCutover.error ?? rollbackCutover.error
+              cutoverQuery.error ?? readinessQuery.error ?? approveCutover.error ?? rollbackCutover.error
             }
             cutoverReason={cutoverReason}
             isCutoverPending={approveCutover.isPending || rollbackCutover.isPending}
@@ -473,6 +480,7 @@ export function DataPipelinePage() {
             onRefresh={() => {
               void marketDataHealthQuery.refetch();
               void cutoverQuery.refetch();
+              void readinessQuery.refetch();
             }}
           />
         ) : (
@@ -641,6 +649,7 @@ function DataTabs({
 function MarketDataHealthView({
   health,
   cutover,
+  readiness,
   isLoading,
   error,
   cutoverError,
@@ -653,6 +662,7 @@ function MarketDataHealthView({
 }: {
   health: MarketDataHealthResponse | null;
   cutover: NseProviderCutoverStatus | null;
+  readiness: Phase3ReadinessResponse | null;
   isLoading: boolean;
   error: Error | null;
   cutoverError: Error | null;
@@ -703,6 +713,38 @@ function MarketDataHealthView({
         <MetricCard icon={AlertTriangle} label="Unexplained Gaps" value={formatNumber(unexplainedGaps)} detail="Missing expected candles in latest runs" />
         <MetricCard icon={ShieldCheck} label="Quarantined" value={formatNumber(quarantined)} detail="Duplicate, invalid, stale, or off-session" />
       </div>
+
+      <section className="data-card">
+        <div className="data-card-header">
+          <div>
+            <h2>Production Readiness</h2>
+            <p>Fail-closed canary, rerun, replica, observation, rollback, and provider gates</p>
+          </div>
+          <span className={`status-pill ${statusClass(readiness?.ready_for_production ? "completed" : "warning")}`}>
+            {readiness?.ready_for_production ? "Ready" : "Blocked"}
+          </span>
+        </div>
+        {readiness ? (
+          <>
+            <div className="operations-stack-list">
+              {readiness.gates.map((gate) => (
+                <article key={gate.name}>
+                  <div>
+                    <strong>{humanize(gate.name)}</strong>
+                    <span>{gate.reason}</span>
+                  </div>
+                  <span className={`status-pill ${statusClass(gate.passed ? "completed" : "warning")}`}>
+                    {gate.passed ? "Pass" : "Blocked"}
+                  </span>
+                </article>
+              ))}
+            </div>
+            <p className="operations-empty-copy">
+              Activation is {readiness.activation_enabled ? "enabled" : "disabled"} · checked {formatDateTime(readiness.checked_at)}
+            </p>
+          </>
+        ) : <EmptyState label="No Phase 3 readiness assessment is available." />}
+      </section>
 
       <section className="data-card">
         <div className="data-card-header">

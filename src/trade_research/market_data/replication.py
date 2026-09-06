@@ -10,7 +10,11 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from trade_research.control_plane.tables import market_data_replication_checkpoints_table
-from trade_research.market_data.contracts import MarketCandle, candle_content_sha256
+from trade_research.market_data.contracts import (
+    MarketCandle,
+    candle_business_sha256,
+    candle_content_sha256,
+)
 
 
 class MarketDataReplicationError(RuntimeError):
@@ -132,6 +136,16 @@ def candle_batch_summary(candles: list[MarketCandle]) -> dict[str, Any]:
         "row_count": len(candles),
         "digest": hashlib.sha256("\n".join(digests).encode()).hexdigest(),
         "watermark": max(watermarks) if watermarks else None,
+    }
+
+
+def candle_business_batch_summary(candles: list[MarketCandle]) -> dict[str, Any]:
+    """Summarize values that must remain identical across independent reruns."""
+
+    digests = sorted(candle_business_sha256(candle) for candle in candles)
+    return {
+        "row_count": len(candles),
+        "digest": hashlib.sha256("\n".join(digests).encode()).hexdigest(),
     }
 
 

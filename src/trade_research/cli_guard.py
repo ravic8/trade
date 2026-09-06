@@ -47,6 +47,7 @@ COMMAND_EFFECTS: dict[str, CommandEffect] = {
     "plan-yfinance-nse-canary": CommandEffect.MUTATING,
     "check-nse-yfinance-cutover": CommandEffect.MUTATING,
     "verify-market-data-aggregation-golden": CommandEffect.READ_ONLY,
+    "phase3-readiness": CommandEffect.READ_ONLY,
     "refresh-yfinance-history-evidence": CommandEffect.MUTATING,
     "provider-history-status": CommandEffect.READ_ONLY,
     "fetch-yfinance-missing": CommandEffect.MUTATING,

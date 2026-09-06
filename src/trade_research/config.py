@@ -86,10 +86,14 @@ class Settings(BaseSettings):
     # and replicate to ClickHouse. It is intentionally disabled until both
     # Phase 2 write planes are production-ready.
     phase3_market_data_enabled: bool = False
+    phase3_production_activation_enabled: bool = False
     phase3_yfinance_adapter_version: str = "yfinance-v1"
     yfinance_nse_minute_enabled: bool = False
     yfinance_nse_minute_lookback_days: int = Field(default=7, ge=1, le=8)
     yfinance_nse_minute_max_symbols_per_run: int = Field(default=100, ge=1, le=500)
+    phase3_canary_max_instruments: int = Field(default=25, ge=1, le=500)
+    phase3_minimum_completeness: float = Field(default=0.995, ge=0.995, le=1)
+    phase3_required_observed_sessions: int = Field(default=5, ge=2, le=20)
 
     filing_enabled: bool = True
     filing_default_workspace_id: str = "default"
@@ -321,6 +325,13 @@ class Settings(BaseSettings):
         if self.yfinance_nse_minute_enabled and not self.phase3_market_data_enabled:
             raise ValueError(
                 "NSE minute ingestion requires PHASE3_MARKET_DATA_ENABLED=true"
+            )
+        if self.phase3_production_activation_enabled and not (
+            self.phase3_market_data_enabled and self.yfinance_nse_minute_enabled
+        ):
+            raise ValueError(
+                "Phase 3 production activation requires the market-data and "
+                "NSE minute data planes"
             )
         if self.bigquery_enabled and not self.bigquery_project_id:
             raise ValueError("BIGQUERY_PROJECT_ID is required when BIGQUERY_ENABLED=true")

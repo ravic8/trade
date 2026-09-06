@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from math import cos, sin
 from time import monotonic
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -45,6 +45,7 @@ from trade_research.market_data.cutover import (
     NseProviderCutoverRepository,
 )
 from trade_research.market_data.health import MarketDataHealthRepository
+from trade_research.market_data.readiness import Phase3ReadinessRepository
 from trade_research.operations import WorkflowRequestStore
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
@@ -95,6 +96,11 @@ from trade_research.schemas import (
     OperationsUniverseSnapshotRow,
     OperationsWorkItemRow,
     OperationsWorkItemsResponse,
+    Phase3CanaryAssessmentRequest,
+    Phase3ReadinessEvidenceRow,
+    Phase3ReadinessGateRow,
+    Phase3ReadinessResponse,
+    Phase3RollbackRestoreDrillRequest,
     PipelineScheduleStatusRow,
     ProviderCapabilityResponse,
     ProviderCredentialStatusResponse,
@@ -1294,6 +1300,89 @@ def rollback_nse_yfinance_cutover(
     return _nse_cutover_status_response(status)
 
 
+@app.get(
+    "/api/data/operations/phase3-readiness",
+    response_model=Phase3ReadinessResponse,
+)
+def phase3_readiness_status(
+    http_request: Request,
+    evidence_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> Phase3ReadinessResponse:
+    workspace_id = _workspace_id(http_request)
+    current_settings = get_settings()
+    try:
+        readiness = _phase3_readiness_repository(workspace_id).readiness(
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+            evidence_limit=evidence_limit,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _phase3_readiness_response(readiness, current_settings=current_settings)
+
+
+@app.post(
+    "/api/admin/phase3-readiness/assess-canary",
+    response_model=Phase3ReadinessResponse,
+)
+def assess_phase3_canary(
+    body: Phase3CanaryAssessmentRequest,
+    http_request: Request,
+    _admin_email: Annotated[str, Depends(_require_admin)],
+) -> Phase3ReadinessResponse:
+    workspace_id = _workspace_id(http_request)
+    _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _phase3_readiness_repository(workspace_id)
+    try:
+        repository.assess_canary(
+            daily_run_id=body.daily_run_id,
+            minute_run_id=body.minute_run_id,
+            minute_rerun_id=body.minute_rerun_id,
+            max_instruments=current_settings.phase3_canary_max_instruments,
+            minimum_completeness=current_settings.phase3_minimum_completeness,
+            required_observed_sessions=current_settings.phase3_required_observed_sessions,
+        )
+        readiness = repository.readiness(
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _phase3_readiness_response(readiness, current_settings=current_settings)
+
+
+@app.post(
+    "/api/admin/phase3-readiness/record-rollback-restore-drill",
+    response_model=Phase3ReadinessResponse,
+)
+def record_phase3_rollback_restore_drill(
+    body: Phase3RollbackRestoreDrillRequest,
+    http_request: Request,
+    admin_email: Annotated[str, Depends(_require_admin)],
+) -> Phase3ReadinessResponse:
+    workspace_id = _workspace_id(http_request)
+    _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _phase3_readiness_repository(workspace_id)
+    try:
+        repository.record_rollback_restore_drill(
+            actor_email=admin_email,
+            reason=body.reason,
+            rollback_decision_sha256=body.rollback_decision_sha256,
+            restored_decision_sha256=body.restored_decision_sha256,
+            checks=body.checks.model_dump(),
+        )
+        readiness = repository.readiness(
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _phase3_readiness_response(readiness, current_settings=current_settings)
+
+
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
 def data_pipeline_health() -> DataPipelineHealthResponse:
     settings = get_settings()
@@ -2378,6 +2467,10 @@ def _nse_provider_cutover_repository(
     return NseProviderCutoverRepository(_store().engine, workspace_id=workspace_id)
 
 
+def _phase3_readiness_repository(workspace_id: str) -> Phase3ReadinessRepository:
+    return Phase3ReadinessRepository(_store().engine, workspace_id=workspace_id)
+
+
 def _workspace_id(request: Request) -> str:
     workspace_id = request.headers.get("X-Workspace-ID", "default").strip()
     if not workspace_id or len(workspace_id) > 64:
@@ -2408,6 +2501,29 @@ def _nse_cutover_status_response(
             NseCutoverDecisionResponse(**vars(decision)) if decision is not None else None
         ),
         evidence=[NseProviderEvidenceRow(**row) for row in status.evidence],
+    )
+
+
+def _phase3_readiness_response(
+    readiness: Any,
+    *,
+    current_settings: Settings,
+) -> Phase3ReadinessResponse:
+    return Phase3ReadinessResponse(
+        ready_for_production=readiness.ready_for_production,
+        activation_enabled=current_settings.phase3_production_activation_enabled,
+        checked_at=readiness.checked_at,
+        gates=[
+            Phase3ReadinessGateRow(
+                name=gate.name,
+                passed=gate.passed,
+                reason=gate.reason,
+                evidence_ids=list(gate.evidence_ids),
+            )
+            for gate in readiness.gates
+        ],
+        blocking_issues=list(readiness.blocking_issues),
+        evidence=[Phase3ReadinessEvidenceRow(**row) for row in readiness.evidence],
     )
 
 

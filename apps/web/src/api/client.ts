@@ -60,6 +60,7 @@ import type {
   OperationsOverviewResponse,
   OperationsWorkItemsParams,
   OperationsWorkItemsResponse,
+  Phase3ReadinessResponse,
   ProviderCapabilityResponse,
   ProviderCredentialStatusResponse,
   ProviderCredentialTestRequest,
@@ -546,6 +547,10 @@ export function getMarketDataHealth(): Promise<MarketDataHealthResponse> {
 
 export function getNseProviderCutoverStatus(): Promise<NseProviderCutoverStatus> {
   return strictFetchJson("/api/data/operations/nse-provider-cutover");
+}
+
+export function getPhase3Readiness(): Promise<Phase3ReadinessResponse> {
+  return strictFetchJson("/api/data/operations/phase3-readiness");
 }
 
 export function approveNseProviderCutover(

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchJson, getDailyOpportunities, getMarketDataHealth } from "./client";
+import {
+  fetchJson,
+  getDailyOpportunities,
+  getMarketDataHealth,
+  getPhase3Readiness,
+} from "./client";
 
 describe("getDailyOpportunities", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -65,6 +70,26 @@ describe("getMarketDataHealth", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/data/operations/market-data-health?provider=yfinance&exchange=NSE",
+      undefined,
+    );
+  });
+});
+
+describe("getPhase3Readiness", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses the Phase 3 production-readiness endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ready_for_production: false, gates: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await getPhase3Readiness();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/data/operations/phase3-readiness",
       undefined,
     );
   });

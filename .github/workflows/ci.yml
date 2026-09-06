@@ -76,7 +76,7 @@ jobs:
           createdb -h localhost -U trade trade_previous
           DATABASE_URL=postgresql+psycopg://trade:trade@localhost:5432/trade_previous python -m alembic upgrade 20260726_0012
           DATABASE_URL=postgresql+psycopg://trade:trade@localhost:5432/trade_previous python -m alembic upgrade head
-          test "$(psql -h localhost -U trade -d trade_previous -Atc "select version_num from alembic_version")" = "20260905_0014"
+          test "$(psql -h localhost -U trade -d trade_previous -Atc "select version_num from alembic_version")" = "20260906_0018"
       - name: Dagster definition-load and asset contracts
         run: python -m pytest tests/test_dagster_definitions.py tests/test_dagster_daily_assets.py -q
 

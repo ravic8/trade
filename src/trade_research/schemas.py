@@ -943,6 +943,57 @@ class NseCutoverRollbackRequest(BaseModel):
     expected_current_decision_sha256: str = Field(min_length=64, max_length=64)
 
 
+class Phase3ReadinessEvidenceRow(BaseModel):
+    evidence_id: str = Field(min_length=64, max_length=64)
+    evidence_type: Literal["bounded_canary", "rollback_restore_drill"]
+    status: Literal["pass", "fail"]
+    source_run_ids: dict[str, str] = Field(default_factory=dict)
+    session_dates: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    blocking_issues: list[str] = Field(default_factory=list)
+    evidence_refs: dict[str, Any] = Field(default_factory=dict)
+    actor_email: str | None = None
+    reason: str | None = None
+    evidence_sha256: str = Field(min_length=64, max_length=64)
+    observed_at: datetime
+
+
+class Phase3ReadinessGateRow(BaseModel):
+    name: str
+    passed: bool
+    reason: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class Phase3ReadinessResponse(BaseModel):
+    ready_for_production: bool
+    activation_enabled: bool
+    checked_at: datetime
+    gates: list[Phase3ReadinessGateRow] = Field(default_factory=list)
+    blocking_issues: list[str] = Field(default_factory=list)
+    evidence: list[Phase3ReadinessEvidenceRow] = Field(default_factory=list)
+
+
+class Phase3CanaryAssessmentRequest(BaseModel):
+    daily_run_id: str = Field(min_length=1, max_length=255)
+    minute_run_id: str = Field(min_length=1, max_length=255)
+    minute_rerun_id: str = Field(min_length=1, max_length=255)
+
+
+class Phase3RollbackRestoreChecks(BaseModel):
+    rollback_effective_provider_upstox: bool
+    upstox_pipeline_healthy: bool
+    restore_required_explicit_approval: bool
+    post_restore_yfinance_pipeline_healthy: bool
+
+
+class Phase3RollbackRestoreDrillRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2_000)
+    rollback_decision_sha256: str = Field(min_length=64, max_length=64)
+    restored_decision_sha256: str = Field(min_length=64, max_length=64)
+    checks: Phase3RollbackRestoreChecks
+
+
 class OperationsAdaptiveRateStateRow(BaseModel):
     provider: str
     current_rpm: int = Field(ge=0)

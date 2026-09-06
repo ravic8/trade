@@ -97,6 +97,17 @@ disabled.
   `verify-market-data-aggregation-golden` command validates the Python
   authority or independently produced candidate output before any Rust runtime
   path can be considered. See `docs/phase3_aggregation_golden_contract.md`.
+- A fail-closed production-readiness gate now records content-addressed bounded
+  canary and rollback/restore evidence. Canary assessment verifies daily and
+  minute quality at `>=99.5%`, a maximum instrument scope, raw lineage,
+  ClickHouse count/digest/watermark equality, observed provider sessions, and
+  an independent minute rerun with the same business-row digest. The final
+  gate also requires the provider-comparison window and a reviewed rollback to
+  Upstox followed by explicit restoration approval.
+- Readiness is exposed through `GET /api/data/operations/phase3-readiness`, the
+  read-only `trade-research phase3-readiness` command, and the NSE Data view.
+  Authenticated evidence recording is available under
+  `/api/admin/phase3-readiness/`; these operations do not enable the feature.
 
 ## Fail-closed activation
 
@@ -109,9 +120,12 @@ CLICKHOUSE_WRITE_ENABLED=true
 OBJECT_STORE_ENABLED=true
 OBJECT_STORE_WRITE_ENABLED=true
 PHASE3_MARKET_DATA_ENABLED=true
+PHASE3_PRODUCTION_ACTIVATION_ENABLED=false
 ```
 
-Minute ingestion is a separate rollout gate:
+The data-plane flags permit manual canary jobs. Production scheduling remains
+stopped while `PHASE3_PRODUCTION_ACTIVATION_ENABLED=false`. Minute ingestion is
+a separate rollout gate:
 
 ```text
 YFINANCE_NSE_MINUTE_ENABLED=true
@@ -122,14 +136,20 @@ YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN=100
 `YFINANCE_NSE_MINUTE_LOOKBACK_DAYS` is a request-size safety limit. It does not
 assert that Yahoo retains or returns that entire window.
 
-Production uses the corresponding `PROD_` variables. Enabling the minute gate
-causes schedule reconciliation to desire `yfinance_nse_minute_schedule` as
-running. Start with a lower symbol maximum for the canary.
+Production uses the corresponding `PROD_` variables. Only after the readiness
+endpoint reports ready should production activation be enabled; that causes
+schedule reconciliation to desire `yfinance_nse_minute_schedule` as running.
+The production deployment script enforces the same rule after PostgreSQL
+migration and stops the deployment if activation is requested while any
+durable readiness gate is blocked.
 
 The provider observation gate defaults to:
 
 ```text
 NSE_CUTOVER_REQUIRED_PASSING_WINDOWS=5
+PHASE3_CANARY_MAX_INSTRUMENTS=25
+PHASE3_MINIMUM_COMPLETENESS=0.995
+PHASE3_REQUIRED_OBSERVED_SESSIONS=5
 ```
 
 This counts distinct comparison-window end sessions, not command invocations.
@@ -158,7 +178,10 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 - Implement a Rust candidate only if profiling justifies it, then require its
   independently produced output to pass the locked aggregation fixture.
-- Run bounded canary, restore, rollback, and observation-window evidence.
+- Run the bounded production canary twice, record the rollback/restore drill,
+  and collect the required provider-comparison windows. Implementation alone
+  intentionally leaves the production gate blocked until those live evidence
+  records pass.
 
 ## Exit gate
 
