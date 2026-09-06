@@ -54,6 +54,7 @@ All commands are defined in `src/trade_research/cli.py`.
 | `plan-yfinance-tsx-canary` | planner/worker mutation | canary work items | controlled workflow request |
 | `plan-yfinance-nse-canary` | planner/worker mutation | canary work items | controlled workflow request |
 | `check-nse-yfinance-cutover` | evidence mutation | content-addressed comparison evidence | validation gate/Dagster/UI |
+| `verify-market-data-aggregation-golden` | read only | none | Python/Rust aggregation conformance gate |
 | `refresh-yfinance-history-evidence` | provider/derived mutation | history evidence | validation asset |
 | `provider-history-status` | read only | none | Data UI |
 | `fetch-yfinance-missing` | provider ingestion | missing OHLCV and run evidence | repair workflow |

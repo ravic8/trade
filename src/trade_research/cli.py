@@ -42,6 +42,12 @@ from trade_research.filings.tasks import (
     dispatch_filing_run,
 )
 from trade_research.market_calendar import session_decision
+from trade_research.market_data.aggregation_golden import (
+    evaluate_aggregation_candidate,
+    evaluate_python_aggregation_golden,
+    load_aggregation_golden,
+    load_candidate_output,
+)
 from trade_research.modeling.backtest import BacktestConfig
 from trade_research.modeling.baselines import BaselineRunConfig
 from trade_research.modeling.latest_predictions import LatestPredictionConfig
@@ -1541,6 +1547,34 @@ def check_nse_yfinance_cutover() -> None:
     for issue in result.blocking_issues:
         console.print(f"[red]Blocked: {issue}[/red]")
     if result.status == "fail":
+        raise typer.Exit(code=1)
+
+
+@app.command("verify-market-data-aggregation-golden")
+def verify_market_data_aggregation_golden(
+    dataset_path: Annotated[
+        Path,
+        typer.Option(help="Locked NSE aggregation golden-dataset JSON path."),
+    ] = Path("evaluations/market_data/nse_intraday_aggregation_v1.json"),
+    candidate_output: Annotated[
+        Path | None,
+        typer.Option(
+            help="Optional output from another runtime using the golden output schema."
+        ),
+    ] = None,
+) -> None:
+    dataset = load_aggregation_golden(dataset_path)
+    report = (
+        evaluate_aggregation_candidate(dataset, load_candidate_output(candidate_output))
+        if candidate_output is not None
+        else evaluate_python_aggregation_golden(dataset)
+    )
+    console.print(f"Aggregation golden: {'PASS' if report.passed else 'FAIL'}")
+    console.print(f"Dataset: {report.dataset_id} ({report.dataset_sha256})")
+    console.print(f"Cases: {report.cases_passed}/{report.cases_total}")
+    for mismatch in report.mismatches:
+        console.print(f"[red]{mismatch}[/red]")
+    if not report.passed:
         raise typer.Exit(code=1)
 
 

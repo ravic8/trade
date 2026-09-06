@@ -90,6 +90,13 @@ disabled.
   read endpoint is `GET /api/data/operations/nse-provider-cutover`; mutations
   use the admin endpoints under `/api/admin/nse-provider-cutover/` and require
   `X-Idempotency-Key`.
+- A locked, language-neutral aggregation fixture now covers all eight
+  `5m`/`15m`/`30m`/`1h` complete/incomplete cases, including the NSE 09:15
+  anchor, a missing source minute, final 15-minute session buckets, exact OHLCV,
+  source digests, and raw lineage. The read-only
+  `verify-market-data-aggregation-golden` command validates the Python
+  authority or independently produced candidate output before any Rust runtime
+  path can be considered. See `docs/phase3_aggregation_golden_contract.md`.
 
 ## Fail-closed activation
 
@@ -149,7 +156,8 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 ## Remaining Phase 3 work
 
-- Build Python/Rust golden datasets before considering a Rust hot path.
+- Implement a Rust candidate only if profiling justifies it, then require its
+  independently produced output to pass the locked aggregation fixture.
 - Run bounded canary, restore, rollback, and observation-window evidence.
 
 ## Exit gate
@@ -157,4 +165,5 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 Phase 3 is not complete until daily completeness meets the approved threshold
 (target `>=99.5%`), every missing candle is classified, duplicate ingestion is
 idempotent, daily and minute freshness are visible in the UI, ClickHouse
-reconciliation passes, and Python/Rust shadow results match on golden datasets.
+reconciliation passes, and any Rust candidate matches the Python authority on
+the locked golden dataset.
