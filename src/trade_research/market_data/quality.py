@@ -245,8 +245,11 @@ def nse_minute_missing_quality_outcomes(
     eligible_sessions: set[date],
     accepted: Sequence[MarketCandle],
     unavailable_provider_symbols: set[str] | None = None,
+    observed_availability_sessions: Mapping[str, set[date]] | None = None,
+    unavailable_reason_codes: Mapping[str, str] | None = None,
 ) -> list[MarketDataQualityOutcome]:
     unavailable = unavailable_provider_symbols or set()
+    unavailable_reasons = unavailable_reason_codes or {}
     observed = {
         (candle.instrument_id, _as_utc(candle.timestamp))
         for candle in accepted
@@ -254,8 +257,24 @@ def nse_minute_missing_quality_outcomes(
     }
     outcomes: list[MarketDataQualityOutcome] = []
     for provider_symbol, instrument_id in sorted(canonical_instrument_ids.items()):
-        provider_unavailable = provider_symbol in unavailable
+        request_failed = provider_symbol in unavailable
+        observed_sessions = (
+            observed_availability_sessions.get(provider_symbol, set())
+            if observed_availability_sessions is not None
+            else None
+        )
         for session_date in sorted(eligible_sessions):
+            outside_observed_availability = (
+                observed_sessions is not None and session_date not in observed_sessions
+            )
+            provider_unavailable = request_failed or outside_observed_availability
+            reason_code = (
+                unavailable_reasons[provider_symbol]
+                if provider_symbol in unavailable_reasons
+                else "session_outside_observed_availability"
+                if outside_observed_availability
+                else "candle_absent"
+            )
             for timestamp in _nse_minute_grid(session_date, request):
                 if (instrument_id, timestamp) in observed:
                     continue
@@ -275,16 +294,17 @@ def nse_minute_missing_quality_outcomes(
                             if provider_unavailable
                             else MarketDataQualityStatus.MISSING
                         ),
-                        reason_code=(
-                            "provider_request_failed"
-                            if provider_unavailable
-                            else "candle_absent"
-                        ),
+                        reason_code=reason_code,
                         severity="warning" if provider_unavailable else "error",
                         expected=True,
                         retryable=True,
                         observed_at=request.retrieved_at,
-                        details={"session_timezone": "Asia/Kolkata"},
+                        details={
+                            "session_timezone": "Asia/Kolkata",
+                            "availability_evidence_applied": (
+                                observed_availability_sessions is not None
+                            ),
+                        },
                     )
                 )
     return outcomes

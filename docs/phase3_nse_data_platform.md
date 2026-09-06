@@ -38,9 +38,16 @@ disabled.
   watermark lag, write latency, and terminal `reconciled`, `mismatch`, or
   `failed` state. A mismatch fails the ingestion attempt closed.
 - A bounded NSE `1m` pipeline resolves the persisted active NSE universe,
-  enforces the configured yfinance retention window, retains the unfiltered raw
+  enforces the configured request-safety window, retains the unfiltered raw
   response, accepts only completed materialized sessions, validates timestamps
   in IST, and writes accepted rows to ClickHouse.
+- The configured minute lookback is no longer treated as a provider retention
+  guarantee. Every NSE `1m` run stores content-addressed availability evidence
+  per instrument: requested and observed sessions, first/last returned
+  timestamp, returned row count, empty response or request-failure reason, raw
+  artifact lineage, and observation time. Missing candles use these observed
+  sessions to distinguish an unexplained in-session gap from a session the
+  provider did not return.
 - The NSE minute path is available through
   `trade-research fetch-yfinance-nse-minute` and the
   `yfinance_nse_minute_job` Dagster job. Its schedule is stopped by default.
@@ -105,6 +112,9 @@ YFINANCE_NSE_MINUTE_LOOKBACK_DAYS=7
 YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN=100
 ```
 
+`YFINANCE_NSE_MINUTE_LOOKBACK_DAYS` is a request-size safety limit. It does not
+assert that Yahoo retains or returns that entire window.
+
 Production uses the corresponding `PROD_` variables. Enabling the minute gate
 causes schedule reconciliation to desire `yfinance_nse_minute_schedule` as
 running. Start with a lower symbol maximum for the canary.
@@ -126,6 +136,7 @@ Persisted NSE universe + materialized completed sessions
   -> provider-independent candle adapter
   -> OHLC/session/timezone/duplicate validation
   -> PostgreSQL candle-quality outcomes
+  -> PostgreSQL per-instrument observed-availability evidence
   -> PostgreSQL daily canonical commit (daily only)
   -> validated ClickHouse daily or 1m replica
   -> PostgreSQL replication checkpoint (count + digest + watermark)
@@ -138,8 +149,6 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 ## Remaining Phase 3 work
 
-- Record observed yfinance minute availability instead of treating the
-  configured retention bound as a provider guarantee.
 - Build Python/Rust golden datasets before considering a Rust hot path.
 - Run bounded canary, restore, rollback, and observation-window evidence.
 

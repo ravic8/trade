@@ -799,6 +799,24 @@ export type MarketDataReplicationHealthRow = {
   updated_at: string;
 };
 
+export type MarketDataAvailabilityHealthRow = {
+  interval: string;
+  source_run_id: string;
+  requested_start: string;
+  requested_end: string;
+  observed_at: string;
+  instruments_total: number;
+  instruments_observed: number;
+  instruments_empty: number;
+  instruments_failed: number;
+  observed_session_count: number;
+  observed_row_count: number;
+  raw_artifact_count: number;
+  observed_first_timestamp: string | null;
+  observed_last_timestamp: string | null;
+  status_counts: Record<string, number>;
+};
+
 export type MarketDataHealthResponse = {
   enabled: boolean;
   clickhouse_enabled: boolean;
@@ -811,6 +829,7 @@ export type MarketDataHealthResponse = {
   issues: MarketDataQualityIssueRow[];
   raw_lineage: MarketDataRawLineageRow[];
   replication: MarketDataReplicationHealthRow[];
+  availability: MarketDataAvailabilityHealthRow[];
 };
 
 export type NseProviderEvidenceRow = {

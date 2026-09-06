@@ -74,6 +74,7 @@ from trade_research.schemas import (
     DataUniverseRow,
     MarketDataAggregateCandle,
     MarketDataAggregateResponse,
+    MarketDataAvailabilityHealthRow,
     MarketDataHealthResponse,
     MarketDataQualityHealthRow,
     MarketDataQualityIssueRow,
@@ -1201,6 +1202,10 @@ def market_data_health(
         raw_lineage=[MarketDataRawLineageRow(**vars(row)) for row in snapshot.raw_lineage],
         replication=[
             MarketDataReplicationHealthRow(**vars(row)) for row in snapshot.replication
+        ],
+        availability=[
+            MarketDataAvailabilityHealthRow(**vars(row))
+            for row in snapshot.availability
         ],
     )
 

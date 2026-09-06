@@ -9,6 +9,11 @@ import pandas as pd
 from trade_research.config import get_settings
 from trade_research.data.rate_limits import build_provider_rate_limiter
 from trade_research.data.yfinance_provider import YFinanceIntradayProvider
+from trade_research.market_data.availability import (
+    MarketDataAvailabilityRepository,
+    availability_session_maps,
+    observe_nse_minute_availability,
+)
 from trade_research.market_data.contracts import CandleInterval
 from trade_research.market_data.ingestion import (
     prepare_yfinance_batch,
@@ -52,17 +57,17 @@ def run_yfinance_nse_minute_pipeline(
         raise ValueError("NSE minute ingestion is disabled by configuration.")
     observed_at = _as_utc(at or datetime.now(UTC))
     end = _parse_datetime(to_datetime, "to_datetime") if to_datetime else observed_at
-    retention_floor = end - timedelta(days=settings.yfinance_nse_minute_lookback_days)
+    request_floor = end - timedelta(days=settings.yfinance_nse_minute_lookback_days)
     start = (
         _parse_datetime(from_datetime, "from_datetime")
         if from_datetime
-        else retention_floor
+        else request_floor
     )
     if start >= end:
         raise ValueError("from_datetime must be before to_datetime.")
-    if start < retention_floor:
+    if start < request_floor:
         raise ValueError(
-            "Requested NSE 1m window exceeds configured yfinance retention: "
+            "Requested NSE 1m window exceeds the configured request safety limit: "
             f"{settings.yfinance_nse_minute_lookback_days} days."
         )
     configured_limit = settings.yfinance_nse_minute_max_symbols_per_run
@@ -107,7 +112,7 @@ def run_yfinance_nse_minute_pipeline(
             "interval": "1m",
             "window_start": start.isoformat(),
             "window_end": end.isoformat(),
-            "configured_retention_days": settings.yfinance_nse_minute_lookback_days,
+            "request_lookback_limit_days": settings.yfinance_nse_minute_lookback_days,
             "adapter_version": settings.phase3_yfinance_adapter_version,
             "selected_symbols": len(instruments),
         },
@@ -151,6 +156,23 @@ def run_yfinance_nse_minute_pipeline(
         for instrument in instruments
         if instrument.instrument_key in failed_instrument_keys
     }
+    availability_observations = observe_nse_minute_availability(
+        request=validated.request,
+        source_run_id=str(run_id),
+        raw_frame=raw_frame,
+        canonical_instrument_ids=canonical_instrument_ids,
+        eligible_sessions=eligible_sessions,
+        unavailable_provider_symbols=unavailable_provider_symbols,
+        raw_artifact_id=(
+            validated.raw_snapshot.artifact_manifest_id
+            if validated.raw_snapshot is not None
+            else None
+        ),
+    )
+    MarketDataAvailabilityRepository(db.engine).record(availability_observations)
+    observed_availability_sessions, unavailable_reason_codes = (
+        availability_session_maps(availability_observations)
+    )
     MarketDataQualityRepository(db.engine).record(
         nse_minute_missing_quality_outcomes(
             request=validated.request,
@@ -159,6 +181,8 @@ def run_yfinance_nse_minute_pipeline(
             eligible_sessions=eligible_sessions,
             accepted=validated.candles,
             unavailable_provider_symbols=unavailable_provider_symbols,
+            observed_availability_sessions=observed_availability_sessions,
+            unavailable_reason_codes=unavailable_reason_codes,
         )
     )
     clickhouse_rows = replicate_validated_batch(
@@ -186,6 +210,7 @@ def run_yfinance_nse_minute_pipeline(
                 validated.raw_snapshot.storage_uri if validated.raw_snapshot else None
             ),
             "eligible_sessions": len(eligible_sessions),
+            "availability_observations": len(availability_observations),
         },
     )
     warnings = [
@@ -206,13 +231,14 @@ def run_yfinance_nse_minute_pipeline(
             "interval": "1m",
             "window_start": start.isoformat(),
             "window_end": end.isoformat(),
-            "retention_days": settings.yfinance_nse_minute_lookback_days,
+            "request_lookback_limit_days": settings.yfinance_nse_minute_lookback_days,
             "selected_symbols": len(instruments),
             "eligible_sessions": len(eligible_sessions),
             "raw_rows": len(raw_frame),
             "validated_rows": len(validated.candles),
             "clickhouse_rows": clickhouse_rows,
             "failure_rows": len(failures),
+            "availability_observations": len(availability_observations),
             "raw_snapshot_uri": (
                 validated.raw_snapshot.storage_uri if validated.raw_snapshot else None
             ),

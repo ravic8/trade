@@ -103,7 +103,7 @@ def test_alembic_upgrade_bootstraps_an_empty_database(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260906_0016"
+    assert revision == "20260906_0017"
 
 
 def test_phase1_feature_flags_are_safe_by_default() -> None:
@@ -236,4 +236,4 @@ def test_upgrade_reconciles_create_all_tables_with_legacy_symbols(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260906_0016"
+    assert revision == "20260906_0017"

@@ -675,6 +675,7 @@ function MarketDataHealthView({
   if (!health) return <EmptyState label="No Phase 3 health snapshot is available." />;
   const daily = health.quality.find((row) => row.interval === "1d");
   const minute = health.quality.find((row) => row.interval === "1m");
+  const minuteAvailability = health.availability.find((row) => row.interval === "1m");
   const unexplainedGaps = health.quality.reduce(
     (total, row) => total + row.unexplained_gap_count,
     0,
@@ -780,6 +781,31 @@ function MarketDataHealthView({
         <QualityIntervalCard title="Daily Quality" row={daily} />
         <QualityIntervalCard title="Minute Quality" row={minute} />
       </div>
+
+      <section className="data-card">
+        <div className="data-card-header">
+          <div>
+            <h2>Observed Minute Availability</h2>
+            <p>Provider response evidence; the configured lookback is only a request safety limit</p>
+          </div>
+          <span className={`status-pill ${statusClass(minuteAvailability?.instruments_failed ? "failed" : minuteAvailability?.instruments_empty ? "warning" : minuteAvailability ? "completed" : "unknown")}`}>
+            {minuteAvailability ? `${formatNumber(minuteAvailability.instruments_observed)} observed` : "No evidence"}
+          </span>
+        </div>
+        {minuteAvailability ? (
+          <dl className="operations-definition-list">
+            <div><dt>Requested window</dt><dd>{formatDateTime(minuteAvailability.requested_start)} – {formatDateTime(minuteAvailability.requested_end)}</dd></div>
+            <div><dt>Observed range</dt><dd>{minuteAvailability.observed_first_timestamp ? formatDateTime(minuteAvailability.observed_first_timestamp) : "No candles"} – {minuteAvailability.observed_last_timestamp ? formatDateTime(minuteAvailability.observed_last_timestamp) : "No candles"}</dd></div>
+            <div><dt>Observed sessions</dt><dd>{formatNumber(minuteAvailability.observed_session_count)}</dd></div>
+            <div><dt>Observed rows</dt><dd>{formatNumber(minuteAvailability.observed_row_count)}</dd></div>
+            <div><dt>Raw snapshots</dt><dd>{formatNumber(minuteAvailability.raw_artifact_count)}</dd></div>
+            <div><dt>Instruments observed</dt><dd>{formatNumber(minuteAvailability.instruments_observed)} / {formatNumber(minuteAvailability.instruments_total)}</dd></div>
+            <div><dt>Empty responses</dt><dd>{formatNumber(minuteAvailability.instruments_empty)}</dd></div>
+            <div><dt>Request failures</dt><dd>{formatNumber(minuteAvailability.instruments_failed)}</dd></div>
+            <div><dt>Observed at</dt><dd>{formatDateTime(minuteAvailability.observed_at)}</dd></div>
+          </dl>
+        ) : <EmptyState label="Run the gated NSE 1m ingestion to record provider availability evidence." />}
+      </section>
 
       <section className="data-card">
         <div className="data-card-header"><div><h2>ClickHouse Replication</h2><p>Latest count, digest, watermark, and latency reconciliation</p></div></div>

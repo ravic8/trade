@@ -8,6 +8,7 @@ from sqlalchemy import Engine, case, distinct, func, select
 
 from trade_research.control_plane.tables import (
     artifact_manifests_table,
+    market_data_availability_observations_table,
     market_data_quality_outcomes_table,
     market_data_replication_checkpoints_table,
 )
@@ -92,6 +93,25 @@ class MarketDataReplicationHealth:
 
 
 @dataclass(frozen=True)
+class MarketDataAvailabilityHealth:
+    interval: str
+    source_run_id: str
+    requested_start: datetime
+    requested_end: datetime
+    observed_at: datetime
+    instruments_total: int
+    instruments_observed: int
+    instruments_empty: int
+    instruments_failed: int
+    observed_session_count: int
+    observed_row_count: int
+    raw_artifact_count: int
+    observed_first_timestamp: datetime | None
+    observed_last_timestamp: datetime | None
+    status_counts: dict[str, int]
+
+
+@dataclass(frozen=True)
 class MarketDataHealthSnapshot:
     workspace_id: str
     provider: str
@@ -101,6 +121,7 @@ class MarketDataHealthSnapshot:
     issues: tuple[MarketDataQualityIssue, ...]
     raw_lineage: tuple[MarketDataRawLineage, ...]
     replication: tuple[MarketDataReplicationHealth, ...]
+    availability: tuple[MarketDataAvailabilityHealth, ...]
 
 
 class MarketDataHealthRepository:
@@ -164,6 +185,12 @@ class MarketDataHealthRepository:
                 workspace_id=workspace_id,
                 exchange=exchange,
             )
+            availability = self._latest_availability(
+                connection,
+                workspace_id=workspace_id,
+                provider=provider,
+                exchange=exchange,
+            )
         quality.sort(key=lambda row: row.interval)
         overall = _overall_health(quality, replication)
         return MarketDataHealthSnapshot(
@@ -175,6 +202,7 @@ class MarketDataHealthRepository:
             issues=tuple(issues),
             raw_lineage=tuple(raw_lineage),
             replication=tuple(replication),
+            availability=tuple(availability),
         )
 
     @staticmethod
@@ -425,6 +453,94 @@ class MarketDataHealthRepository:
                 updated_at=row["updated_at"],
             )
         return sorted(latest.values(), key=lambda row: (row.interval, row.dataset_key))
+
+    @staticmethod
+    def _latest_availability(
+        connection: Any,
+        *,
+        workspace_id: str,
+        provider: str,
+        exchange: str,
+    ) -> list[MarketDataAvailabilityHealth]:
+        table = market_data_availability_observations_table
+        latest_rows = connection.execute(
+            select(
+                table.c.interval,
+                table.c.source_run_id,
+                func.max(table.c.observed_at).label("observed_at"),
+            )
+            .where(table.c.workspace_id == workspace_id)
+            .where(table.c.provider == provider)
+            .where(table.c.exchange == exchange)
+            .group_by(table.c.interval, table.c.source_run_id)
+            .order_by(func.max(table.c.observed_at).desc(), table.c.source_run_id.desc())
+        ).mappings()
+        latest_runs: dict[str, str] = {}
+        for row in latest_rows:
+            latest_runs.setdefault(str(row["interval"]), str(row["source_run_id"]))
+
+        summaries: list[MarketDataAvailabilityHealth] = []
+        for interval, source_run_id in latest_runs.items():
+            rows = connection.execute(
+                select(table)
+                .where(table.c.workspace_id == workspace_id)
+                .where(table.c.provider == provider)
+                .where(table.c.exchange == exchange)
+                .where(table.c.interval == interval)
+                .where(table.c.source_run_id == source_run_id)
+                .order_by(table.c.provider_symbol)
+            ).mappings().all()
+            status_counts = {
+                status: sum(str(row["status"]) == status for row in rows)
+                for status in ("observed", "empty", "request_failed")
+            }
+            observed_sessions = {
+                str(session)
+                for row in rows
+                for session in list(row["observed_sessions"] or [])
+            }
+            first_timestamps = [
+                row["observed_first_timestamp"]
+                for row in rows
+                if row["observed_first_timestamp"] is not None
+            ]
+            last_timestamps = [
+                row["observed_last_timestamp"]
+                for row in rows
+                if row["observed_last_timestamp"] is not None
+            ]
+            if not rows:
+                continue
+            summaries.append(
+                MarketDataAvailabilityHealth(
+                    interval=interval,
+                    source_run_id=source_run_id,
+                    requested_start=min(row["requested_start"] for row in rows),
+                    requested_end=max(row["requested_end"] for row in rows),
+                    observed_at=max(row["observed_at"] for row in rows),
+                    instruments_total=len(rows),
+                    instruments_observed=status_counts["observed"],
+                    instruments_empty=status_counts["empty"],
+                    instruments_failed=status_counts["request_failed"],
+                    observed_session_count=len(observed_sessions),
+                    observed_row_count=sum(int(row["observed_row_count"]) for row in rows),
+                    raw_artifact_count=len(
+                        {
+                            str(row["raw_artifact_id"])
+                            for row in rows
+                            if row["raw_artifact_id"] is not None
+                        }
+                    ),
+                    observed_first_timestamp=(
+                        min(first_timestamps) if first_timestamps else None
+                    ),
+                    observed_last_timestamp=(
+                        max(last_timestamps) if last_timestamps else None
+                    ),
+                    status_counts=status_counts,
+                )
+            )
+        return sorted(summaries, key=lambda row: row.interval)
 
 
 def _completeness_ratio(counts: dict[str, int]) -> float | None:

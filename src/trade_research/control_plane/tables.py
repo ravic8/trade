@@ -321,6 +321,33 @@ nse_provider_cutover_decisions_table = Table(
     ),
 )
 
+market_data_availability_observations_table = Table(
+    "market_data_availability_observations",
+    metadata,
+    Column("availability_observation_id", String(64), primary_key=True),
+    Column("workspace_id", String(64), nullable=False),
+    Column("source_run_id", String(255), nullable=False),
+    Column("request_id", String(255), nullable=False),
+    Column("provider", String(64), nullable=False),
+    Column("exchange", String(32), nullable=False),
+    Column("interval", String(16), nullable=False),
+    Column("instrument_id", String(255), nullable=False),
+    Column("provider_symbol", String(255), nullable=False),
+    Column("requested_start", DateTime(timezone=True), nullable=False),
+    Column("requested_end", DateTime(timezone=True), nullable=False),
+    Column("eligible_sessions", JSON, nullable=False),
+    Column("observed_sessions", JSON, nullable=False),
+    Column("observed_first_timestamp", DateTime(timezone=True)),
+    Column("observed_last_timestamp", DateTime(timezone=True)),
+    Column("observed_row_count", BigInteger, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("reason_code", String(100), nullable=False),
+    Column("retryable", Boolean, nullable=False),
+    Column("raw_artifact_id", String(36)),
+    Column("observed_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 Index(
     "idx_market_data_quality_run_status",
     market_data_quality_outcomes_table.c.source_run_id,
@@ -377,4 +404,17 @@ Index(
     "idx_nse_provider_decisions_scope_created",
     nse_provider_cutover_decisions_table.c.workspace_id,
     nse_provider_cutover_decisions_table.c.created_at,
+)
+Index(
+    "idx_market_data_availability_scope_observed",
+    market_data_availability_observations_table.c.workspace_id,
+    market_data_availability_observations_table.c.provider,
+    market_data_availability_observations_table.c.exchange,
+    market_data_availability_observations_table.c.interval,
+    market_data_availability_observations_table.c.observed_at,
+)
+Index(
+    "idx_market_data_availability_run_instrument",
+    market_data_availability_observations_table.c.source_run_id,
+    market_data_availability_observations_table.c.instrument_id,
 )

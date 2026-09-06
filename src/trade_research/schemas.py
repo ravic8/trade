@@ -856,6 +856,24 @@ class MarketDataReplicationHealthRow(BaseModel):
     updated_at: datetime
 
 
+class MarketDataAvailabilityHealthRow(BaseModel):
+    interval: str
+    source_run_id: str
+    requested_start: datetime
+    requested_end: datetime
+    observed_at: datetime
+    instruments_total: int = Field(ge=0)
+    instruments_observed: int = Field(ge=0)
+    instruments_empty: int = Field(ge=0)
+    instruments_failed: int = Field(ge=0)
+    observed_session_count: int = Field(ge=0)
+    observed_row_count: int = Field(ge=0)
+    raw_artifact_count: int = Field(ge=0)
+    observed_first_timestamp: datetime | None = None
+    observed_last_timestamp: datetime | None = None
+    status_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class MarketDataHealthResponse(BaseModel):
     enabled: bool
     clickhouse_enabled: bool
@@ -868,6 +886,7 @@ class MarketDataHealthResponse(BaseModel):
     issues: list[MarketDataQualityIssueRow] = Field(default_factory=list)
     raw_lineage: list[MarketDataRawLineageRow] = Field(default_factory=list)
     replication: list[MarketDataReplicationHealthRow] = Field(default_factory=list)
+    availability: list[MarketDataAvailabilityHealthRow] = Field(default_factory=list)
 
 
 class NseProviderEvidenceRow(BaseModel):

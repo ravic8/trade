@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from trade_research.control_plane.tables import (
     artifact_manifests_table,
+    market_data_availability_observations_table,
     market_data_quality_outcomes_table,
     market_data_replication_checkpoints_table,
 )
@@ -28,6 +29,7 @@ def _engine():
     artifact_manifests_table.create(engine)
     market_data_quality_outcomes_table.create(engine)
     market_data_replication_checkpoints_table.create(engine)
+    market_data_availability_observations_table.create(engine)
     return engine
 
 
@@ -148,6 +150,35 @@ def test_health_uses_latest_run_and_surfaces_quality_lineage_and_replication() -
                 }
             ],
         )
+        connection.execute(
+            market_data_availability_observations_table.insert(),
+            [
+                {
+                    "availability_observation_id": "availability-1",
+                    "workspace_id": "workspace-1",
+                    "source_run_id": "latest-run",
+                    "request_id": "request-latest-run",
+                    "provider": "yfinance",
+                    "exchange": "NSE",
+                    "interval": "1m",
+                    "instrument_id": "NSE_EQ|RELIANCE",
+                    "provider_symbol": "RELIANCE.NS",
+                    "requested_start": NOW - timedelta(days=7),
+                    "requested_end": NOW,
+                    "eligible_sessions": ["2026-09-04", "2026-09-05"],
+                    "observed_sessions": ["2026-09-05"],
+                    "observed_first_timestamp": NOW - timedelta(minutes=10),
+                    "observed_last_timestamp": NOW - timedelta(minutes=5),
+                    "observed_row_count": 6,
+                    "status": "observed",
+                    "reason_code": "availability_observed",
+                    "retryable": False,
+                    "raw_artifact_id": "artifact-1",
+                    "observed_at": NOW,
+                    "created_at": NOW,
+                }
+            ],
+        )
 
     snapshot = MarketDataHealthRepository(engine).snapshot(
         workspace_id="workspace-1"
@@ -169,6 +200,11 @@ def test_health_uses_latest_run_and_surfaces_quality_lineage_and_replication() -
     assert snapshot.raw_lineage[0].object_versioned is True
     assert snapshot.replication[0].counts_match is True
     assert snapshot.replication[0].digests_match is True
+    assert snapshot.availability[0].source_run_id == "latest-run"
+    assert snapshot.availability[0].instruments_observed == 1
+    assert snapshot.availability[0].observed_session_count == 1
+    assert snapshot.availability[0].observed_row_count == 6
+    assert snapshot.availability[0].raw_artifact_count == 1
 
 
 class _HealthRepository:
@@ -221,6 +257,7 @@ def test_market_data_health_api_is_workspace_scoped(monkeypatch) -> None:
         "issues": [],
         "raw_lineage": [],
         "replication": [],
+        "availability": [],
     }
 
 

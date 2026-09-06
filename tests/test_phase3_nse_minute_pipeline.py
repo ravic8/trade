@@ -133,10 +133,31 @@ def test_nse_minute_pipeline_snapshots_raw_but_replicates_completed_sessions(
             request=object(),
             frame=kwargs["frame"],
             candles=(object(),),
-            raw_snapshot=SimpleNamespace(storage_uri="s3://trade-raw/minute.json"),
+            raw_snapshot=SimpleNamespace(
+                storage_uri="s3://trade-raw/minute.json",
+                artifact_manifest_id="artifact-minute",
+            ),
         )
 
     monkeypatch.setattr(nse_minute, "prepare_yfinance_batch", prepare)
+    monkeypatch.setattr(
+        nse_minute,
+        "observe_nse_minute_availability",
+        lambda **_kwargs: [],
+    )
+
+    class AvailabilityRepository:
+        def __init__(self, _engine) -> None:
+            pass
+
+        def record(self, observations) -> int:
+            return len(observations)
+
+    monkeypatch.setattr(
+        nse_minute,
+        "MarketDataAvailabilityRepository",
+        AvailabilityRepository,
+    )
     monkeypatch.setattr(
         nse_minute,
         "nse_minute_missing_quality_outcomes",
@@ -186,6 +207,6 @@ def test_nse_minute_pipeline_rejects_window_beyond_configured_retention(monkeypa
             provider=_Provider(),
         )
     except ValueError as exc:
-        assert "exceeds configured yfinance retention" in str(exc)
+        assert "exceeds the configured request safety limit" in str(exc)
     else:
         raise AssertionError("Expected an out-of-retention request to be rejected")
