@@ -1477,6 +1477,10 @@ def plan_yfinance_nse_canary(
         int,
         typer.Option(min=1, max=5_000, help="Maximum NSE symbols to plan."),
     ] = 1,
+    symbols: Annotated[
+        str | None,
+        typer.Option(help="Optional comma-separated NSE or Yahoo symbols."),
+    ] = None,
     enqueue: Annotated[
         bool,
         typer.Option(
@@ -1485,9 +1489,13 @@ def plan_yfinance_nse_canary(
         ),
     ] = False,
 ) -> None:
+    selected_symbols = (
+        [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
+    )
     try:
         result = run_yfinance_nse_canary_planner(
             symbol_limit=symbol_limit,
+            provider_symbols=selected_symbols,
             enqueue=enqueue,
             trigger="cli",
         )
@@ -1499,6 +1507,7 @@ def plan_yfinance_nse_canary(
         f"Symbols: {nse['active_symbols']} selected from "
         f"{nse['eligible_symbols_before_limit']} eligible"
     )
+    console.print("Selected: " + ", ".join(nse.get("selected_provider_symbols", [])))
     quarantined = nse.get("provider_quarantined_symbols", [])
     if quarantined:
         console.print(
@@ -1579,9 +1588,7 @@ def verify_market_data_aggregation_golden(
     ] = Path("evaluations/market_data/nse_intraday_aggregation_v1.json"),
     candidate_output: Annotated[
         Path | None,
-        typer.Option(
-            help="Optional output from another runtime using the golden output schema."
-        ),
+        typer.Option(help="Optional output from another runtime using the golden output schema."),
     ] = None,
 ) -> None:
     dataset = load_aggregation_golden(dataset_path)
@@ -1933,14 +1940,22 @@ def fetch_yfinance_nse_minute(
         int | None,
         typer.Option(min=1, max=500, help="Bounded active NSE symbol count."),
     ] = None,
+    symbols: Annotated[
+        str | None,
+        typer.Option(help="Optional comma-separated NSE or Yahoo symbols."),
+    ] = None,
 ) -> None:
     """Fetch validated NSE 1m candles with raw evidence and ClickHouse replication."""
 
+    selected_symbols = (
+        [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
+    )
     try:
         result = run_yfinance_nse_minute_pipeline(
             from_datetime=from_datetime,
             to_datetime=to_datetime,
             symbol_limit=symbol_limit,
+            provider_symbols=selected_symbols,
             trigger="cli",
         )
     except ValueError as exc:
@@ -1950,6 +1965,7 @@ def fetch_yfinance_nse_minute(
         f"{result.metrics['clickhouse_rows']} replicated"
     )
     console.print(f"Eligible sessions: {result.metrics['eligible_sessions']}")
+    console.print("Symbols: " + ", ".join(result.metrics["selected_provider_symbols"]))
     console.print(f"Raw snapshot: {result.metrics['raw_snapshot_uri']}")
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")

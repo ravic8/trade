@@ -246,28 +246,32 @@ class MarketDataHealthRepository:
             func.sum(case((table.c.status == status, 1), else_=0)).label(status)
             for status in _QUALITY_STATUSES
         ]
-        row = connection.execute(
-            select(
-                func.count().label("total_outcomes"),
-                func.sum(case((table.c.expected.is_(True), 1), else_=0)).label(
-                    "expected_outcomes"
-                ),
-                func.count(distinct(table.c.request_id)).label("request_count"),
-                func.count(distinct(table.c.instrument_id)).label("affected_instruments"),
-                func.count(distinct(table.c.raw_artifact_id)).label("raw_artifact_count"),
-                func.max(table.c.session_date).label("latest_session_date"),
-                func.max(table.c.candle_timestamp).label("latest_candle_timestamp"),
-                func.max(table.c.observed_at).label("observed_at"),
-                *status_columns,
+        row = (
+            connection.execute(
+                select(
+                    func.count().label("total_outcomes"),
+                    func.sum(case((table.c.expected.is_(True), 1), else_=0)).label(
+                        "expected_outcomes"
+                    ),
+                    func.count(distinct(table.c.request_id)).label("request_count"),
+                    func.count(distinct(table.c.instrument_id)).label("affected_instruments"),
+                    func.count(distinct(table.c.raw_artifact_id)).label("raw_artifact_count"),
+                    func.max(table.c.session_date).label("latest_session_date"),
+                    func.max(table.c.candle_timestamp).label("latest_candle_timestamp"),
+                    func.max(table.c.observed_at).label("observed_at"),
+                    *status_columns,
+                )
+                .where(table.c.workspace_id == workspace_id)
+                .where(table.c.provider == provider)
+                .where(table.c.exchange == exchange)
+                .where(table.c.interval == interval)
+                .where(table.c.source_run_id == source_run_id)
             )
-            .where(table.c.workspace_id == workspace_id)
-            .where(table.c.provider == provider)
-            .where(table.c.exchange == exchange)
-            .where(table.c.interval == interval)
-            .where(table.c.source_run_id == source_run_id)
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         counts = {status: int(row[status] or 0) for status in _QUALITY_STATUSES}
-        completeness = _completeness_ratio(counts)
+        completeness = _completeness_ratio(counts, interval=interval)
         quarantined = sum(counts[status] for status in _QUARANTINE_STATUSES)
         return MarketDataQualityHealth(
             interval=interval,
@@ -307,9 +311,7 @@ class MarketDataHealthRepository:
                     table.c.severity,
                     table.c.retryable,
                     func.count().label("occurrences"),
-                    func.count(distinct(table.c.instrument_id)).label(
-                        "affected_instruments"
-                    ),
+                    func.count(distinct(table.c.instrument_id)).label("affected_instruments"),
                     func.min(table.c.session_date).label("first_session_date"),
                     func.max(table.c.session_date).label("latest_session_date"),
                     func.max(table.c.observed_at).label("observed_at"),
@@ -481,23 +483,25 @@ class MarketDataHealthRepository:
 
         summaries: list[MarketDataAvailabilityHealth] = []
         for interval, source_run_id in latest_runs.items():
-            rows = connection.execute(
-                select(table)
-                .where(table.c.workspace_id == workspace_id)
-                .where(table.c.provider == provider)
-                .where(table.c.exchange == exchange)
-                .where(table.c.interval == interval)
-                .where(table.c.source_run_id == source_run_id)
-                .order_by(table.c.provider_symbol)
-            ).mappings().all()
+            rows = (
+                connection.execute(
+                    select(table)
+                    .where(table.c.workspace_id == workspace_id)
+                    .where(table.c.provider == provider)
+                    .where(table.c.exchange == exchange)
+                    .where(table.c.interval == interval)
+                    .where(table.c.source_run_id == source_run_id)
+                    .order_by(table.c.provider_symbol)
+                )
+                .mappings()
+                .all()
+            )
             status_counts = {
                 status: sum(str(row["status"]) == status for row in rows)
                 for status in ("observed", "empty", "request_failed")
             }
             observed_sessions = {
-                str(session)
-                for row in rows
-                for session in list(row["observed_sessions"] or [])
+                str(session) for row in rows for session in list(row["observed_sessions"] or [])
             }
             first_timestamps = [
                 row["observed_first_timestamp"]
@@ -531,23 +535,21 @@ class MarketDataHealthRepository:
                             if row["raw_artifact_id"] is not None
                         }
                     ),
-                    observed_first_timestamp=(
-                        min(first_timestamps) if first_timestamps else None
-                    ),
-                    observed_last_timestamp=(
-                        max(last_timestamps) if last_timestamps else None
-                    ),
+                    observed_first_timestamp=(min(first_timestamps) if first_timestamps else None),
+                    observed_last_timestamp=(max(last_timestamps) if last_timestamps else None),
                     status_counts=status_counts,
                 )
             )
         return sorted(summaries, key=lambda row: row.interval)
 
 
-def _completeness_ratio(counts: dict[str, int]) -> float | None:
-    expected = sum(
-        counts[status]
-        for status in ("valid", "missing", "provider_unavailable", "invalid", "stale")
+def _completeness_ratio(counts: dict[str, int], *, interval: str) -> float | None:
+    statuses = (
+        ("valid", "missing", "invalid", "stale")
+        if interval == "1m"
+        else ("valid", "missing", "provider_unavailable", "invalid", "stale")
     )
+    expected = sum(counts[status] for status in statuses)
     if expected == 0:
         return None
     return counts["valid"] / expected

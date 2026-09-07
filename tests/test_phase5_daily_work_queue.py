@@ -628,8 +628,7 @@ def test_worker_retries_incremental_item_missing_its_target_session(monkeypatch)
             "status": "incomplete_session",
             "retryable": True,
             "error_message": (
-                "Yahoo latest daily candle is 2026-07-17; "
-                "expected completed session 2026-07-20."
+                "Yahoo latest daily candle is 2026-07-17; expected completed session 2026-07-20."
             ),
         }
     ]
@@ -672,3 +671,21 @@ def test_worker_defers_window_that_has_no_completed_session(monkeypatch) -> None
             "error_message": "No completed NSE session is available in the requested window.",
         }
     ]
+
+
+def test_phase3_daily_calendar_filter_preserves_raw_rows_for_evidence() -> None:
+    frame = pd.DataFrame(
+        [
+            {"Date": date(2026, 7, 16), "Close": 100.0},
+            {"Date": date(2026, 7, 17), "Close": 101.0},
+            {"Date": date(2026, 7, 18), "Close": 102.0},
+        ]
+    )
+
+    selected = yfinance_work_queue._eligible_daily_session_rows(
+        frame,
+        {date(2026, 7, 16), date(2026, 7, 17)},
+    )
+
+    assert selected["Date"].tolist() == [date(2026, 7, 16), date(2026, 7, 17)]
+    assert frame["Date"].tolist()[-1] == date(2026, 7, 18)

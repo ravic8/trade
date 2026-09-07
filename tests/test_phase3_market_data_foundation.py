@@ -292,11 +292,30 @@ def test_clickhouse_market_data_repository_routes_daily_and_minute_rows() -> Non
         "research.ohlcv_intraday",
     ]
     assert client.inserts[1][2] == list(repository.INTRADAY_COLUMNS)
-    assert repository.count_rows(
-        exchange="NSE",
-        interval="1m",
-        source_run_id="run-1",
-    ) == 2
+    assert (
+        repository.count_rows(
+            exchange="NSE",
+            interval="1m",
+            source_run_id="run-1",
+        )
+        == 2
+    )
+
+
+def test_clickhouse_market_data_repository_bounds_partitions_per_insert() -> None:
+    client = _ClickHouseClient()
+    repository = ClickHouseMarketDataRepository(client, write_enabled=True)
+    request = _request()
+    months = [date(2016 + offset // 12, offset % 12 + 1, 1) for offset in range(101)]
+
+    inserted = repository.insert_validated(
+        [replace(_candle(request), session_date=value) for value in months],
+        source_run_id="ten-year-backfill",
+        version=1,
+    )
+
+    assert inserted == 101
+    assert [len(call[1]) for call in client.inserts] == [50, 50, 1]
 
 
 def test_provider_request_rejects_naive_datetimes_and_invalid_window() -> None:
@@ -395,9 +414,7 @@ def test_invalid_provider_batch_persists_quality_before_failing_closed() -> None
         )
 
     with engine.connect() as connection:
-        quality = connection.execute(
-            select(market_data_quality_outcomes_table)
-        ).mappings().one()
+        quality = connection.execute(select(market_data_quality_outcomes_table)).mappings().one()
     assert quality["status"] == "invalid"
     assert quality["reason_code"] == "invalid_ohlc_range"
 
@@ -437,6 +454,30 @@ def test_daily_missing_quality_classifies_provider_availability() -> None:
         "candle_absent",
         "empty_response",
     }
+
+
+def test_daily_missing_quality_uses_observed_provider_sessions() -> None:
+    request = _request()
+    outcomes = daily_missing_quality_outcomes(
+        request=request,
+        source_run_id="run-1",
+        windows=(
+            DailyExpectedWindow(
+                instrument_id="NSE_EQ|RELIANCE",
+                provider_symbol="RELIANCE.NS",
+                window_start=date(2026, 9, 4),
+                window_end=date(2026, 9, 5),
+                observed_sessions=frozenset({date(2026, 9, 5)}),
+            ),
+        ),
+        eligible_sessions={date(2026, 9, 4), date(2026, 9, 5)},
+        accepted=(),
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].session_date == date(2026, 9, 4)
+    assert outcomes[0].status == MarketDataQualityStatus.PROVIDER_UNAVAILABLE
+    assert outcomes[0].reason_code == "provider_session_not_returned"
 
 
 def test_nse_minute_quality_records_each_missing_expected_candle() -> None:
@@ -549,9 +590,9 @@ def test_replication_records_reconciled_count_digest_and_watermark(monkeypatch) 
 
     assert inserted == 1
     with engine.connect() as connection:
-        checkpoint = connection.execute(
-            select(market_data_replication_checkpoints_table)
-        ).mappings().one()
+        checkpoint = (
+            connection.execute(select(market_data_replication_checkpoints_table)).mappings().one()
+        )
     assert checkpoint["status"] == "reconciled"
     assert checkpoint["source_store"] == "postgresql"
     assert checkpoint["source_row_count"] == checkpoint["destination_row_count"] == 1
@@ -600,9 +641,9 @@ def test_replication_mismatch_is_persisted_and_fails_closed(monkeypatch) -> None
         )
 
     with engine.connect() as connection:
-        checkpoint = connection.execute(
-            select(market_data_replication_checkpoints_table)
-        ).mappings().one()
+        checkpoint = (
+            connection.execute(select(market_data_replication_checkpoints_table)).mappings().one()
+        )
     assert checkpoint["status"] == "mismatch"
     assert checkpoint["destination_row_count"] == 0
     assert checkpoint["destination_digest"] is not None
@@ -716,10 +757,13 @@ def test_all_supported_intervals_anchor_to_nse_open(
     interval: CandleInterval,
     expected: datetime,
 ) -> None:
-    assert nse_bucket_start(
-        datetime(2026, 9, 5, 4, 14, tzinfo=UTC),
-        interval,
-    ) == expected
+    assert (
+        nse_bucket_start(
+            datetime(2026, 9, 5, 4, 14, tzinfo=UTC),
+            interval,
+        )
+        == expected
+    )
 
 
 class _AggregateClickHouseClient:

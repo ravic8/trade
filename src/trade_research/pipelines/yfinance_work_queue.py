@@ -56,6 +56,7 @@ def run_yfinance_daily_work_planner(
     include_gap_repair: bool = False,
     enqueue: bool = True,
     instrument_limit_per_exchange: int | None = None,
+    provider_symbols: Iterable[str] | None = None,
     allow_disabled_exchanges: bool = False,
     trigger: str = "pipeline",
     at: datetime | None = None,
@@ -69,6 +70,9 @@ def run_yfinance_daily_work_planner(
         )
     if instrument_limit_per_exchange is not None and instrument_limit_per_exchange < 1:
         raise ValueError("instrument_limit_per_exchange must be positive when provided.")
+    requested_symbols = _normalize_requested_symbols(provider_symbols)
+    if requested_symbols and len(resolved_exchanges) != 1:
+        raise ValueError("provider_symbols requires exactly one requested exchange.")
     disabled = sorted(
         {value.upper() for value in resolved_exchanges if value.upper() not in enabled_exchanges}
     )
@@ -131,6 +135,19 @@ def run_yfinance_daily_work_planner(
                 if row.get("reconciliation_status") == "official_eligible"
             ]
         eligible_symbol_count = len(instrument_rows)
+        if requested_symbols:
+            requested_for_exchange = [
+                _normalize_requested_provider_symbol(value, exchange) for value in requested_symbols
+            ]
+            rows_by_symbol = {
+                str(row.get("provider_symbol") or "").upper(): row for row in instrument_rows
+            }
+            missing = sorted(set(requested_for_exchange) - rows_by_symbol.keys())
+            if missing:
+                raise ValueError(
+                    f"No active {exchange} yfinance instrument matched: " + ", ".join(missing)
+                )
+            instrument_rows = [rows_by_symbol[symbol] for symbol in requested_for_exchange]
         if instrument_limit_per_exchange is not None:
             instrument_rows = instrument_rows[:instrument_limit_per_exchange]
         evidence_by_key: dict[str, list[dict[str, Any]]] = {}
@@ -261,6 +278,7 @@ def run_yfinance_daily_work_planner(
             "active_symbols": len(instruments),
             "eligible_symbols_before_limit": eligible_symbol_count,
             "instrument_limit": instrument_limit_per_exchange,
+            "selected_provider_symbols": [instrument.provider_symbol for instrument in instruments],
             "window_start": start.isoformat(),
             "window_end": end.isoformat(),
             "valid_sessions": len(sessions),
@@ -349,6 +367,7 @@ def run_yfinance_tsx_canary_planner(
 def run_yfinance_nse_canary_planner(
     *,
     symbol_limit: int,
+    provider_symbols: Iterable[str] | None = None,
     enqueue: bool = False,
     trigger: str = "pipeline",
     at: datetime | None = None,
@@ -362,6 +381,12 @@ def run_yfinance_nse_canary_planner(
             "NSE canary symbol limit exceeds configured maximum: "
             f"{symbol_limit}>{settings.yfinance_nse_canary_max_symbols}"
         )
+    requested_symbols = _normalize_requested_symbols(provider_symbols)
+    if len(requested_symbols) > symbol_limit:
+        raise ValueError(
+            "Requested NSE canary symbols exceed symbol_limit: "
+            f"{len(requested_symbols)}>{symbol_limit}"
+        )
     if enqueue and not (settings.yfinance_nse_canary_enabled or settings.yfinance_nse_enabled):
         raise ValueError(
             "NSE canary enqueue is disabled. Enable YFINANCE_NSE_CANARY_ENABLED "
@@ -374,6 +399,7 @@ def run_yfinance_nse_canary_planner(
         include_gap_repair=False,
         enqueue=enqueue,
         instrument_limit_per_exchange=symbol_limit,
+        provider_symbols=requested_symbols,
         allow_disabled_exchanges=True,
         trigger=trigger,
         at=at,
@@ -384,6 +410,21 @@ def run_yfinance_nse_canary_planner(
         settings.yfinance_nse_canary_enabled or settings.yfinance_nse_enabled
     )
     return result
+
+
+def _normalize_requested_symbols(provider_symbols: Iterable[str] | None) -> tuple[str, ...]:
+    normalized = tuple(
+        value.strip().upper() for value in (provider_symbols or ()) if value and value.strip()
+    )
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("Duplicate provider symbols are not allowed.")
+    return normalized
+
+
+def _normalize_requested_provider_symbol(value: str, exchange: str) -> str:
+    if exchange == "NSE" and "." not in value:
+        return f"{value}.NS"
+    return value
 
 
 def run_yfinance_daily_work_queue(
@@ -674,11 +715,7 @@ def run_yfinance_daily_work_queue(
                 if lost_claims
                 else []
             ),
-            *(
-                [f"{terminal} work items reached terminal failure."]
-                if terminal
-                else []
-            ),
+            *([f"{terminal} work items reached terminal failure."] if terminal else []),
             *(
                 [f"Work-item heartbeat failed {heartbeat.failure_count} times."]
                 if heartbeat.failure_count
@@ -773,10 +810,11 @@ def _execute_claimed_exchange_work(
             for row in session_rows
             if row["is_trading_day"] and str(row["validation_status"]).startswith("valid")
         }
+        eligible_frame = _eligible_daily_session_rows(frame, eligible_sessions)
         validated = prepare_yfinance_batch(
             settings=settings,
             database_engine=db.engine,
-            frame=frame,
+            frame=eligible_frame,
             raw_frame=raw_frame,
             exchange=exchange,
             interval=CandleInterval.ONE_DAY,
@@ -804,6 +842,7 @@ def _execute_claimed_exchange_work(
             for outcome in ticker_outcomes
             if outcome.get("work_item_id")
         }
+        observed_dates_by_key = _daily_observed_dates_by_instrument(frame)
         quality_windows: list[DailyExpectedWindow] = []
         for item in executable_work:
             outcome = outcomes_by_id.get(str(item["work_item_id"]), {})
@@ -815,6 +854,19 @@ def _execute_claimed_exchange_work(
                     window_start=item["window_start"],
                     window_end=item["window_end"],
                     provider_available=provider_available,
+                    observed_sessions=(
+                        frozenset(
+                            observed_dates_by_key.get(
+                                str(
+                                    item.get("provider_instrument_key")
+                                    or f"YF|{item['provider_symbol']}"
+                                ),
+                                set(),
+                            )
+                        )
+                        if provider_available
+                        else None
+                    ),
                     reason_code=(
                         None
                         if outcome.get("status") == "success"
@@ -877,6 +929,40 @@ def _completed_session_rows(frame: pd.DataFrame, completed_session: date) -> pd.
     return frame.loc[row_dates.notna() & (row_dates <= completed_session)].reset_index(drop=True)
 
 
+def _eligible_daily_session_rows(
+    frame: pd.DataFrame,
+    eligible_sessions: set[date],
+) -> pd.DataFrame:
+    """Keep normalized daily rows inside the reviewed materialized calendar."""
+
+    if frame.empty:
+        return frame
+    date_column = "Date" if "Date" in frame.columns else "date"
+    if date_column not in frame.columns:
+        raise ValueError("Yahoo daily frame does not contain a Date column.")
+    row_dates = pd.to_datetime(frame[date_column], errors="coerce").dt.date
+    return frame.loc[row_dates.notna() & row_dates.isin(eligible_sessions)].reset_index(drop=True)
+
+
+def _daily_observed_dates_by_instrument(frame: pd.DataFrame) -> dict[str, set[date]]:
+    if frame.empty:
+        return {}
+    key_column = "InstrumentKey" if "InstrumentKey" in frame.columns else "instrument_key"
+    date_column = "Date" if "Date" in frame.columns else "date"
+    if key_column not in frame.columns or date_column not in frame.columns:
+        raise ValueError("Yahoo daily frame lacks instrument or date identity columns.")
+    normalized = pd.DataFrame(
+        {
+            "instrument_key": frame[key_column].astype("string"),
+            "date": pd.to_datetime(frame[date_column], errors="coerce").dt.date,
+        }
+    ).dropna()
+    return {
+        str(instrument_key): set(group["date"].tolist())
+        for instrument_key, group in normalized.groupby("instrument_key")
+    }
+
+
 def _require_daily_incremental_target_session(
     *,
     ticker_outcomes: list[dict[str, Any]],
@@ -912,9 +998,7 @@ def _require_daily_incremental_target_session(
             resolved.append(outcome_copy)
             continue
 
-        instrument_key = str(
-            item.get("provider_instrument_key") or f"YF|{item['provider_symbol']}"
-        )
+        instrument_key = str(item.get("provider_instrument_key") or f"YF|{item['provider_symbol']}")
         expected = item["window_end"]
         observed = latest_by_instrument.get(instrument_key)
         if observed is not None and observed >= expected:

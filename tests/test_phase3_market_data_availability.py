@@ -11,6 +11,7 @@ from trade_research.control_plane.tables import (
 from trade_research.market_data.availability import (
     MarketDataAvailabilityRepository,
     availability_session_maps,
+    nse_minute_observed_session_windows,
     observe_nse_minute_availability,
 )
 from trade_research.market_data.contracts import CandleInterval, ProviderRequest
@@ -93,9 +94,7 @@ def test_availability_observations_are_content_addressed_and_idempotent() -> Non
 
     with engine.connect() as connection:
         count = connection.scalar(
-            select(func.count()).select_from(
-                market_data_availability_observations_table
-            )
+            select(func.count()).select_from(market_data_availability_observations_table)
         )
     assert count == 1
 
@@ -132,18 +131,16 @@ def test_minute_missingness_uses_observed_sessions_not_configured_lookback() -> 
         for session in (date(2026, 9, 4), date(2026, 9, 5))
     }
 
-    assert {
-        item.status for item in by_session[date(2026, 9, 4)]
-    } == {MarketDataQualityStatus.PROVIDER_UNAVAILABLE}
-    assert {
-        item.reason_code for item in by_session[date(2026, 9, 4)]
-    } == {"session_outside_observed_availability"}
-    assert {
-        item.status for item in by_session[date(2026, 9, 5)]
-    } == {MarketDataQualityStatus.MISSING}
-    assert {
-        item.reason_code for item in by_session[date(2026, 9, 5)]
-    } == {"candle_absent"}
+    assert {item.status for item in by_session[date(2026, 9, 4)]} == {
+        MarketDataQualityStatus.PROVIDER_UNAVAILABLE
+    }
+    assert {item.reason_code for item in by_session[date(2026, 9, 4)]} == {
+        "session_outside_observed_availability"
+    }
+    assert {item.status for item in by_session[date(2026, 9, 5)]} == {
+        MarketDataQualityStatus.MISSING
+    }
+    assert {item.reason_code for item in by_session[date(2026, 9, 5)]} == {"candle_absent"}
 
 
 def test_empty_provider_response_has_an_explicit_availability_reason() -> None:
@@ -167,9 +164,50 @@ def test_empty_provider_response_has_an_explicit_availability_reason() -> None:
         unavailable_reason_codes=reasons,
     )
 
-    assert {item.status for item in outcomes} == {
-        MarketDataQualityStatus.PROVIDER_UNAVAILABLE
-    }
-    assert {item.reason_code for item in outcomes} == {
-        "provider_returned_no_data"
-    }
+    assert {item.status for item in outcomes} == {MarketDataQualityStatus.PROVIDER_UNAVAILABLE}
+    assert {item.reason_code for item in outcomes} == {"provider_returned_no_data"}
+
+
+def test_minute_quality_uses_provider_observed_session_boundaries() -> None:
+    request = _request()
+    raw = pd.DataFrame(
+        [
+            {
+                "TradingSymbol": "RELIANCE.NS",
+                "Timestamp": datetime(2026, 9, 4, 3, 46, tzinfo=UTC),
+            },
+            {
+                "TradingSymbol": "RELIANCE.NS",
+                "Timestamp": datetime(2026, 9, 4, 9, 44, tzinfo=UTC),
+            },
+        ]
+    )
+    windows = nse_minute_observed_session_windows(raw, {date(2026, 9, 4)})
+
+    outcomes = nse_minute_missing_quality_outcomes(
+        request=request,
+        source_run_id="minute-run",
+        canonical_instrument_ids={"RELIANCE.NS": "nse-reliance"},
+        eligible_sessions={date(2026, 9, 4)},
+        accepted=(),
+        observed_availability_sessions={"RELIANCE.NS": {date(2026, 9, 4)}},
+        observed_session_windows=windows,
+    )
+    by_timestamp = {item.candle_timestamp: item for item in outcomes}
+
+    assert windows["RELIANCE.NS"][date(2026, 9, 4)] == (
+        datetime(2026, 9, 4, 3, 46, tzinfo=UTC),
+        datetime(2026, 9, 4, 9, 44, tzinfo=UTC),
+    )
+    assert (
+        by_timestamp[datetime(2026, 9, 4, 3, 45, tzinfo=UTC)].status
+        == MarketDataQualityStatus.PROVIDER_UNAVAILABLE
+    )
+    assert (
+        by_timestamp[datetime(2026, 9, 4, 9, 45, tzinfo=UTC)].reason_code
+        == "outside_provider_observed_session_window"
+    )
+    assert (
+        by_timestamp[datetime(2026, 9, 4, 3, 47, tzinfo=UTC)].status
+        == MarketDataQualityStatus.MISSING
+    )

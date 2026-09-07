@@ -86,12 +86,8 @@ class MarketDataAvailabilityObservation:
                 "availability_observation_id": self.availability_observation_id,
                 "requested_start": _as_utc(self.requested_start),
                 "requested_end": _as_utc(self.requested_end),
-                "eligible_sessions": [
-                    item.isoformat() for item in self.eligible_sessions
-                ],
-                "observed_sessions": [
-                    item.isoformat() for item in self.observed_sessions
-                ],
+                "eligible_sessions": [item.isoformat() for item in self.eligible_sessions],
+                "observed_sessions": [item.isoformat() for item in self.observed_sessions],
                 "observed_first_timestamp": (
                     _as_utc(self.observed_first_timestamp)
                     if self.observed_first_timestamp is not None
@@ -130,16 +126,14 @@ class MarketDataAvailabilityRepository:
                         index_elements=["availability_observation_id"]
                     )
                 elif dialect == "sqlite":
-                    statement = sqlite_insert(
-                        market_data_availability_observations_table
-                    ).values(**row)
+                    statement = sqlite_insert(market_data_availability_observations_table).values(
+                        **row
+                    )
                     statement = statement.on_conflict_do_nothing(
                         index_elements=["availability_observation_id"]
                     )
                 else:
-                    statement = insert(
-                        market_data_availability_observations_table
-                    ).values(**row)
+                    statement = insert(market_data_availability_observations_table).values(**row)
                 connection.execute(statement)
         return len(rows)
 
@@ -197,12 +191,8 @@ def observe_nse_minute_availability(
                 requested_end=request.window_end,
                 eligible_sessions=tuple(sorted(eligible_sessions)),
                 observed_sessions=observed_sessions,
-                observed_first_timestamp=(
-                    first.to_pydatetime() if first is not None else None
-                ),
-                observed_last_timestamp=(
-                    last.to_pydatetime() if last is not None else None
-                ),
+                observed_first_timestamp=(first.to_pydatetime() if first is not None else None),
+                observed_last_timestamp=(last.to_pydatetime() if last is not None else None),
                 observed_row_count=int(len(selected)),
                 status=status,
                 reason_code=reason_code,
@@ -227,6 +217,37 @@ def availability_session_maps(
         if observation.status != "observed"
     }
     return sessions, reasons
+
+
+def nse_minute_observed_session_windows(
+    raw_frame: pd.DataFrame,
+    eligible_sessions: set[date],
+) -> dict[str, dict[date, tuple[datetime, datetime]]]:
+    """Return provider-observed minute boundaries for each symbol and session."""
+
+    timestamps = _timestamps(raw_frame)
+    symbols = _provider_symbols(raw_frame)
+    valid = timestamps.notna()
+    if not valid.any():
+        return {}
+    selected = pd.DataFrame(
+        {
+            "provider_symbol": symbols[valid],
+            "timestamp": timestamps[valid],
+        }
+    )
+    selected["session_date"] = selected["timestamp"].dt.tz_convert(_NSE_TIMEZONE).dt.date
+    selected = selected[selected["session_date"].isin(eligible_sessions)]
+    windows: dict[str, dict[date, tuple[datetime, datetime]]] = {}
+    for (provider_symbol, session_date), group in selected.groupby(
+        ["provider_symbol", "session_date"],
+        sort=True,
+    ):
+        windows.setdefault(str(provider_symbol), {})[session_date] = (
+            group["timestamp"].min().to_pydatetime(),
+            group["timestamp"].max().to_pydatetime(),
+        )
+    return windows
 
 
 def _timestamps(frame: pd.DataFrame) -> pd.Series:

@@ -13,6 +13,7 @@ from trade_research.pipelines import PipelineRunResult, run_yfinance_nse_minute_
     compute_kind="yfinance",
     config_schema={
         "symbol_limit": Field(Int, is_required=False),
+        "symbols": Field(String, is_required=False),
     },
     description=(
         "Fetch bounded NSE 1m data, retain immutable raw evidence, validate completed "
@@ -20,8 +21,12 @@ from trade_research.pipelines import PipelineRunResult, run_yfinance_nse_minute_
     ),
 )
 def yfinance_nse_minute_ohlcv(context) -> PipelineRunResult:
+    symbols = context.op_config.get("symbols")
     result = run_yfinance_nse_minute_pipeline(
         symbol_limit=context.op_config.get("symbol_limit"),
+        provider_symbols=(
+            [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
+        ),
         trigger="dagster",
         at=context.scheduled_execution_time,
     )

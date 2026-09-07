@@ -210,3 +210,138 @@ def test_nse_minute_pipeline_rejects_window_beyond_configured_retention(monkeypa
         assert "exceeds the configured request safety limit" in str(exc)
     else:
         raise AssertionError("Expected an out-of-retention request to be rejected")
+
+
+def test_nse_minute_pipeline_selects_explicit_provider_symbols(monkeypatch) -> None:
+    _Store.instances = []
+    monkeypatch.setattr(nse_minute, "get_settings", _settings)
+    monkeypatch.setattr(nse_minute, "TimescaleStore", _Store)
+    monkeypatch.setattr(
+        _Store,
+        "active_yfinance_daily_instruments",
+        lambda self, exchange: [
+            {
+                "canonical_instrument_id": "nse-alpha",
+                "exchange_symbol": "ALPHA",
+                "provider_symbol": "ALPHA.NS",
+                "provider_instrument_key": "YF|ALPHA.NS",
+                "name": "Alpha",
+            },
+            {
+                "canonical_instrument_id": "nse-reliance",
+                "exchange_symbol": "RELIANCE",
+                "provider_symbol": "RELIANCE.NS",
+                "provider_instrument_key": "YF|RELIANCE.NS",
+                "name": "Reliance Industries",
+            },
+        ],
+    )
+    captured: dict = {}
+
+    class Provider(_Provider):
+        def fetch_intraday_ohlcv(self, instruments, start, end, interval="1m"):
+            captured["symbols"] = [item.yahoo_symbol for item in instruments]
+            return super().fetch_intraday_ohlcv(instruments, start, end, interval)
+
+    def prepare(**kwargs):
+        return SimpleNamespace(
+            request=object(),
+            frame=kwargs["frame"],
+            candles=(object(),),
+            raw_snapshot=None,
+        )
+
+    monkeypatch.setattr(nse_minute, "prepare_yfinance_batch", prepare)
+    monkeypatch.setattr(nse_minute, "observe_nse_minute_availability", lambda **kwargs: [])
+    monkeypatch.setattr(
+        nse_minute,
+        "MarketDataAvailabilityRepository",
+        lambda _engine: SimpleNamespace(record=lambda observations: len(observations)),
+    )
+    monkeypatch.setattr(
+        nse_minute,
+        "nse_minute_missing_quality_outcomes",
+        lambda **kwargs: [],
+    )
+    monkeypatch.setattr(
+        nse_minute,
+        "MarketDataQualityRepository",
+        lambda _engine: SimpleNamespace(record=lambda outcomes: len(outcomes)),
+    )
+    monkeypatch.setattr(
+        nse_minute,
+        "replicate_validated_batch",
+        lambda _settings, batch, **kwargs: len(batch.candles),
+    )
+
+    result = run_yfinance_nse_minute_pipeline(
+        from_datetime="2026-09-04T00:00:00Z",
+        to_datetime="2026-09-05T12:00:00Z",
+        provider_symbols=["reliance"],
+        provider=Provider(),
+        at=datetime(2026, 9, 5, 9, tzinfo=UTC),
+    )
+
+    assert captured["symbols"] == ["RELIANCE.NS"]
+    assert result.metrics["selected_provider_symbols"] == ["RELIANCE.NS"]
+
+
+def test_nse_minute_pipeline_rejects_unknown_or_ambiguous_selection(monkeypatch) -> None:
+    monkeypatch.setattr(nse_minute, "get_settings", _settings)
+    monkeypatch.setattr(nse_minute, "TimescaleStore", _Store)
+
+    for kwargs, expected in [
+        ({"provider_symbols": ["MISSING"]}, "No active NSE yfinance instrument matched"),
+        (
+            {"provider_symbols": ["RELIANCE"], "symbol_limit": 1},
+            "cannot be used together",
+        ),
+        ({"provider_symbols": ["RELIANCE", "reliance.ns"]}, "Duplicate"),
+    ]:
+        try:
+            run_yfinance_nse_minute_pipeline(
+                from_datetime="2026-09-04T00:00:00Z",
+                to_datetime="2026-09-05T12:00:00Z",
+                provider=_Provider(),
+                at=datetime(2026, 9, 5, 9, tzinfo=UTC),
+                **kwargs,
+            )
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError("Expected invalid explicit selection to be rejected")
+
+
+def test_nse_minute_pipeline_marks_started_run_failed_on_exception(monkeypatch) -> None:
+    _Store.instances = []
+    monkeypatch.setattr(nse_minute, "get_settings", _settings)
+    monkeypatch.setattr(nse_minute, "TimescaleStore", _Store)
+    monkeypatch.setattr(
+        nse_minute,
+        "prepare_yfinance_batch",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("raw snapshot failed")),
+    )
+
+    try:
+        run_yfinance_nse_minute_pipeline(
+            from_datetime="2026-09-04T00:00:00Z",
+            to_datetime="2026-09-05T12:00:00Z",
+            symbol_limit=1,
+            provider=_Provider(),
+            at=datetime(2026, 9, 5, 9, tzinfo=UTC),
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "raw snapshot failed"
+    else:
+        raise AssertionError("Expected raw snapshot failure")
+
+    assert _Store.instances[0].finished == [
+        {
+            "run_id": "minute-run",
+            "status": "failed",
+            "items_processed": 0,
+            "items_succeeded": 0,
+            "items_failed": 1,
+            "error_message": "raw snapshot failed",
+        }
+    ]

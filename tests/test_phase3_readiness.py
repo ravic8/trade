@@ -198,6 +198,52 @@ def test_canary_fails_closed_without_business_digest_and_availability() -> None:
     assert any("Independent minute reruns" in issue for issue in evidence["blocking_issues"])
 
 
+def test_minute_completeness_excludes_explained_provider_unavailability() -> None:
+    engine = _engine()
+    _record_run(engine, run_id="daily-1", interval="1d", business_digest="d" * 64)
+    _record_run(engine, run_id="minute-1", interval="1m", business_digest="m" * 64)
+    _record_run(engine, run_id="minute-2", interval="1m", business_digest="m" * 64)
+    with engine.begin() as connection:
+        for run_id in ("minute-1", "minute-2"):
+            connection.execute(
+                market_data_quality_outcomes_table.insert(),
+                {
+                    "quality_outcome_id": f"provider-boundary-{run_id}",
+                    "workspace_id": "default",
+                    "source_run_id": run_id,
+                    "request_id": f"request-{run_id}",
+                    "provider": "yfinance",
+                    "exchange": "NSE",
+                    "interval": "1m",
+                    "instrument_id": "NSE_EQ|RELIANCE",
+                    "provider_symbol": "RELIANCE.NS",
+                    "session_date": date(2026, 9, 5),
+                    "candle_timestamp": datetime(2026, 9, 5, 10, tzinfo=UTC),
+                    "status": "provider_unavailable",
+                    "reason_code": "outside_provider_observed_session_window",
+                    "severity": "warning",
+                    "expected": True,
+                    "retryable": False,
+                    "raw_artifact_id": "artifact-1",
+                    "details": {},
+                    "observed_at": datetime(2026, 9, 6, 10, tzinfo=UTC),
+                    "created_at": datetime(2026, 9, 6, 10, tzinfo=UTC),
+                    "updated_at": datetime(2026, 9, 6, 10, tzinfo=UTC),
+                },
+            )
+
+    evidence = Phase3ReadinessRepository(engine).assess_canary(
+        daily_run_id="daily-1",
+        minute_run_id="minute-1",
+        minute_rerun_id="minute-2",
+        max_instruments=25,
+        required_observed_sessions=5,
+    )
+
+    assert evidence["status"] == "pass"
+    assert evidence["metrics"]["runs"]["minute"]["quality"]["completeness_ratio"] == 1.0
+
+
 def test_readiness_requires_canary_drill_and_provider_windows() -> None:
     engine = _engine()
     _record_run(engine, run_id="daily-1", interval="1d", business_digest="d" * 64)

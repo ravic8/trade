@@ -130,13 +130,21 @@ def test_nse_canary_is_independent_from_full_nse_flag(monkeypatch) -> None:
 
     result = yfinance_work_queue.run_yfinance_nse_canary_planner(
         symbol_limit=10,
+        provider_symbols=["reliance"],
         enqueue=True,
     )
 
     assert captured["exchanges"] == ("NSE",)
     assert captured["allow_disabled_exchanges"] is True
     assert captured["instrument_limit_per_exchange"] == 10
+    assert captured["provider_symbols"] == ("RELIANCE",)
     assert result.metrics["canary_execution_enabled"] is True
+
+    with pytest.raises(ValueError, match="exceed symbol_limit"):
+        yfinance_work_queue.run_yfinance_nse_canary_planner(
+            symbol_limit=1,
+            provider_symbols=["RELIANCE", "TCS"],
+        )
 
 
 class _ReadinessStore:

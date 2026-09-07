@@ -29,7 +29,14 @@ _QUALITY_STATUSES = (
     "outside_session",
     "stale",
 )
-_EXPECTED_STATUSES = ("valid", "missing", "provider_unavailable", "invalid", "stale")
+_DAILY_EXPECTED_STATUSES = (
+    "valid",
+    "missing",
+    "provider_unavailable",
+    "invalid",
+    "stale",
+)
+_MINUTE_OBSERVED_STATUSES = ("valid", "missing", "invalid", "stale")
 _REQUIRED_DRILL_CHECKS = (
     "rollback_effective_provider_upstox",
     "upstox_pipeline_healthy",
@@ -206,14 +213,18 @@ class Phase3ReadinessRepository:
 
         decisions = nse_provider_cutover_decisions_table
         with self._engine.connect() as connection:
-            rows = connection.execute(
-                select(decisions).where(
-                    decisions.c.workspace_id == self._workspace_id,
-                    decisions.c.decision_sha256.in_(
-                        [rollback_decision_sha256, restored_decision_sha256]
-                    ),
+            rows = (
+                connection.execute(
+                    select(decisions).where(
+                        decisions.c.workspace_id == self._workspace_id,
+                        decisions.c.decision_sha256.in_(
+                            [rollback_decision_sha256, restored_decision_sha256]
+                        ),
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         by_digest = {str(row["decision_sha256"]): row for row in rows}
         rollback = by_digest.get(rollback_decision_sha256)
         restored = by_digest.get(restored_decision_sha256)
@@ -292,35 +303,46 @@ class Phase3ReadinessRepository:
     def recent_evidence(self, *, limit: int = 20) -> list[dict[str, Any]]:
         table = phase3_readiness_evidence_table
         with self._engine.connect() as connection:
-            rows = connection.execute(
-                select(table)
-                .where(table.c.workspace_id == self._workspace_id)
-                .order_by(desc(table.c.observed_at), desc(table.c.evidence_id))
-                .limit(limit)
-            ).mappings().all()
+            rows = (
+                connection.execute(
+                    select(table)
+                    .where(table.c.workspace_id == self._workspace_id)
+                    .order_by(desc(table.c.observed_at), desc(table.c.evidence_id))
+                    .limit(limit)
+                )
+                .mappings()
+                .all()
+            )
         return [_evidence_dict(row) for row in rows]
 
     def _quality_metrics(self, connection: Any, *, run_id: str, interval: str) -> dict[str, Any]:
         table = market_data_quality_outcomes_table
-        row = connection.execute(
-            select(
-                func.count().label("total"),
-                func.count(distinct(table.c.instrument_id)).label("instruments"),
-                func.count(distinct(table.c.raw_artifact_id)).label("raw_artifacts"),
-                *[
-                    func.sum(case((table.c.status == status, 1), else_=0)).label(status)
-                    for status in _QUALITY_STATUSES
-                ],
-            ).where(
-                table.c.workspace_id == self._workspace_id,
-                table.c.provider == "yfinance",
-                table.c.exchange == "NSE",
-                table.c.interval == interval,
-                table.c.source_run_id == run_id,
+        row = (
+            connection.execute(
+                select(
+                    func.count().label("total"),
+                    func.count(distinct(table.c.instrument_id)).label("instruments"),
+                    func.count(distinct(table.c.raw_artifact_id)).label("raw_artifacts"),
+                    *[
+                        func.sum(case((table.c.status == status, 1), else_=0)).label(status)
+                        for status in _QUALITY_STATUSES
+                    ],
+                ).where(
+                    table.c.workspace_id == self._workspace_id,
+                    table.c.provider == "yfinance",
+                    table.c.exchange == "NSE",
+                    table.c.interval == interval,
+                    table.c.source_run_id == run_id,
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         counts = {status: int(row[status] or 0) for status in _QUALITY_STATUSES}
-        expected = sum(counts[name] for name in _EXPECTED_STATUSES)
+        expected_statuses = (
+            _MINUTE_OBSERVED_STATUSES if interval == "1m" else _DAILY_EXPECTED_STATUSES
+        )
+        expected = sum(counts[name] for name in expected_statuses)
         return {
             "total_outcomes": int(row["total"] or 0),
             "affected_instruments": int(row["instruments"] or 0),
@@ -333,17 +355,21 @@ class Phase3ReadinessRepository:
         self, connection: Any, *, run_id: str, interval: str
     ) -> dict[str, Any]:
         table = market_data_replication_checkpoints_table
-        row = connection.execute(
-            select(table)
-            .where(
-                table.c.workspace_id == self._workspace_id,
-                table.c.exchange == "NSE",
-                table.c.interval == interval,
-                table.c.source_run_id == run_id,
+        row = (
+            connection.execute(
+                select(table)
+                .where(
+                    table.c.workspace_id == self._workspace_id,
+                    table.c.exchange == "NSE",
+                    table.c.interval == interval,
+                    table.c.source_run_id == run_id,
+                )
+                .order_by(desc(table.c.updated_at))
+                .limit(1)
             )
-            .order_by(desc(table.c.updated_at))
-            .limit(1)
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         if row is None:
             return {"status": "missing"}
         details = dict(row["details"] or {})
@@ -365,15 +391,19 @@ class Phase3ReadinessRepository:
 
     def _availability_metrics(self, connection: Any, *, run_id: str) -> dict[str, Any]:
         table = market_data_availability_observations_table
-        rows = connection.execute(
-            select(table).where(
-                table.c.workspace_id == self._workspace_id,
-                table.c.provider == "yfinance",
-                table.c.exchange == "NSE",
-                table.c.interval == "1m",
-                table.c.source_run_id == run_id,
+        rows = (
+            connection.execute(
+                select(table).where(
+                    table.c.workspace_id == self._workspace_id,
+                    table.c.provider == "yfinance",
+                    table.c.exchange == "NSE",
+                    table.c.interval == "1m",
+                    table.c.source_run_id == run_id,
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
         sessions = sorted(
             {str(value) for row in rows for value in list(row["observed_sessions"] or [])}
         )
@@ -416,8 +446,7 @@ class Phase3ReadinessRepository:
         if counts["missing"]:
             blocking.append(f"{label} has {counts['missing']} unexplained missing candles.")
         quarantined = sum(
-            counts[name]
-            for name in ("duplicate", "invalid", "outside_session", "stale")
+            counts[name] for name in ("duplicate", "invalid", "outside_session", "stale")
         )
         if quarantined:
             blocking.append(f"{label} has {quarantined} quarantined candles.")
@@ -484,17 +513,19 @@ class Phase3ReadinessRepository:
             statement = phase3_readiness_evidence_table.insert().values(**values)
         with self._engine.begin() as connection:
             connection.execute(statement)
-            row = connection.execute(
-                select(phase3_readiness_evidence_table).where(
-                    phase3_readiness_evidence_table.c.evidence_id == digest
+            row = (
+                connection.execute(
+                    select(phase3_readiness_evidence_table).where(
+                        phase3_readiness_evidence_table.c.evidence_id == digest
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
         return _evidence_dict(row)
 
 
-def _evidence_gate(
-    name: str, evidence: dict[str, Any] | None, missing_reason: str
-) -> Phase3Gate:
+def _evidence_gate(name: str, evidence: dict[str, Any] | None, missing_reason: str) -> Phase3Gate:
     if evidence is None:
         return Phase3Gate(name=name, passed=False, reason=missing_reason)
     passed = evidence["status"] == "pass"
@@ -545,9 +576,9 @@ def _json_value(value: Any) -> Any:
 
 
 def _digest(payload: Mapping[str, Any]) -> str:
-    encoded = json.dumps(
-        _json_value(payload), sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    encoded = json.dumps(_json_value(payload), sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return hashlib.sha256(encoded).hexdigest()
 
 

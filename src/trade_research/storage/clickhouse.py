@@ -141,6 +141,8 @@ class ClickHouseFeatureRepository(_Repository):
 class ClickHouseMarketDataRepository(_Repository):
     """Append validated canonical candles to the analytical replica."""
 
+    MAX_PARTITIONS_PER_INSERT = 50
+
     DAILY_COLUMNS = (
         "workspace_id",
         "instrument_id",
@@ -199,32 +201,61 @@ class ClickHouseMarketDataRepository(_Repository):
         materialized = list(candles)
         daily = [candle for candle in materialized if not candle.interval.is_intraday]
         intraday = [candle for candle in materialized if candle.interval.is_intraday]
-        inserted = self._insert(
+        inserted = self._insert_partition_batches(
             "ohlcv_daily",
-            (
-                self._row(
-                    candle,
-                    source_run_id=source_run_id,
-                    workspace_id=workspace_id,
-                    version=version,
-                )
-                for candle in daily
-            ),
+            daily,
             self.DAILY_COLUMNS,
+            source_run_id=source_run_id,
+            workspace_id=workspace_id,
+            version=version,
         )
-        inserted += self._insert(
+        inserted += self._insert_partition_batches(
             "ohlcv_intraday",
-            (
-                self._row(
-                    candle,
-                    source_run_id=source_run_id,
-                    workspace_id=workspace_id,
-                    version=version,
-                )
-                for candle in intraday
-            ),
+            intraday,
             self.INTRADAY_COLUMNS,
+            source_run_id=source_run_id,
+            workspace_id=workspace_id,
+            version=version,
         )
+        return inserted
+
+    def _insert_partition_batches(
+        self,
+        table: str,
+        candles: Sequence[MarketCandle],
+        columns: Sequence[str],
+        *,
+        source_run_id: str,
+        workspace_id: str,
+        version: int,
+    ) -> int:
+        """Bound each insert below ClickHouse's distinct-partition safety limit."""
+
+        by_partition: dict[tuple[int, int], list[MarketCandle]] = {}
+        for candle in candles:
+            key = (candle.session_date.year, candle.session_date.month)
+            by_partition.setdefault(key, []).append(candle)
+        ordered = [by_partition[key] for key in sorted(by_partition)]
+        inserted = 0
+        for offset in range(0, len(ordered), self.MAX_PARTITIONS_PER_INSERT):
+            batch = [
+                candle
+                for partition in ordered[offset : offset + self.MAX_PARTITIONS_PER_INSERT]
+                for candle in partition
+            ]
+            inserted += self._insert(
+                table,
+                (
+                    self._row(
+                        candle,
+                        source_run_id=source_run_id,
+                        workspace_id=workspace_id,
+                        version=version,
+                    )
+                    for candle in batch
+                ),
+                columns,
+            )
         return inserted
 
     @staticmethod
@@ -271,9 +302,7 @@ class ClickHouseMarketDataRepository(_Repository):
         workspace_id: str = "default",
     ) -> int:
         table = "ohlcv_daily" if interval == "1d" else "ohlcv_intraday"
-        interval_filter = (
-            "" if interval == "1d" else " AND interval = {interval:String}"
-        )
+        interval_filter = "" if interval == "1d" else " AND interval = {interval:String}"
         result = self._client.query(
             f"""
             SELECT count()
@@ -372,10 +401,7 @@ class ClickHouseMarketDataRepository(_Repository):
                 "window_end": window_end,
             },
         )
-        return [
-            dict(zip(result.column_names, row, strict=True))
-            for row in result.result_rows
-        ]
+        return [dict(zip(result.column_names, row, strict=True)) for row in result.result_rows]
 
     def aggregate_nse_intraday(
         self,
@@ -467,9 +493,7 @@ class ClickHouseMarketDataRepository(_Repository):
             },
         )
         return [
-            AggregatedMarketCandle.from_mapping(
-                dict(zip(result.column_names, row, strict=True))
-            )
+            AggregatedMarketCandle.from_mapping(dict(zip(result.column_names, row, strict=True)))
             for row in result.result_rows
         ]
 

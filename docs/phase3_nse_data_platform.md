@@ -40,7 +40,9 @@ disabled.
 - A bounded NSE `1m` pipeline resolves the persisted active NSE universe,
   enforces the configured request-safety window, retains the unfiltered raw
   response, accepts only completed materialized sessions, validates timestamps
-  in IST, and writes accepted rows to ClickHouse.
+  in IST, and writes accepted rows to ClickHouse. Operators can select an
+  explicit reviewed symbol set for a bounded canary; the selection is validated
+  against the active universe and retained in run metadata.
 - The configured minute lookback is no longer treated as a provider retention
   guarantee. Every NSE `1m` run stores content-addressed availability evidence
   per instrument: requested and observed sessions, first/last returned
@@ -48,6 +50,13 @@ disabled.
   artifact lineage, and observation time. Missing candles use these observed
   sessions to distinguish an unexplained in-session gap from a session the
   provider did not return.
+- Minute completeness follows the V1 provider-observed-window rule. Minutes
+  outside each returned session boundary are classified as
+  `provider_unavailable`; absent minutes inside the observed boundary remain
+  blocking `missing` outcomes.
+- Multi-year daily replication is split into ClickHouse inserts spanning no
+  more than 50 monthly partitions, keeping initial backfills below the server's
+  partition-per-insert safety limit.
 - The NSE minute path is available through
   `trade-research fetch-yfinance-nse-minute` and the
   `yfinance_nse_minute_job` Dagster job. Its schedule is stopped by default.
@@ -178,10 +187,11 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
 
 - Implement a Rust candidate only if profiling justifies it, then require its
   independently produced output to pass the locked aggregation fixture.
-- Run the bounded production canary twice, record the rollback/restore drill,
-  and collect the required provider-comparison windows. Implementation alone
-  intentionally leaves the production gate blocked until those live evidence
-  records pass.
+- The bounded daily/minute canary and independent minute rerun pass in the local
+  operational environment. Production still requires its own canary evidence,
+  the reviewed rollback/restore drill, and five distinct passing live
+  provider-comparison windows. Implementation alone intentionally leaves the
+  production gate blocked until those live evidence records pass.
 
 ## Exit gate
 

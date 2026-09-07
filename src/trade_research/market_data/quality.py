@@ -97,6 +97,7 @@ class DailyExpectedWindow:
     window_start: date
     window_end: date
     provider_available: bool = True
+    observed_sessions: frozenset[date] | None = None
     reason_code: str | None = None
     retryable: bool = True
 
@@ -117,17 +118,13 @@ class MarketDataQualityRepository:
             for offset in range(0, len(rows), 1_000):
                 chunk = rows[offset : offset + 1_000]
                 if dialect == "postgresql":
-                    statement: Any = postgresql_insert(
-                        market_data_quality_outcomes_table
-                    ).values(
+                    statement: Any = postgresql_insert(market_data_quality_outcomes_table).values(
                         chunk
                     )
                 elif dialect == "sqlite":
                     statement = sqlite_insert(market_data_quality_outcomes_table).values(chunk)
                 else:
-                    connection.execute(
-                        insert(market_data_quality_outcomes_table).values(chunk)
-                    )
+                    connection.execute(insert(market_data_quality_outcomes_table).values(chunk))
                     continue
                 statement = statement.on_conflict_do_update(
                     index_elements=["quality_outcome_id"],
@@ -204,13 +201,21 @@ def daily_missing_quality_outcomes(
                 continue
             if (window.instrument_id, session_date) in observed:
                 continue
+            if window.observed_sessions is not None and session_date in window.observed_sessions:
+                # Returned rows rejected by validation already have their own
+                # specific quality outcome and must not be double-counted.
+                continue
             status = (
                 MarketDataQualityStatus.MISSING
-                if window.provider_available
+                if window.provider_available and window.observed_sessions is None
                 else MarketDataQualityStatus.PROVIDER_UNAVAILABLE
             )
             reason_code = window.reason_code or (
-                "candle_absent" if window.provider_available else "provider_request_failed"
+                "candle_absent"
+                if window.provider_available and window.observed_sessions is None
+                else "provider_session_not_returned"
+                if window.provider_available
+                else "provider_request_failed"
             )
             outcomes.append(
                 MarketDataQualityOutcome(
@@ -224,7 +229,11 @@ def daily_missing_quality_outcomes(
                     session_date=session_date,
                     status=status,
                     reason_code=reason_code,
-                    severity="error" if window.provider_available else "warning",
+                    severity=(
+                        "error"
+                        if window.provider_available and window.observed_sessions is None
+                        else "warning"
+                    ),
                     expected=True,
                     retryable=window.retryable,
                     observed_at=request.retrieved_at,
@@ -246,6 +255,7 @@ def nse_minute_missing_quality_outcomes(
     accepted: Sequence[MarketCandle],
     unavailable_provider_symbols: set[str] | None = None,
     observed_availability_sessions: Mapping[str, set[date]] | None = None,
+    observed_session_windows: Mapping[str, Mapping[date, tuple[datetime, datetime]]] | None = None,
     unavailable_reason_codes: Mapping[str, str] | None = None,
 ) -> list[MarketDataQualityOutcome]:
     unavailable = unavailable_provider_symbols or set()
@@ -267,17 +277,31 @@ def nse_minute_missing_quality_outcomes(
             outside_observed_availability = (
                 observed_sessions is not None and session_date not in observed_sessions
             )
-            provider_unavailable = request_failed or outside_observed_availability
-            reason_code = (
-                unavailable_reasons[provider_symbol]
-                if provider_symbol in unavailable_reasons
-                else "session_outside_observed_availability"
-                if outside_observed_availability
-                else "candle_absent"
+            session_window = (
+                observed_session_windows.get(provider_symbol, {}).get(session_date)
+                if observed_session_windows is not None
+                else None
             )
             for timestamp in _nse_minute_grid(session_date, request):
                 if (instrument_id, timestamp) in observed:
                     continue
+                outside_observed_session_window = session_window is not None and not (
+                    session_window[0] <= timestamp <= session_window[1]
+                )
+                provider_unavailable = (
+                    request_failed
+                    or outside_observed_availability
+                    or outside_observed_session_window
+                )
+                reason_code = (
+                    unavailable_reasons[provider_symbol]
+                    if provider_symbol in unavailable_reasons
+                    else "session_outside_observed_availability"
+                    if outside_observed_availability
+                    else "outside_provider_observed_session_window"
+                    if outside_observed_session_window
+                    else "candle_absent"
+                )
                 outcomes.append(
                     MarketDataQualityOutcome(
                         source_run_id=source_run_id,
@@ -303,6 +327,16 @@ def nse_minute_missing_quality_outcomes(
                             "session_timezone": "Asia/Kolkata",
                             "availability_evidence_applied": (
                                 observed_availability_sessions is not None
+                            ),
+                            "observed_session_start": (
+                                session_window[0].isoformat()
+                                if session_window is not None
+                                else None
+                            ),
+                            "observed_session_end": (
+                                session_window[1].isoformat()
+                                if session_window is not None
+                                else None
                             ),
                         },
                     )
