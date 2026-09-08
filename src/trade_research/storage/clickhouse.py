@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
 from trade_research.config import Settings
@@ -492,10 +492,19 @@ class ClickHouseMarketDataRepository(_Repository):
                 "limit": request.limit,
             },
         )
-        return [
-            AggregatedMarketCandle.from_mapping(dict(zip(result.column_names, row, strict=True)))
-            for row in result.result_rows
-        ]
+        candles: list[AggregatedMarketCandle] = []
+        for row in result.result_rows:
+            mapped = dict(zip(result.column_names, row, strict=True))
+            # clickhouse-connect returns DateTime64 values without tzinfo even when
+            # the ClickHouse column is explicitly declared in UTC. Restore that
+            # schema guarantee at the storage boundary so domain constructors can
+            # continue rejecting ambiguous naive datetimes from other sources.
+            for column in ("candle_timestamp", "provider_timestamp"):
+                value = mapped[column]
+                if isinstance(value, datetime) and value.tzinfo is None:
+                    mapped[column] = value.replace(tzinfo=UTC)
+            candles.append(AggregatedMarketCandle.from_mapping(mapped))
+        return candles
 
 
 class ClickHouseExperimentRepository(_Repository):

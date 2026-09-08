@@ -807,7 +807,7 @@ class _AggregateClickHouseClient:
                     "RELIANCE",
                     "RELIANCE.NS",
                     "INR",
-                    datetime(2026, 9, 5, 3, 45, tzinfo=UTC),
+                    datetime(2026, 9, 5, 3, 45),
                     date(2026, 9, 5),
                     "15m",
                     Decimal("100"),
@@ -816,7 +816,7 @@ class _AggregateClickHouseClient:
                     Decimal("104"),
                     1000,
                     "yfinance",
-                    datetime(2026, 9, 5, 12, tzinfo=UTC),
+                    datetime(2026, 9, 5, 12),
                     15,
                     15,
                     1,
@@ -849,6 +849,8 @@ def test_clickhouse_aggregation_is_on_demand_from_validated_one_minute_rows() ->
 
     assert len(rows) == 1
     assert rows[0].interval is CandleInterval.FIFTEEN_MINUTES
+    assert rows[0].candle_timestamp == datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
+    assert rows[0].provider_timestamp == datetime(2026, 9, 5, 12, tzinfo=UTC)
     assert rows[0].complete is True
     assert rows[0].source_run_ids == ("run-1",)
     assert "FROM research.ohlcv_intraday FINAL" in client.query_text
