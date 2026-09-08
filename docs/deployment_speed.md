@@ -67,7 +67,8 @@ docker compose version
 docker buildx version
 ```
 
-The existing deployment sequence is unchanged:
+The deployment sequence keeps application replacement behind database and
+object-storage gates:
 
 ```text
 sync revision
@@ -75,6 +76,8 @@ sync revision
   -> build API once and web once
   -> start/check PostgreSQL
   -> Alembic migration using the new API image
+  -> snapshot, start, and health-check MinIO with automatic image rollback
+  -> reconcile MinIO buckets and identities
   -> recreate changed services
   -> application, CloudBeaver, and optional Dagster health checks
 ```

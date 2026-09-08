@@ -34,6 +34,19 @@ mkdir_from_var() {
   fi
 }
 
+minio_release_key() {
+  local image="$1"
+  if [[ "$image" =~ RELEASE\.([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2})-([0-9]{2})-([0-9]{2})Z ]]; then
+    printf '%s%s%s%s%s%s\n' \
+      "${BASH_REMATCH[1]}" \
+      "${BASH_REMATCH[2]}" \
+      "${BASH_REMATCH[3]}" \
+      "${BASH_REMATCH[4]}" \
+      "${BASH_REMATCH[5]}" \
+      "${BASH_REMATCH[6]}"
+  fi
+}
+
 require_secure_value() {
   local name="$1"
   local value="$2"
@@ -141,6 +154,21 @@ if [[ "${PROD_RESEARCH_STORAGE_ENABLED:-false}" == "true" \
   exit 1
 fi
 
+if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
+  minio_kms_names=(
+    PROD_MINIO_KMS_SERVER
+    PROD_MINIO_KMS_ENCLAVE
+    PROD_MINIO_KMS_API_KEY
+    PROD_MINIO_KMS_SSE_KEY
+  )
+  for kms_name in "${minio_kms_names[@]}"; do
+    require_secure_value "$kms_name" "${!kms_name:-}"
+  done
+elif [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  printf '[trade-deploy] research storage deployment requires PROD_MINIO_KMS_ENABLED=true\n' >&2
+  exit 1
+fi
+
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   research_secret_names=(
     PROD_CLICKHOUSE_ADMIN_PASSWORD
@@ -217,6 +245,8 @@ if [[ "${PROD_OTEL_ENABLED:-true}" == "true" ]]; then
   mkdir_from_var "${alertmanager_data_dir:-${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}}"
 fi
 mkdir_from_var "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}"
+deploy_state_dir="${PROD_DEPLOY_STATE_DIR:-/opt/trade/deploy-state}"
+mkdir_from_var "$deploy_state_dir"
 cloudbeaver_workspace="${PROD_CLOUDBEAVER_WORKSPACE_DIR:-/opt/trade/cloudbeaver}"
 cloudbeaver_connections_dir="$cloudbeaver_workspace/GlobalConfiguration/.dbeaver"
 mkdir -p "$cloudbeaver_connections_dir"
@@ -237,9 +267,211 @@ if [[ "$DEPLOY_REEXECUTED" != true \
 fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.yml")
+if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
+  compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")
+fi
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   compose+=(--profile research)
 fi
+
+diagnostic_services=(
+  api
+  web
+  cloudbeaver
+  filing-worker
+  minio
+  minio-init
+  otel-collector
+  prometheus
+  alertmanager
+)
+if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  diagnostic_services+=(clickhouse)
+fi
+
+dump_service_diagnostics() {
+  set +e
+  log "recent production service state follows"
+  "${compose[@]}" ps -a >&2
+  "${compose[@]}" --profile admin logs --tail=120 "${diagnostic_services[@]}" >&2
+  set -e
+}
+
+deployment_error() {
+  local status=$?
+  trap - ERR
+  log "deployment command failed with exit code $status"
+  dump_service_diagnostics
+  exit "$status"
+}
+
+trap deployment_error ERR
+
+minio_rollback_available=false
+minio_rollback_tag="trade-production-minio:rollback"
+minio_previous_image_ref=""
+minio_previous_image_id=""
+
+preserve_minio_rollback_image() {
+  local container_id
+  local previous_digest
+  local state_temporary
+
+  container_id="$("${compose[@]}" ps -a -q minio 2>/dev/null || true)"
+  if [[ -z "$container_id" ]]; then
+    log "no existing MinIO container found; rollback image is unavailable"
+    return
+  fi
+
+  minio_previous_image_ref="$(
+    docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true
+  )"
+  minio_previous_image_id="$(
+    docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true
+  )"
+  if [[ -z "$minio_previous_image_ref" || -z "$minio_previous_image_id" ]]; then
+    log "unable to identify the existing MinIO image; rollback image is unavailable"
+    return
+  fi
+
+  docker image tag "$minio_previous_image_id" "$minio_rollback_tag"
+  previous_digest="$(
+    docker image inspect \
+      --format '{{join .RepoDigests ","}}' \
+      "$minio_previous_image_id" 2>/dev/null || true
+  )"
+  state_temporary="$(mktemp "$deploy_state_dir/.minio-previous.XXXXXX")"
+  {
+    printf 'image_ref=%s\n' "$minio_previous_image_ref"
+    printf 'image_id=%s\n' "$minio_previous_image_id"
+    printf 'repo_digests=%s\n' "$previous_digest"
+    printf 'revision=%s\n' "$synchronized_revision"
+  } > "$state_temporary"
+  chmod 0600 "$state_temporary"
+  mv "$state_temporary" "$deploy_state_dir/minio-previous-image"
+  minio_rollback_available=true
+  log "preserved existing MinIO image as $minio_rollback_tag"
+}
+
+reject_minio_downgrade() {
+  local candidate_image="${PROD_MINIO_IMAGE:-minio/minio:latest}"
+  local candidate_release
+  local previous_release
+
+  candidate_release="$(minio_release_key "$candidate_image")"
+  previous_release="$(minio_release_key "$minio_previous_image_ref")"
+  if [[ -n "$candidate_release" \
+    && -n "$previous_release" \
+    && "$candidate_release" < "$previous_release" \
+    && "${PROD_ALLOW_MINIO_DOWNGRADE:-false}" != "true" ]]; then
+    printf '[trade-deploy] refusing MinIO downgrade from %s to %s; set PROD_ALLOW_MINIO_DOWNGRADE=true only for a reviewed recovery\n' \
+      "$minio_previous_image_ref" \
+      "$candidate_image" >&2
+    return 1
+  fi
+}
+
+wait_for_minio() {
+  local attempt
+  local container_id
+  local health_status
+  local attempts="${TRADE_MINIO_HEALTH_ATTEMPTS:-30}"
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    container_id="$("${compose[@]}" ps -a -q minio 2>/dev/null || true)"
+    if [[ -n "$container_id" ]]; then
+      health_status="$(
+        docker inspect \
+          --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+          "$container_id" 2>/dev/null || true
+      )"
+      if [[ "$health_status" == "healthy" ]]; then
+        return 0
+      fi
+      if [[ "$health_status" == "exited" || "$health_status" == "dead" ]]; then
+        log "MinIO entered terminal state: $health_status"
+        return 1
+      fi
+    fi
+    sleep 2
+    log "MinIO readiness retry $attempt/$attempts"
+  done
+  return 1
+}
+
+restore_minio_rollback_image() {
+  if [[ "$minio_rollback_available" != "true" ]]; then
+    log "MinIO rollback skipped because no previous image was captured"
+    return 1
+  fi
+
+  log "restoring MinIO image $minio_previous_image_ref"
+  export PROD_MINIO_IMAGE="$minio_rollback_tag"
+  if ! "${compose[@]}" up -d --no-deps --force-recreate minio; then
+    log "MinIO rollback container could not be started"
+    return 1
+  fi
+  if ! wait_for_minio; then
+    log "MinIO rollback image did not become healthy"
+    return 1
+  fi
+  log "MinIO rollback succeeded; the application stack was not replaced"
+  return 0
+}
+
+start_and_validate_minio() {
+  preserve_minio_rollback_image
+  reject_minio_downgrade
+
+  log "pulling the requested MinIO server and client images"
+  "${compose[@]}" pull minio minio-init
+  log "starting MinIO before replacing application services"
+  if ! "${compose[@]}" up -d --no-deps minio || ! wait_for_minio; then
+    log "requested MinIO image failed its readiness check"
+    "${compose[@]}" logs --tail=120 minio >&2 || true
+    restore_minio_rollback_image || true
+    return 1
+  fi
+
+  log "reconciling filing object storage before application replacement"
+  if ! "${compose[@]}" up \
+    --no-deps \
+    --force-recreate \
+    --abort-on-container-exit \
+    --exit-code-from minio-init \
+    minio-init; then
+    log "MinIO initialization failed"
+    "${compose[@]}" logs --tail=120 minio minio-init >&2 || true
+    restore_minio_rollback_image || true
+    return 1
+  fi
+}
+
+record_current_minio_image() {
+  local container_id
+  local current_digest
+  local current_image_id
+  local current_image_ref
+  local state_temporary
+
+  container_id="$("${compose[@]}" ps -a -q minio)"
+  current_image_ref="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
+  current_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+  current_digest="$(
+    docker image inspect \
+      --format '{{join .RepoDigests ","}}' \
+      "$current_image_id" 2>/dev/null || true
+  )"
+  state_temporary="$(mktemp "$deploy_state_dir/.minio-current.XXXXXX")"
+  {
+    printf 'image_ref=%s\n' "$current_image_ref"
+    printf 'image_id=%s\n' "$current_image_id"
+    printf 'repo_digests=%s\n' "$current_digest"
+    printf 'revision=%s\n' "$synchronized_revision"
+  } > "$state_temporary"
+  chmod 0600 "$state_temporary"
+  mv "$state_temporary" "$deploy_state_dir/minio-current-image"
+}
 
 log "installing secret-free CloudBeaver connection policy"
 cloudbeaver_policy_changed=false
@@ -311,10 +543,7 @@ migration_started_seconds=$SECONDS
   alembic -c /app/alembic.ini upgrade head
 log "database migrations completed in $((SECONDS - migration_started_seconds))s"
 
-if [[ "${PROD_PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}" == "true" ]]; then
-  log "verifying durable Phase 3 production-readiness evidence"
-  "${compose[@]}" run --rm --no-deps api trade-research phase3-readiness
-fi
+start_and_validate_minio
 
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   log "starting private Phase 2 storage services"
@@ -325,6 +554,11 @@ if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   "${compose[@]}" run --rm --no-deps clickhouse-migrate
   log "reconciling versioned research object buckets and policies"
   "${compose[@]}" run --rm minio-research-init
+fi
+
+if [[ "${PROD_PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}" == "true" ]]; then
+  log "verifying durable Phase 3 production-readiness evidence"
+  "${compose[@]}" run --rm --no-deps api trade-research phase3-readiness
 fi
 
 log "starting production stack"
@@ -408,6 +642,7 @@ for attempt in {1..30}; do
     && "$dagster_health_ok" == true \
     && "$research_storage_health_ok" == true ]]; then
     log "health check passed"
+    record_current_minio_image
     log "deployment completed in $((SECONDS - deploy_started_seconds))s"
     "${compose[@]}" ps
     exit 0
@@ -416,24 +651,9 @@ for attempt in {1..30}; do
   log "health check retry $attempt/30"
 done
 
-log "health check failed; recent service state follows"
-"${compose[@]}" ps >&2
-log_services=(
-  api
-  web
-  cloudbeaver
-  filing-worker
-  minio
-  minio-init
-  otel-collector
-  prometheus
-  alertmanager
-)
-if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
-  log_services+=(clickhouse)
-fi
+log "health check failed"
 if [[ "$dagster_webserver_was_running" == true ]]; then
-  log_services+=(dagster-webserver)
+  diagnostic_services+=(dagster-webserver)
 fi
-"${compose[@]}" --profile admin logs --tail=120 "${log_services[@]}" >&2
+dump_service_diagnostics
 exit 1

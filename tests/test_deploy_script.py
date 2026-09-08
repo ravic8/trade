@@ -33,6 +33,17 @@ fi
 if [[ "$*" == *"ps --status running -q cloudbeaver"* ]]; then
   printf '%s\n' 'fake-cloudbeaver-container-id'
 fi
+if [[ "$*" == *"ps -a -q minio"* ]]; then
+  printf '%s\n' 'fake-minio-container-id'
+elif [[ "$*" == *"inspect --format {{.Config.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'minio/minio:RELEASE.2025-08-01T00-00-00Z'
+elif [[ "$*" == *"inspect --format {{.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'sha256:fake-minio-image'
+elif [[ "$*" == *"inspect --format {{if .State.Health}}"* ]]; then
+  printf '%s\n' 'healthy'
+elif [[ "$*" == *"image inspect --format"* ]]; then
+  printf '%s\n' 'minio/minio@sha256:fake-minio-digest'
+fi
 exit 0
 """,
     )
@@ -50,6 +61,7 @@ exit 0
             [
                 "PROD_FILING_ENABLED=false",
                 "PROD_OTEL_ENABLED=false",
+                f"PROD_DEPLOY_STATE_DIR={tmp_path / 'deploy-state'}",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
                 f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
                 f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
@@ -111,6 +123,14 @@ exit 0
         docker_call_lines,
         "run --rm --no-deps api alembic -c /app/alembic.ini upgrade head",
     )
+    minio_start_index = _call_index(
+        docker_call_lines,
+        "up -d --no-deps minio",
+    )
+    minio_init_index = _call_index(
+        docker_call_lines,
+        "--exit-code-from minio-init minio-init",
+    )
     application_start_index = _call_index(
         docker_call_lines,
         "up -d --remove-orphans",
@@ -120,6 +140,8 @@ exit 0
         < postgres_start_index
         < postgres_ready_index
         < migration_index
+        < minio_start_index
+        < minio_init_index
         < application_start_index
     )
 
@@ -151,6 +173,7 @@ exit 0
             [
                 "PROD_FILING_ENABLED=false",
                 "PROD_OTEL_ENABLED=false",
+                f"PROD_DEPLOY_STATE_DIR={tmp_path / 'deploy-state'}",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
                 f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
                 f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
@@ -215,6 +238,17 @@ exit 0
         fake_bin / "docker",
         """#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *"ps -a -q minio"* ]]; then
+  printf '%s\n' 'fake-minio-container-id'
+elif [[ "$*" == *"inspect --format {{.Config.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'minio/minio:RELEASE.2025-08-01T00-00-00Z'
+elif [[ "$*" == *"inspect --format {{.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'sha256:fake-minio-image'
+elif [[ "$*" == *"inspect --format {{if .State.Health}}"* ]]; then
+  printf '%s\n' 'healthy'
+elif [[ "$*" == *"image inspect --format"* ]]; then
+  printf '%s\n' 'minio/minio@sha256:fake-minio-digest'
+fi
 exit 0
 """,
     )
@@ -226,6 +260,7 @@ exit 0
             [
                 "PROD_FILING_ENABLED=false",
                 "PROD_OTEL_ENABLED=false",
+                f"PROD_DEPLOY_STATE_DIR={tmp_path / 'deploy-state'}",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
                 f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
                 f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
@@ -278,6 +313,158 @@ def test_deploy_workflow_syncs_main_before_invoking_deploy_script() -> None:
     assert fetch < pull < deploy
 
 
+def test_deploy_rejects_a_minio_release_downgrade_before_application_replacement(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+
+    _write_executable(fake_bin / "git", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(
+        fake_bin / "docker",
+        """#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *"ps -a -q minio"* ]]; then
+  printf '%s\n' 'fake-minio-container-id'
+elif [[ "$*" == *"inspect --format {{.Config.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'minio/minio:RELEASE.2025-09-01T00-00-00Z'
+elif [[ "$*" == *"inspect --format {{.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'sha256:fake-minio-image'
+fi
+exit 0
+""",
+    )
+    _write_executable(fake_bin / "curl", "#!/usr/bin/env bash\nexit 0\n")
+
+    env_file = tmp_path / "production.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROD_FILING_ENABLED=false",
+                "PROD_OTEL_ENABLED=false",
+                "PROD_MINIO_IMAGE=minio/minio:RELEASE.2025-08-01T00-00-00Z",
+                f"PROD_DEPLOY_STATE_DIR={tmp_path / 'deploy-state'}",
+                f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
+                f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
+                f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
+                f"PROD_REDIS_DATA_DIR={tmp_path / 'redis'}",
+                f"PROD_QDRANT_DATA_DIR={tmp_path / 'qdrant'}",
+                f"PROD_DAGSTER_HOME_DIR={tmp_path / 'dagster-home'}",
+                f"PROD_CLOUDBEAVER_WORKSPACE_DIR={tmp_path / 'cloudbeaver'}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TRADE_APP_DIR": str(repository_root),
+            "TRADE_ENV_FILE": str(env_file),
+            "FAKE_DOCKER_LOG": str(docker_log),
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(repository_root / "deploy/deploy.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert "refusing MinIO downgrade" in completed.stderr
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert "image tag sha256:fake-minio-image trade-production-minio:rollback" in docker_calls
+    assert "pull minio minio-init" not in docker_calls
+    assert "up -d --remove-orphans" not in docker_calls
+
+
+def test_deploy_restores_previous_minio_when_candidate_is_unhealthy(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    rollback_state = tmp_path / "rollback-started"
+
+    _write_executable(fake_bin / "git", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(
+        fake_bin / "docker",
+        """#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *"up -d --no-deps --force-recreate minio"* ]]; then
+  touch "$FAKE_ROLLBACK_STATE"
+elif [[ "$*" == *"ps -a -q minio"* ]]; then
+  printf '%s\n' 'fake-minio-container-id'
+elif [[ "$*" == *"inspect --format {{.Config.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'minio/minio:RELEASE.2025-08-01T00-00-00Z'
+elif [[ "$*" == *"inspect --format {{.Image}} fake-minio-container-id"* ]]; then
+  printf '%s\n' 'sha256:fake-minio-image'
+elif [[ "$*" == *"inspect --format {{if .State.Health}}"* ]]; then
+  if [[ -f "$FAKE_ROLLBACK_STATE" ]]; then
+    printf '%s\n' 'healthy'
+  else
+    printf '%s\n' 'unhealthy'
+  fi
+fi
+exit 0
+""",
+    )
+    _write_executable(fake_bin / "curl", "#!/usr/bin/env bash\nexit 0\n")
+
+    env_file = tmp_path / "production.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROD_FILING_ENABLED=false",
+                "PROD_OTEL_ENABLED=false",
+                "PROD_MINIO_IMAGE=minio/minio:RELEASE.2025-09-01T00-00-00Z",
+                f"PROD_DEPLOY_STATE_DIR={tmp_path / 'deploy-state'}",
+                f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
+                f"PROD_TRADE_ARTIFACTS_DIR={tmp_path / 'artifacts'}",
+                f"PROD_POSTGRES_DATA_DIR={tmp_path / 'postgres'}",
+                f"PROD_REDIS_DATA_DIR={tmp_path / 'redis'}",
+                f"PROD_QDRANT_DATA_DIR={tmp_path / 'qdrant'}",
+                f"PROD_DAGSTER_HOME_DIR={tmp_path / 'dagster-home'}",
+                f"PROD_CLOUDBEAVER_WORKSPACE_DIR={tmp_path / 'cloudbeaver'}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TRADE_APP_DIR": str(repository_root),
+            "TRADE_ENV_FILE": str(env_file),
+            "TRADE_MINIO_HEALTH_ATTEMPTS": "1",
+            "FAKE_DOCKER_LOG": str(docker_log),
+            "FAKE_ROLLBACK_STATE": str(rollback_state),
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(repository_root / "deploy/deploy.sh")],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert "MinIO rollback succeeded" in completed.stdout
+    docker_calls = docker_log.read_text(encoding="utf-8")
+    assert "up -d --no-deps --force-recreate minio" in docker_calls
+    assert "up -d --remove-orphans" not in docker_calls
+
+
 def test_api_image_contains_alembic_runtime_files() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     dockerfile = (repository_root / "Dockerfile.api").read_text(encoding="utf-8")
@@ -318,6 +505,22 @@ def test_prod_compose_reuses_one_api_image_for_python_services() -> None:
     compose = (repository_root / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
     assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 5
+
+
+def test_production_minio_kms_environment_is_opt_in() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    compose = (repository_root / "docker-compose.prod.yml").read_text(
+        encoding="utf-8"
+    )
+    kms_overlay = (repository_root / "docker-compose.prod.kms.yml").read_text(
+        encoding="utf-8"
+    )
+    deploy = (repository_root / "deploy/deploy.sh").read_text(encoding="utf-8")
+
+    assert "MINIO_KMS_SERVER:" not in compose
+    assert "MINIO_KMS_SERVER:" in kms_overlay
+    assert "PROD_MINIO_KMS_ENABLED" in deploy
+    assert 'compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")' in deploy
 
 
 def _call_index(calls: list[str], fragment: str) -> int:
