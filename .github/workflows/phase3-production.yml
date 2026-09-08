@@ -1,0 +1,62 @@
+name: Phase 3 Production Promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Safe Phase 3 production operation
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - bootstrap-canary
+          - readiness
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  operate:
+    name: Phase 3 ${{ inputs.operation }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Configure SSH key
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/trade_deploy
+          chmod 600 ~/.ssh/trade_deploy
+
+      - name: Run guarded Phase 3 operation
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          deploy_path="${DEPLOY_PATH:-/opt/trade/app}"
+          case "$OPERATION" in
+            status|bootstrap-canary|readiness) ;;
+            *) printf 'Unsupported operation: %s\n' "$OPERATION" >&2; exit 2 ;;
+          esac
+          ssh \
+            -i ~/.ssh/trade_deploy \
+            -o StrictHostKeyChecking=accept-new \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=6 \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "cd '${deploy_path}' && git fetch origin main && git checkout main && git pull --ff-only origin main && ./deploy/phase3-production.sh '${OPERATION}'"
