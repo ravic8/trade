@@ -506,6 +506,22 @@ def test_prod_compose_reuses_one_api_image_for_python_services() -> None:
     assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 5
 
 
+def test_production_minio_kms_environment_is_opt_in() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    compose = (repository_root / "docker-compose.prod.yml").read_text(
+        encoding="utf-8"
+    )
+    kms_overlay = (repository_root / "docker-compose.prod.kms.yml").read_text(
+        encoding="utf-8"
+    )
+    deploy = (repository_root / "deploy/deploy.sh").read_text(encoding="utf-8")
+
+    assert "MINIO_KMS_SERVER:" not in compose
+    assert "MINIO_KMS_SERVER:" in kms_overlay
+    assert "PROD_MINIO_KMS_ENABLED" in deploy
+    assert 'compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")' in deploy
+
+
 def _call_index(calls: list[str], fragment: str) -> int:
     return next(index for index, call in enumerate(calls) if fragment in call)
 
