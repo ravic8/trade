@@ -358,12 +358,21 @@ docker compose -f docker-compose.prod.yml up -d postgres
 docker compose -f docker-compose.prod.yml exec -T postgres pg_isready
 docker compose -f docker-compose.prod.yml run --rm --no-deps api \
   alembic -c /app/alembic.ini upgrade head
+docker compose -f docker-compose.prod.yml pull minio minio-init
+docker compose -f docker-compose.prod.yml up -d --no-deps minio
+# Wait for MinIO health, then reconcile buckets and identities.
 docker compose -f docker-compose.prod.yml up -d
 curl -f http://localhost:8080/api/health
 ```
 
-If the health check fails, the deployment should fail loudly. A later iteration
-can add image tagging and automatic rollback.
+Before changing MinIO, the script tags the running image as
+`trade-production-minio:rollback` and records its image reference, ID, and
+repository digest under `PROD_DEPLOY_STATE_DIR`. Explicit moves to an older
+`RELEASE` tag are refused unless a reviewed recovery sets
+`PROD_ALLOW_MINIO_DOWNGRADE=true`. MinIO and its initialization job must pass
+before application containers are replaced. A failed MinIO candidate is
+automatically replaced with the captured image, while the deployment still
+fails so the candidate cannot be mistaken for a successful release.
 
 The deploy workflow is implemented in `.github/workflows/deploy.yml`. It runs
 after the `CI` workflow succeeds on `main`, and it can also be started manually
@@ -388,8 +397,10 @@ re-executes itself once from the synchronized revision before making deployment
 changes. It then validates compose config and builds images, starts PostgreSQL,
 waits for database readiness, and applies Alembic migrations from a one-off
 container using the newly built API image. Application containers are replaced
-only after migration succeeds. A migration failure leaves the prior application
-release running and fails the deployment. Finally, it checks
+only after migration succeeds and MinIO passes its storage-first readiness and
+initialization gates. Migration or storage failure leaves the prior application
+release running and fails the deployment. Command failures and final health
+failures include recent service state and logs in the workflow output. Finally, it checks
 `http://localhost:${PROD_WEB_PORT:-8080}/api/health`, the durable filing
 runtime and its required services, and the CloudBeaver hostname route through
 the same Caddy entrypoint.
