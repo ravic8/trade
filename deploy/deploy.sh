@@ -154,6 +154,21 @@ if [[ "${PROD_RESEARCH_STORAGE_ENABLED:-false}" == "true" \
   exit 1
 fi
 
+if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
+  minio_kms_names=(
+    PROD_MINIO_KMS_SERVER
+    PROD_MINIO_KMS_ENCLAVE
+    PROD_MINIO_KMS_API_KEY
+    PROD_MINIO_KMS_SSE_KEY
+  )
+  for kms_name in "${minio_kms_names[@]}"; do
+    require_secure_value "$kms_name" "${!kms_name:-}"
+  done
+elif [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  printf '[trade-deploy] research storage deployment requires PROD_MINIO_KMS_ENABLED=true\n' >&2
+  exit 1
+fi
+
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   research_secret_names=(
     PROD_CLICKHOUSE_ADMIN_PASSWORD
@@ -252,6 +267,9 @@ if [[ "$DEPLOY_REEXECUTED" != true \
 fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.yml")
+if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
+  compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")
+fi
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   compose+=(--profile research)
 fi
