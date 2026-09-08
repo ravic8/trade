@@ -396,6 +396,43 @@ class DataAvailabilityResponse(BaseModel):
     summary: DataAvailabilitySummary
 
 
+class MarketDataAggregateCandle(BaseModel):
+    instrument_id: str
+    exchange: Literal["NSE"] = "NSE"
+    symbol: str
+    provider_symbol: str
+    currency: str
+    candle_timestamp: datetime
+    session_date: date
+    interval: Literal["5m", "15m", "30m", "1h"]
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int = Field(ge=0)
+    provider: str
+    provider_timestamp: datetime
+    source_rows: int = Field(ge=0)
+    expected_source_rows: int = Field(ge=1)
+    complete: bool
+    source_digest: str = Field(min_length=64, max_length=64)
+    source_run_ids: list[str] = Field(default_factory=list)
+    raw_artifact_ids: list[str] = Field(default_factory=list)
+
+
+class MarketDataAggregateResponse(BaseModel):
+    workspace_id: str
+    instrument_id: str
+    provider: str
+    exchange: Literal["NSE"] = "NSE"
+    source_interval: Literal["1m"] = "1m"
+    interval: Literal["5m", "15m", "30m", "1h"]
+    window_start: datetime
+    window_end: datetime
+    complete_only: bool
+    rows: list[MarketDataAggregateCandle] = Field(default_factory=list)
+
+
 class DataBulkFetchPreviewRow(DataAvailabilityRow):
     avg_daily_turnover: float | None = Field(default=None, ge=0.0)
     tasks: list[DataCoveragePreviewTask] = Field(default_factory=list)
@@ -754,6 +791,207 @@ class BigQuerySyncOverviewResponse(BaseModel):
     location: str
     runs: list[BigQuerySyncRunRow] = Field(default_factory=list)
     partitions: list[BigQuerySyncPartitionRow] = Field(default_factory=list)
+
+
+class MarketDataQualityHealthRow(BaseModel):
+    interval: str
+    source_run_id: str
+    request_count: int = Field(ge=0)
+    total_outcomes: int = Field(ge=0)
+    expected_outcomes: int = Field(ge=0)
+    affected_instruments: int = Field(ge=0)
+    latest_session_date: date | None = None
+    latest_candle_timestamp: datetime | None = None
+    observed_at: datetime
+    completeness_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+    unexplained_gap_count: int = Field(ge=0)
+    quarantined_count: int = Field(ge=0)
+    raw_artifact_count: int = Field(ge=0)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    health_status: Literal["healthy", "degraded", "failed", "unknown"]
+
+
+class MarketDataQualityIssueRow(BaseModel):
+    interval: str
+    source_run_id: str
+    status: str
+    reason_code: str
+    severity: str
+    retryable: bool
+    occurrences: int = Field(ge=0)
+    affected_instruments: int = Field(ge=0)
+    first_session_date: date
+    latest_session_date: date
+    observed_at: datetime
+
+
+class MarketDataRawLineageRow(BaseModel):
+    artifact_manifest_id: str
+    artifact_type: str
+    sha256: str
+    size_bytes: int = Field(ge=0)
+    media_type: str
+    object_versioned: bool
+    created_at: datetime
+
+
+class MarketDataReplicationHealthRow(BaseModel):
+    interval: str
+    source_run_id: str
+    dataset_key: str
+    source_store: str
+    destination_store: str
+    status: str
+    source_row_count: int = Field(ge=0)
+    destination_row_count: int | None = Field(default=None, ge=0)
+    counts_match: bool | None = None
+    digests_match: bool | None = None
+    source_watermark: datetime | None = None
+    destination_watermark: datetime | None = None
+    watermark_lag_seconds: float | None = Field(default=None, ge=0)
+    replication_latency_ms: float | None = Field(default=None, ge=0)
+    error_message: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
+class MarketDataAvailabilityHealthRow(BaseModel):
+    interval: str
+    source_run_id: str
+    requested_start: datetime
+    requested_end: datetime
+    observed_at: datetime
+    instruments_total: int = Field(ge=0)
+    instruments_observed: int = Field(ge=0)
+    instruments_empty: int = Field(ge=0)
+    instruments_failed: int = Field(ge=0)
+    observed_session_count: int = Field(ge=0)
+    observed_row_count: int = Field(ge=0)
+    raw_artifact_count: int = Field(ge=0)
+    observed_first_timestamp: datetime | None = None
+    observed_last_timestamp: datetime | None = None
+    status_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class MarketDataHealthResponse(BaseModel):
+    enabled: bool
+    clickhouse_enabled: bool
+    workspace_id: str
+    provider: str
+    exchange: str
+    health_status: Literal["healthy", "degraded", "failed", "unknown"]
+    checked_at: datetime
+    quality: list[MarketDataQualityHealthRow] = Field(default_factory=list)
+    issues: list[MarketDataQualityIssueRow] = Field(default_factory=list)
+    raw_lineage: list[MarketDataRawLineageRow] = Field(default_factory=list)
+    replication: list[MarketDataReplicationHealthRow] = Field(default_factory=list)
+    availability: list[MarketDataAvailabilityHealthRow] = Field(default_factory=list)
+
+
+class NseProviderEvidenceRow(BaseModel):
+    evidence_id: str
+    window_start: date
+    window_end: date
+    status: Literal["pass", "fail"]
+    comparison_state: str
+    ready: bool
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    blocking_issues: list[str] = Field(default_factory=list)
+    evidence_sha256: str
+    observed_at: datetime
+
+
+class NseCutoverEligibilityResponse(BaseModel):
+    eligible: bool
+    required_passing_windows: int = Field(ge=2)
+    passing_windows: int = Field(ge=0)
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_bundle_sha256: str
+    blocking_issues: list[str] = Field(default_factory=list)
+
+
+class NseCutoverDecisionResponse(BaseModel):
+    decision_id: str
+    action: Literal["approve_yfinance_primary", "rollback_to_upstox"]
+    from_provider: str
+    to_provider: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_bundle_sha256: str
+    actor_email: str
+    reason: str
+    decision_sha256: str
+    created_at: datetime
+
+
+class NseProviderCutoverStatusResponse(BaseModel):
+    configured_primary: str
+    effective_primary: str
+    yfinance_approved: bool
+    eligibility: NseCutoverEligibilityResponse
+    active_decision: NseCutoverDecisionResponse | None = None
+    evidence: list[NseProviderEvidenceRow] = Field(default_factory=list)
+
+
+class NseCutoverApprovalRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2_000)
+    expected_evidence_bundle_sha256: str = Field(min_length=64, max_length=64)
+
+
+class NseCutoverRollbackRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2_000)
+    expected_current_decision_sha256: str = Field(min_length=64, max_length=64)
+
+
+class Phase3ReadinessEvidenceRow(BaseModel):
+    evidence_id: str = Field(min_length=64, max_length=64)
+    evidence_type: Literal["bounded_canary", "rollback_restore_drill"]
+    status: Literal["pass", "fail"]
+    source_run_ids: dict[str, str] = Field(default_factory=dict)
+    session_dates: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    blocking_issues: list[str] = Field(default_factory=list)
+    evidence_refs: dict[str, Any] = Field(default_factory=dict)
+    actor_email: str | None = None
+    reason: str | None = None
+    evidence_sha256: str = Field(min_length=64, max_length=64)
+    observed_at: datetime
+
+
+class Phase3ReadinessGateRow(BaseModel):
+    name: str
+    passed: bool
+    reason: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class Phase3ReadinessResponse(BaseModel):
+    ready_for_production: bool
+    activation_enabled: bool
+    checked_at: datetime
+    gates: list[Phase3ReadinessGateRow] = Field(default_factory=list)
+    blocking_issues: list[str] = Field(default_factory=list)
+    evidence: list[Phase3ReadinessEvidenceRow] = Field(default_factory=list)
+
+
+class Phase3CanaryAssessmentRequest(BaseModel):
+    daily_run_id: str = Field(min_length=1, max_length=255)
+    minute_run_id: str = Field(min_length=1, max_length=255)
+    minute_rerun_id: str = Field(min_length=1, max_length=255)
+
+
+class Phase3RollbackRestoreChecks(BaseModel):
+    rollback_effective_provider_upstox: bool
+    upstox_pipeline_healthy: bool
+    restore_required_explicit_approval: bool
+    post_restore_yfinance_pipeline_healthy: bool
+
+
+class Phase3RollbackRestoreDrillRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2_000)
+    rollback_decision_sha256: str = Field(min_length=64, max_length=64)
+    restored_decision_sha256: str = Field(min_length=64, max_length=64)
+    checks: Phase3RollbackRestoreChecks
 
 
 class OperationsAdaptiveRateStateRow(BaseModel):

@@ -99,7 +99,7 @@ Core components:
   research mutation is being moved behind UI workflow requests and Dagster.
 - **TimescaleDB/PostgreSQL**: canonical structured market-data store.
 - **Parquet/CSV**: local analytical outputs and reproducible batch artifacts.
-- **Dagster**: 17 stopped-by-default schedule definitions, asset jobs, a
+- **Dagster**: 20 stopped-by-default schedule definitions, asset jobs, a
   production daemon, and an optional private webserver. Actual production
   schedule/tick state must be verified from Dagster, not UI intent badges.
 - **FastAPI + React**: application shell for dashboard, Opportunities, Lens chat,
@@ -157,6 +157,11 @@ Step 2 feature-layer design docs:
   workflows.
 - [Research Platform Milestone Plan](docs/research_platform_milestone_execution_plan.md):
   implementation phases, gates, and ClickHouse/object-storage target state.
+- [Phase 2 Storage Foundation](docs/phase2_storage_foundation.md): ClickHouse,
+  object storage, canary, capacity, backup, and restore contracts.
+- [Phase 3 NSE Data Platform](docs/phase3_nse_data_platform.md): provider-neutral
+  candles, raw snapshots, validation, NSE 1m ingestion, and validated
+  ClickHouse replication.
 
 ## Folder Structure
 

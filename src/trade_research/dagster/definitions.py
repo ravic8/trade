@@ -35,6 +35,10 @@ from trade_research.dagster.daily_assets import (
     yfinance_us_completed_session_work_plan,
     yfinance_us_daily_ohlcv,
 )
+from trade_research.dagster.market_data_assets import (
+    nse_daily_clickhouse_partition_reconciliation,
+    yfinance_nse_minute_ohlcv,
+)
 from trade_research.dagster.workflow_requests import (
     data_pipeline_request_job,
     data_pipeline_request_sensor,
@@ -83,6 +87,11 @@ us_universe_refresh_job = define_asset_job(
 yfinance_daily_work_planner_job = define_asset_job(
     name="yfinance_daily_work_planner_job",
     selection=[yfinance_daily_work_plan],
+)
+
+nse_daily_clickhouse_partition_reconciliation_job = define_asset_job(
+    name="nse_daily_clickhouse_partition_reconciliation_job",
+    selection=[nse_daily_clickhouse_partition_reconciliation],
 )
 
 yfinance_nse_completed_session_work_planner_job = define_asset_job(
@@ -172,6 +181,11 @@ yfinance_fx_intraday_job = define_asset_job(
     ],
 )
 
+yfinance_nse_minute_job = define_asset_job(
+    name="yfinance_nse_minute_job",
+    selection=[yfinance_nse_minute_ohlcv],
+)
+
 daily_research_schedule = ScheduleDefinition(
     name="daily_research_schedule",
     job=daily_research_pipeline_job,
@@ -200,6 +214,14 @@ yfinance_fx_intraday_schedule = ScheduleDefinition(
     name="yfinance_fx_intraday_schedule",
     job=yfinance_fx_intraday_job,
     cron_schedule="20 * * * *",
+    execution_timezone="UTC",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+yfinance_nse_minute_schedule = ScheduleDefinition(
+    name="yfinance_nse_minute_schedule",
+    job=yfinance_nse_minute_job,
+    cron_schedule="30 12 * * 1-5",
     execution_timezone="UTC",
     default_status=DefaultScheduleStatus.STOPPED,
 )
@@ -359,6 +381,8 @@ defs = Definitions(
         fx_intraday_gap_validation,
         yfinance_fx_crypto_intraday_ohlcv,
         yfinance_fx_intraday_gap_validation,
+        yfinance_nse_minute_ohlcv,
+        nse_daily_clickhouse_partition_reconciliation,
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
@@ -374,6 +398,8 @@ defs = Definitions(
         north_america_daily_yfinance_job,
         fx_intraday_dukascopy_job,
         yfinance_fx_intraday_job,
+        yfinance_nse_minute_job,
+        nse_daily_clickhouse_partition_reconciliation_job,
         nse_universe_refresh_job,
         tsx_universe_refresh_job,
         us_universe_refresh_job,
@@ -396,6 +422,7 @@ defs = Definitions(
         north_america_daily_yfinance_schedule,
         fx_intraday_dukascopy_schedule,
         yfinance_fx_intraday_schedule,
+        yfinance_nse_minute_schedule,
         nse_universe_refresh_schedule,
         tsx_universe_refresh_schedule,
         us_universe_refresh_schedule,

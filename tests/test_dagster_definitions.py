@@ -30,6 +30,27 @@ def test_yfinance_fx_intraday_job_and_schedule_are_registered() -> None:
     )
 
 
+def test_phase3_nse_minute_job_and_schedule_are_registered_but_stopped() -> None:
+    assert definitions.yfinance_nse_minute_job.name == "yfinance_nse_minute_job"
+    assert definitions.yfinance_nse_minute_schedule.name == "yfinance_nse_minute_schedule"
+    assert definitions.yfinance_nse_minute_schedule.cron_schedule == "30 12 * * 1-5"
+    assert (
+        definitions.yfinance_nse_minute_schedule.default_status
+        == dagster.DefaultScheduleStatus.STOPPED
+    )
+
+
+def test_phase3_daily_partition_reconciliation_is_manual_only() -> None:
+    assert (
+        definitions.nse_daily_clickhouse_partition_reconciliation_job.name
+        == "nse_daily_clickhouse_partition_reconciliation_job"
+    )
+    assert all(
+        schedule.name != "nse_daily_clickhouse_partition_reconciliation_schedule"
+        for schedule in definitions.defs.schedules
+    )
+
+
 def test_phase2_universe_refresh_jobs_and_schedules_are_stopped_by_default() -> None:
     for exchange in ("nse", "tsx", "us"):
         job = getattr(definitions, f"{exchange}_universe_refresh_job")

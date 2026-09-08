@@ -1059,7 +1059,8 @@ Exit gate:
 ### Phase 3 — Market-data truth and yfinance cutover
 
 **Indicative effort:** 1–2 weeks plus observation window
-**Goal:** Make scheduled yfinance ingestion measurable and authoritative.
+**Goal:** Make scheduled NSE yfinance daily/minute ingestion measurable and
+authoritative for V1.
 
 Deliverables:
 
@@ -1073,8 +1074,9 @@ Deliverables:
 
 Exit gate:
 
-- NSE, TSX, and US have fresh completed-session data, explainable coverage, no
-  unexplained gaps above threshold, and successful rollback rehearsal.
+- NSE daily and available-retention minute data have fresh completed-session
+  coverage, no unexplained gaps above threshold, and successful rollback
+  rehearsal.
 
 ### Phase 4 — Feature and target platform
 

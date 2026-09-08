@@ -49,6 +49,10 @@ import type {
   MLRunId,
   MLSummaryResponse,
   MarketStatus,
+  MarketDataHealthResponse,
+  NseCutoverApprovalRequest,
+  NseCutoverRollbackRequest,
+  NseProviderCutoverStatus,
   OperationsAdaptiveRateStateRow,
   OperationsExchange,
   OperationsLifecycleEventsParams,
@@ -56,6 +60,7 @@ import type {
   OperationsOverviewResponse,
   OperationsWorkItemsParams,
   OperationsWorkItemsResponse,
+  Phase3ReadinessResponse,
   ProviderCapabilityResponse,
   ProviderCredentialStatusResponse,
   ProviderCredentialTestRequest,
@@ -532,6 +537,46 @@ export function getOperationsRateLimits(): Promise<OperationsAdaptiveRateStateRo
 
 export function getBigQuerySyncOverview(): Promise<BigQuerySyncOverviewResponse> {
   return strictFetchJson("/api/data/operations/bigquery-sync");
+}
+
+export function getMarketDataHealth(): Promise<MarketDataHealthResponse> {
+  return strictFetchJson(
+    "/api/data/operations/market-data-health?provider=yfinance&exchange=NSE",
+  );
+}
+
+export function getNseProviderCutoverStatus(): Promise<NseProviderCutoverStatus> {
+  return strictFetchJson("/api/data/operations/nse-provider-cutover");
+}
+
+export function getPhase3Readiness(): Promise<Phase3ReadinessResponse> {
+  return strictFetchJson("/api/data/operations/phase3-readiness");
+}
+
+export function approveNseProviderCutover(
+  payload: NseCutoverApprovalRequest,
+): Promise<NseProviderCutoverStatus> {
+  return strictFetchJson("/api/admin/nse-provider-cutover/approve", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function rollbackNseProviderCutover(
+  payload: NseCutoverRollbackRequest,
+): Promise<NseProviderCutoverStatus> {
+  return strictFetchJson("/api/admin/nse-provider-cutover/rollback", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function postChatQuery(payload: ChatQueryRequest): Promise<ChatQueryResponse> {

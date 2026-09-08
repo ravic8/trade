@@ -87,7 +87,7 @@ def _buckets() -> dict[ArtifactNamespace, str]:
 def test_clickhouse_migrations_are_complete_and_idempotent() -> None:
     directory = Path(__file__).parents[1] / "clickhouse" / "migrations"
     migrations = discover_migrations(directory, database="research")
-    assert [migration.version for migration in migrations] == [1]
+    assert [migration.version for migration in migrations] == [1, 2]
     required_tables = {
         "ohlcv_daily",
         "feature_observations_daily",
@@ -107,7 +107,7 @@ def test_clickhouse_migrations_are_complete_and_idempotent() -> None:
 
     client = FakeClickHouse()
     migrator = ClickHouseMigrator(client, database="research")
-    assert migrator.apply(migrations) == [1]
+    assert migrator.apply(migrations) == [1, 2]
     command_count = len(client.commands)
     assert migrator.apply(migrations) == []
     assert len(client.commands) == command_count + 2  # idempotent bootstrap only
@@ -126,13 +126,13 @@ def test_clickhouse_migration_accepts_fixed_string_bytes_on_retry() -> None:
     directory = Path(__file__).parents[1] / "clickhouse" / "migrations"
     migrations = discover_migrations(directory, database="research")
     client = FakeClickHouse()
-    migration = migrations[0]
     client.applied = [
         (
             migration.version,
             migration.name.encode(),
             migration.sha256.encode(),
         )
+        for migration in migrations
     ]
 
     assert ClickHouseMigrator(client, database="research").apply(migrations) == []

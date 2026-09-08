@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
+  approveNseProviderCutover,
   getBigQuerySyncOverview,
   getChatAudit,
   getChatHealth,
@@ -29,10 +30,13 @@ import {
   getMLRobustness,
   getMLSummary,
   getMarketStatus,
+  getMarketDataHealth,
+  getNseProviderCutoverStatus,
   getOperationsLifecycleEvents,
   getOperationsOverview,
   getOperationsRateLimits,
   getOperationsWorkItems,
+  getPhase3Readiness,
   getPipelineScheduleStatus,
   getProviderRequestLogs,
   getProviderRequestSummary,
@@ -43,6 +47,7 @@ import {
   getUpstoxCredentialStatus,
   getUpstoxProviderCapabilities,
   previewDataCoverage,
+  rollbackNseProviderCutover,
   postChatQuery,
   saveUpstoxCredential,
   searchDataInstruments,
@@ -60,6 +65,8 @@ import type {
   FilingInvestigationRequest,
   MLConcreteRunId,
   MLRunId,
+  NseCutoverApprovalRequest,
+  NseCutoverRollbackRequest,
   OperationsExchange,
   OperationsLifecycleEventsParams,
   OperationsWorkItemsParams,
@@ -305,6 +312,47 @@ export function useBigQuerySyncOverview(enabled = true) {
     queryFn: getBigQuerySyncOverview,
     enabled,
     refetchInterval: 60_000,
+  });
+}
+
+export function useMarketDataHealth(enabled = true) {
+  return useQuery({
+    queryKey: ["phase3-market-data-health", "NSE", "yfinance"],
+    queryFn: getMarketDataHealth,
+    enabled,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useNseProviderCutoverStatus(enabled = true) {
+  return useQuery({
+    queryKey: ["nse-provider-cutover"],
+    queryFn: getNseProviderCutoverStatus,
+    enabled,
+    refetchInterval: 60_000,
+  });
+}
+
+export function usePhase3Readiness(enabled = true) {
+  return useQuery({
+    queryKey: ["phase3-readiness"],
+    queryFn: getPhase3Readiness,
+    enabled,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useApproveNseProviderCutover() {
+  return useMutation({
+    mutationFn: (payload: NseCutoverApprovalRequest) =>
+      approveNseProviderCutover(payload),
+  });
+}
+
+export function useRollbackNseProviderCutover() {
+  return useMutation({
+    mutationFn: (payload: NseCutoverRollbackRequest) =>
+      rollbackNseProviderCutover(payload),
   });
 }
 

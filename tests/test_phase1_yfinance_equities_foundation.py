@@ -77,12 +77,38 @@ def test_alembic_upgrade_bootstraps_an_empty_database(
         "pipeline_work_items",
         "opportunity_targets_daily",
         "workflow_requests",
+        "market_data_quality_outcomes",
+        "market_data_replication_checkpoints",
+        "phase3_readiness_evidence",
     }.issubset(set(upgraded.get_table_names()))
+    assert {
+        "idx_market_data_quality_scope_observed",
+        "idx_market_data_quality_scope_run_status",
+    }.issubset(
+        {
+            index["name"]
+            for index in upgraded.get_indexes("market_data_quality_outcomes")
+        }
+    )
+    assert "idx_market_data_replication_scope_updated" in {
+        index["name"]
+        for index in upgraded.get_indexes("market_data_replication_checkpoints")
+    }
+    assert "idx_phase3_readiness_scope_observed" in {
+        index["name"]
+        for index in upgraded.get_indexes("phase3_readiness_evidence")
+    }
+    assert "idx_ohlcv_daily_source_exchange_date" in {
+        index["name"] for index in upgraded.get_indexes("ohlcv_daily")
+    }
+    assert "idx_symbols_exchange_provider_instrument" in {
+        index["name"] for index in upgraded.get_indexes("symbols")
+    }
     with engine.connect() as connection:
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260905_0014"
+    assert revision == "20260906_0018"
 
 
 def test_phase1_feature_flags_are_safe_by_default() -> None:
@@ -215,4 +241,4 @@ def test_upgrade_reconciles_create_all_tables_with_legacy_symbols(
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
-    assert revision == "20260905_0014"
+    assert revision == "20260906_0018"

@@ -734,6 +734,189 @@ export type BigQuerySyncOverviewResponse = {
   partitions: BigQuerySyncPartitionRow[];
 };
 
+export type MarketDataHealthStatus = "healthy" | "degraded" | "failed" | "unknown";
+
+export type MarketDataQualityHealthRow = {
+  interval: string;
+  source_run_id: string;
+  request_count: number;
+  total_outcomes: number;
+  expected_outcomes: number;
+  affected_instruments: number;
+  latest_session_date: string | null;
+  latest_candle_timestamp: string | null;
+  observed_at: string;
+  completeness_ratio: number | null;
+  unexplained_gap_count: number;
+  quarantined_count: number;
+  raw_artifact_count: number;
+  status_counts: Record<string, number>;
+  health_status: MarketDataHealthStatus;
+};
+
+export type MarketDataQualityIssueRow = {
+  interval: string;
+  source_run_id: string;
+  status: string;
+  reason_code: string;
+  severity: string;
+  retryable: boolean;
+  occurrences: number;
+  affected_instruments: number;
+  first_session_date: string;
+  latest_session_date: string;
+  observed_at: string;
+};
+
+export type MarketDataRawLineageRow = {
+  artifact_manifest_id: string;
+  artifact_type: string;
+  sha256: string;
+  size_bytes: number;
+  media_type: string;
+  object_versioned: boolean;
+  created_at: string;
+};
+
+export type MarketDataReplicationHealthRow = {
+  interval: string;
+  source_run_id: string;
+  dataset_key: string;
+  source_store: string;
+  destination_store: string;
+  status: string;
+  source_row_count: number;
+  destination_row_count: number | null;
+  counts_match: boolean | null;
+  digests_match: boolean | null;
+  source_watermark: string | null;
+  destination_watermark: string | null;
+  watermark_lag_seconds: number | null;
+  replication_latency_ms: number | null;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type MarketDataAvailabilityHealthRow = {
+  interval: string;
+  source_run_id: string;
+  requested_start: string;
+  requested_end: string;
+  observed_at: string;
+  instruments_total: number;
+  instruments_observed: number;
+  instruments_empty: number;
+  instruments_failed: number;
+  observed_session_count: number;
+  observed_row_count: number;
+  raw_artifact_count: number;
+  observed_first_timestamp: string | null;
+  observed_last_timestamp: string | null;
+  status_counts: Record<string, number>;
+};
+
+export type MarketDataHealthResponse = {
+  enabled: boolean;
+  clickhouse_enabled: boolean;
+  workspace_id: string;
+  provider: string;
+  exchange: string;
+  health_status: MarketDataHealthStatus;
+  checked_at: string;
+  quality: MarketDataQualityHealthRow[];
+  issues: MarketDataQualityIssueRow[];
+  raw_lineage: MarketDataRawLineageRow[];
+  replication: MarketDataReplicationHealthRow[];
+  availability: MarketDataAvailabilityHealthRow[];
+};
+
+export type NseProviderEvidenceRow = {
+  evidence_id: string;
+  window_start: string;
+  window_end: string;
+  status: "pass" | "fail";
+  comparison_state: string;
+  ready: boolean;
+  metrics: Record<string, unknown>;
+  blocking_issues: string[];
+  evidence_sha256: string;
+  observed_at: string;
+};
+
+export type NseCutoverEligibility = {
+  eligible: boolean;
+  required_passing_windows: number;
+  passing_windows: number;
+  evidence_ids: string[];
+  evidence_bundle_sha256: string;
+  blocking_issues: string[];
+};
+
+export type NseCutoverDecision = {
+  decision_id: string;
+  action: "approve_yfinance_primary" | "rollback_to_upstox";
+  from_provider: string;
+  to_provider: string;
+  evidence_ids: string[];
+  evidence_bundle_sha256: string;
+  actor_email: string;
+  reason: string;
+  decision_sha256: string;
+  created_at: string;
+};
+
+export type NseProviderCutoverStatus = {
+  configured_primary: string;
+  effective_primary: string;
+  yfinance_approved: boolean;
+  eligibility: NseCutoverEligibility;
+  active_decision: NseCutoverDecision | null;
+  evidence: NseProviderEvidenceRow[];
+};
+
+export type NseCutoverApprovalRequest = {
+  reason: string;
+  expected_evidence_bundle_sha256: string;
+};
+
+export type NseCutoverRollbackRequest = {
+  reason: string;
+  expected_current_decision_sha256: string;
+};
+
+export type Phase3ReadinessEvidenceRow = {
+  evidence_id: string;
+  evidence_type: "bounded_canary" | "rollback_restore_drill";
+  status: "pass" | "fail";
+  source_run_ids: Record<string, string>;
+  session_dates: string[];
+  metrics: Record<string, unknown>;
+  blocking_issues: string[];
+  evidence_refs: Record<string, unknown>;
+  actor_email: string | null;
+  reason: string | null;
+  evidence_sha256: string;
+  observed_at: string;
+};
+
+export type Phase3ReadinessGateRow = {
+  name: string;
+  passed: boolean;
+  reason: string;
+  evidence_ids: string[];
+};
+
+export type Phase3ReadinessResponse = {
+  ready_for_production: boolean;
+  activation_enabled: boolean;
+  checked_at: string;
+  gates: Phase3ReadinessGateRow[];
+  blocking_issues: string[];
+  evidence: Phase3ReadinessEvidenceRow[];
+};
+
 export type OperationsWorkItemsParams = {
   provider?: "yfinance";
   exchange: OperationsExchange;

@@ -2258,7 +2258,7 @@ tbody tr:hover {
 }
 
 .operations-tabs {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
 .operations-alert {
@@ -2273,6 +2273,10 @@ tbody tr:hover {
 .operations-alert > div {
   display: grid;
   gap: 3px;
+}
+
+.operations-alert > .operations-text-button {
+  margin-left: auto;
 }
 
 .operations-alert span {

@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from math import cos, sin
 from time import monotonic
-from typing import Annotated
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -38,6 +38,14 @@ from trade_research.market_calendar import (
     fetch_exchange_holidays,
     validated_exchange_calendar_years,
 )
+from trade_research.market_data.aggregation import IntradayAggregationRequest
+from trade_research.market_data.contracts import CandleInterval
+from trade_research.market_data.cutover import (
+    CutoverStatus,
+    NseProviderCutoverRepository,
+)
+from trade_research.market_data.health import MarketDataHealthRepository
+from trade_research.market_data.readiness import Phase3ReadinessRepository
 from trade_research.operations import WorkflowRequestStore
 from trade_research.research.artifacts import ResearchArtifactReader
 from trade_research.research.embeddings import OpenAIEmbeddingClient
@@ -65,6 +73,20 @@ from trade_research.schemas import (
     DataPipelineWorkflowStatus,
     DataUniverseMemberRow,
     DataUniverseRow,
+    MarketDataAggregateCandle,
+    MarketDataAggregateResponse,
+    MarketDataAvailabilityHealthRow,
+    MarketDataHealthResponse,
+    MarketDataQualityHealthRow,
+    MarketDataQualityIssueRow,
+    MarketDataRawLineageRow,
+    MarketDataReplicationHealthRow,
+    NseCutoverApprovalRequest,
+    NseCutoverDecisionResponse,
+    NseCutoverEligibilityResponse,
+    NseCutoverRollbackRequest,
+    NseProviderCutoverStatusResponse,
+    NseProviderEvidenceRow,
     OperationsAdaptiveRateStateRow,
     OperationsFreshnessRow,
     OperationsLifecycleEventRow,
@@ -74,6 +96,11 @@ from trade_research.schemas import (
     OperationsUniverseSnapshotRow,
     OperationsWorkItemRow,
     OperationsWorkItemsResponse,
+    Phase3CanaryAssessmentRequest,
+    Phase3ReadinessEvidenceRow,
+    Phase3ReadinessGateRow,
+    Phase3ReadinessResponse,
+    Phase3RollbackRestoreDrillRequest,
     PipelineScheduleStatusRow,
     ProviderCapabilityResponse,
     ProviderCredentialStatusResponse,
@@ -85,6 +112,10 @@ from trade_research.schemas import (
     ScreenerResult,
     SourcesPayload,
     UniverseReconciliationResponse,
+)
+from trade_research.storage.clickhouse import (
+    ClickHouseMarketDataRepository,
+    create_clickhouse_client,
 )
 from trade_research.storage.timescale import TimescaleStore
 from trade_research.storage.vector import QdrantVectorStore
@@ -526,6 +557,90 @@ def data_availability(
         total=payload["total"],
         rows=payload["rows"],
         summary=payload["summary"],
+    )
+
+
+@app.get(
+    "/api/data/candles/aggregate",
+    response_model=MarketDataAggregateResponse,
+)
+def aggregate_nse_intraday_candles(
+    http_request: Request,
+    instrument_id: Annotated[str, Query(min_length=1, max_length=255)],
+    interval: Annotated[Literal["5m", "15m", "30m", "1h"], Query()],
+    window_start: Annotated[datetime, Query()],
+    window_end: Annotated[datetime, Query()],
+    provider: Annotated[str, Query(min_length=1, max_length=64)] = "yfinance",
+    complete_only: Annotated[bool, Query()] = True,
+    limit: Annotated[int, Query(ge=1, le=100_000)] = 5_000,
+) -> MarketDataAggregateResponse:
+    """Return NSE session-anchored aggregates derived from validated 1m candles."""
+
+    current_settings = get_settings()
+    if not (
+        current_settings.phase3_market_data_enabled
+        and current_settings.clickhouse_enabled
+    ):
+        raise HTTPException(status_code=503, detail="Phase 3 market data is unavailable")
+    workspace_id = http_request.headers.get("X-Workspace-ID", "default").strip()
+    if not workspace_id or len(workspace_id) > 64:
+        raise HTTPException(status_code=400, detail="X-Workspace-ID is invalid")
+    try:
+        aggregation_request = IntradayAggregationRequest(
+            instrument_id=instrument_id,
+            interval=CandleInterval(interval),
+            window_start=window_start,
+            window_end=window_end,
+            provider=provider,
+            workspace_id=workspace_id,
+            complete_only=complete_only,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        candles = _clickhouse_market_data_repository().aggregate_nse_intraday(
+            aggregation_request
+        )
+    except Exception as exc:
+        logger.exception("NSE intraday aggregation query failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Aggregated candle data is unavailable",
+        ) from exc
+    return MarketDataAggregateResponse(
+        workspace_id=workspace_id,
+        instrument_id=instrument_id,
+        provider=aggregation_request.provider,
+        interval=interval,
+        window_start=aggregation_request.window_start,
+        window_end=aggregation_request.window_end,
+        complete_only=complete_only,
+        rows=[
+            MarketDataAggregateCandle(
+                instrument_id=candle.instrument_id,
+                symbol=candle.symbol,
+                provider_symbol=candle.provider_symbol,
+                currency=candle.currency,
+                candle_timestamp=candle.candle_timestamp,
+                session_date=candle.session_date,
+                interval=interval,
+                open=float(candle.open),
+                high=float(candle.high),
+                low=float(candle.low),
+                close=float(candle.close),
+                volume=candle.volume,
+                provider=candle.provider,
+                provider_timestamp=candle.provider_timestamp,
+                source_rows=candle.source_rows,
+                expected_source_rows=candle.expected_source_rows,
+                complete=candle.complete,
+                source_digest=candle.source_digest,
+                source_run_ids=list(candle.source_run_ids),
+                raw_artifact_ids=list(candle.raw_artifact_ids),
+            )
+            for candle in candles
+        ],
     )
 
 
@@ -1041,6 +1156,231 @@ def data_operations_bigquery_sync(
         runs=[BigQuerySyncRunRow(**row) for row in runs],
         partitions=[BigQuerySyncPartitionRow(**row) for row in partitions],
     )
+
+
+@app.get(
+    "/api/data/operations/market-data-health",
+    response_model=MarketDataHealthResponse,
+)
+def market_data_health(
+    http_request: Request,
+    provider: Annotated[str, Query(min_length=1, max_length=64)] = "yfinance",
+    exchange: Annotated[str, Query(min_length=1, max_length=32)] = "NSE",
+    issue_limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    lineage_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> MarketDataHealthResponse:
+    canonical_exchange = _canonical_data_exchange(exchange)
+    if canonical_exchange != "NSE":
+        raise HTTPException(
+            status_code=400,
+            detail="Phase 3 market-data health is available only for NSE",
+        )
+    canonical_provider = provider.strip().lower()
+    if canonical_provider != "yfinance":
+        raise HTTPException(
+            status_code=400,
+            detail="Phase 3 market-data health currently supports yfinance",
+        )
+    workspace_id = http_request.headers.get("X-Workspace-ID", "default").strip()
+    if not workspace_id or len(workspace_id) > 64:
+        raise HTTPException(status_code=400, detail="X-Workspace-ID is invalid")
+    current_settings = get_settings()
+    try:
+        snapshot = _market_data_health_repository().snapshot(
+            workspace_id=workspace_id,
+            provider=canonical_provider,
+            exchange=canonical_exchange,
+            issue_limit=issue_limit,
+            lineage_limit=lineage_limit,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return MarketDataHealthResponse(
+        enabled=current_settings.phase3_market_data_enabled,
+        clickhouse_enabled=current_settings.clickhouse_enabled,
+        workspace_id=snapshot.workspace_id,
+        provider=snapshot.provider,
+        exchange=snapshot.exchange,
+        health_status=snapshot.health_status,
+        checked_at=datetime.now(UTC),
+        quality=[MarketDataQualityHealthRow(**vars(row)) for row in snapshot.quality],
+        issues=[MarketDataQualityIssueRow(**vars(row)) for row in snapshot.issues],
+        raw_lineage=[MarketDataRawLineageRow(**vars(row)) for row in snapshot.raw_lineage],
+        replication=[
+            MarketDataReplicationHealthRow(**vars(row)) for row in snapshot.replication
+        ],
+        availability=[
+            MarketDataAvailabilityHealthRow(**vars(row))
+            for row in snapshot.availability
+        ],
+    )
+
+
+@app.get(
+    "/api/data/operations/nse-provider-cutover",
+    response_model=NseProviderCutoverStatusResponse,
+)
+def nse_provider_cutover_status(
+    http_request: Request,
+    evidence_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> NseProviderCutoverStatusResponse:
+    workspace_id = _workspace_id(http_request)
+    current_settings = get_settings()
+    try:
+        status = _nse_provider_cutover_repository(workspace_id).status(
+            configured_primary=current_settings.nse_daily_primary_source,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+            evidence_limit=evidence_limit,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _nse_cutover_status_response(status)
+
+
+@app.post(
+    "/api/admin/nse-provider-cutover/approve",
+    response_model=NseProviderCutoverStatusResponse,
+)
+def approve_nse_yfinance_cutover(
+    body: NseCutoverApprovalRequest,
+    http_request: Request,
+    admin_email: Annotated[str, Depends(_require_admin)],
+) -> NseProviderCutoverStatusResponse:
+    workspace_id = _workspace_id(http_request)
+    idempotency_key = _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _nse_provider_cutover_repository(workspace_id)
+    try:
+        repository.approve(
+            actor_email=admin_email,
+            reason=body.reason,
+            idempotency_key=idempotency_key,
+            expected_evidence_bundle_sha256=body.expected_evidence_bundle_sha256,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+        )
+        status = repository.status(
+            configured_primary=current_settings.nse_daily_primary_source,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _nse_cutover_status_response(status)
+
+
+@app.post(
+    "/api/admin/nse-provider-cutover/rollback",
+    response_model=NseProviderCutoverStatusResponse,
+)
+def rollback_nse_yfinance_cutover(
+    body: NseCutoverRollbackRequest,
+    http_request: Request,
+    admin_email: Annotated[str, Depends(_require_admin)],
+) -> NseProviderCutoverStatusResponse:
+    workspace_id = _workspace_id(http_request)
+    idempotency_key = _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _nse_provider_cutover_repository(workspace_id)
+    try:
+        repository.rollback(
+            actor_email=admin_email,
+            reason=body.reason,
+            idempotency_key=idempotency_key,
+            expected_current_decision_sha256=body.expected_current_decision_sha256,
+        )
+        status = repository.status(
+            configured_primary=current_settings.nse_daily_primary_source,
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _nse_cutover_status_response(status)
+
+
+@app.get(
+    "/api/data/operations/phase3-readiness",
+    response_model=Phase3ReadinessResponse,
+)
+def phase3_readiness_status(
+    http_request: Request,
+    evidence_limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> Phase3ReadinessResponse:
+    workspace_id = _workspace_id(http_request)
+    current_settings = get_settings()
+    try:
+        readiness = _phase3_readiness_repository(workspace_id).readiness(
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows,
+            evidence_limit=evidence_limit,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _phase3_readiness_response(readiness, current_settings=current_settings)
+
+
+@app.post(
+    "/api/admin/phase3-readiness/assess-canary",
+    response_model=Phase3ReadinessResponse,
+)
+def assess_phase3_canary(
+    body: Phase3CanaryAssessmentRequest,
+    http_request: Request,
+    _admin_email: Annotated[str, Depends(_require_admin)],
+) -> Phase3ReadinessResponse:
+    workspace_id = _workspace_id(http_request)
+    _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _phase3_readiness_repository(workspace_id)
+    try:
+        repository.assess_canary(
+            daily_run_id=body.daily_run_id,
+            minute_run_id=body.minute_run_id,
+            minute_rerun_id=body.minute_rerun_id,
+            max_instruments=current_settings.phase3_canary_max_instruments,
+            minimum_completeness=current_settings.phase3_minimum_completeness,
+            required_observed_sessions=current_settings.phase3_required_observed_sessions,
+        )
+        readiness = repository.readiness(
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _phase3_readiness_response(readiness, current_settings=current_settings)
+
+
+@app.post(
+    "/api/admin/phase3-readiness/record-rollback-restore-drill",
+    response_model=Phase3ReadinessResponse,
+)
+def record_phase3_rollback_restore_drill(
+    body: Phase3RollbackRestoreDrillRequest,
+    http_request: Request,
+    admin_email: Annotated[str, Depends(_require_admin)],
+) -> Phase3ReadinessResponse:
+    workspace_id = _workspace_id(http_request)
+    _required_idempotency_key(http_request)
+    current_settings = get_settings()
+    repository = _phase3_readiness_repository(workspace_id)
+    try:
+        repository.record_rollback_restore_drill(
+            actor_email=admin_email,
+            reason=body.reason,
+            rollback_decision_sha256=body.rollback_decision_sha256,
+            restored_decision_sha256=body.restored_decision_sha256,
+            checks=body.checks.model_dump(),
+        )
+        readiness = repository.readiness(
+            required_passing_windows=current_settings.nse_cutover_required_passing_windows
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return _phase3_readiness_response(readiness, current_settings=current_settings)
 
 
 @app.get("/api/data/pipeline-health", response_model=DataPipelineHealthResponse)
@@ -2107,6 +2447,84 @@ def _to_screener_result(row: dict) -> dict:
 def _store() -> TimescaleStore:
     settings = get_settings()
     return TimescaleStore(settings.database_url)
+
+
+def _clickhouse_market_data_repository() -> ClickHouseMarketDataRepository:
+    current_settings = get_settings()
+    return ClickHouseMarketDataRepository(
+        create_clickhouse_client(current_settings),
+        database=current_settings.clickhouse_database,
+    )
+
+
+def _market_data_health_repository() -> MarketDataHealthRepository:
+    return MarketDataHealthRepository(_store().engine)
+
+
+def _nse_provider_cutover_repository(
+    workspace_id: str,
+) -> NseProviderCutoverRepository:
+    return NseProviderCutoverRepository(_store().engine, workspace_id=workspace_id)
+
+
+def _phase3_readiness_repository(workspace_id: str) -> Phase3ReadinessRepository:
+    return Phase3ReadinessRepository(_store().engine, workspace_id=workspace_id)
+
+
+def _workspace_id(request: Request) -> str:
+    workspace_id = request.headers.get("X-Workspace-ID", "default").strip()
+    if not workspace_id or len(workspace_id) > 64:
+        raise HTTPException(status_code=400, detail="X-Workspace-ID is invalid")
+    return workspace_id
+
+
+def _required_idempotency_key(request: Request) -> str:
+    key = request.headers.get("X-Idempotency-Key", "").strip()
+    if len(key) < 8 or len(key) > 200:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Idempotency-Key must contain between 8 and 200 characters",
+        )
+    return key
+
+
+def _nse_cutover_status_response(
+    status: CutoverStatus,
+) -> NseProviderCutoverStatusResponse:
+    decision = status.active_decision
+    return NseProviderCutoverStatusResponse(
+        configured_primary=status.configured_primary,
+        effective_primary=status.effective_primary,
+        yfinance_approved=status.yfinance_approved,
+        eligibility=NseCutoverEligibilityResponse(**vars(status.eligibility)),
+        active_decision=(
+            NseCutoverDecisionResponse(**vars(decision)) if decision is not None else None
+        ),
+        evidence=[NseProviderEvidenceRow(**row) for row in status.evidence],
+    )
+
+
+def _phase3_readiness_response(
+    readiness: Any,
+    *,
+    current_settings: Settings,
+) -> Phase3ReadinessResponse:
+    return Phase3ReadinessResponse(
+        ready_for_production=readiness.ready_for_production,
+        activation_enabled=current_settings.phase3_production_activation_enabled,
+        checked_at=readiness.checked_at,
+        gates=[
+            Phase3ReadinessGateRow(
+                name=gate.name,
+                passed=gate.passed,
+                reason=gate.reason,
+                evidence_ids=list(gate.evidence_ids),
+            )
+            for gate in readiness.gates
+        ],
+        blocking_issues=list(readiness.blocking_issues),
+        evidence=[Phase3ReadinessEvidenceRow(**row) for row in readiness.evidence],
+    )
 
 
 def _workflow_store() -> WorkflowRequestStore:

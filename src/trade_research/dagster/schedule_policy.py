@@ -89,6 +89,11 @@ def _enabled_conditions(settings: Settings) -> dict[str, bool]:
         "nse_yfinance": nse_yfinance,
         "tsx_yfinance": tsx_yfinance,
         "us_yfinance": us_yfinance,
+        "nse_yfinance_minute": (
+            settings.phase3_market_data_enabled
+            and settings.yfinance_nse_minute_enabled
+            and settings.phase3_production_activation_enabled
+        ),
         "materialized_exchange_sessions": settings.materialized_exchange_sessions_enabled,
         "bigquery_production_sync": (
             settings.bigquery_enabled and settings.bigquery_production_sync_enabled

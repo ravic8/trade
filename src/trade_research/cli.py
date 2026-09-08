@@ -42,6 +42,13 @@ from trade_research.filings.tasks import (
     dispatch_filing_run,
 )
 from trade_research.market_calendar import session_decision
+from trade_research.market_data.aggregation_golden import (
+    evaluate_aggregation_candidate,
+    evaluate_python_aggregation_golden,
+    load_aggregation_golden,
+    load_candidate_output,
+)
+from trade_research.market_data.readiness import Phase3ReadinessRepository
 from trade_research.modeling.backtest import BacktestConfig
 from trade_research.modeling.baselines import BaselineRunConfig
 from trade_research.modeling.latest_predictions import LatestPredictionConfig
@@ -73,6 +80,7 @@ from trade_research.pipelines import (
     run_yfinance_intraday_ohlcv_pipeline,
     run_yfinance_missing_ohlcv_pipeline,
     run_yfinance_nse_canary_planner,
+    run_yfinance_nse_minute_pipeline,
     run_yfinance_provider_history_evidence_bootstrap,
     run_yfinance_tsx_canary_planner,
 )
@@ -1469,6 +1477,10 @@ def plan_yfinance_nse_canary(
         int,
         typer.Option(min=1, max=5_000, help="Maximum NSE symbols to plan."),
     ] = 1,
+    symbols: Annotated[
+        str | None,
+        typer.Option(help="Optional comma-separated NSE or Yahoo symbols."),
+    ] = None,
     enqueue: Annotated[
         bool,
         typer.Option(
@@ -1477,9 +1489,13 @@ def plan_yfinance_nse_canary(
         ),
     ] = False,
 ) -> None:
+    selected_symbols = (
+        [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
+    )
     try:
         result = run_yfinance_nse_canary_planner(
             symbol_limit=symbol_limit,
+            provider_symbols=selected_symbols,
             enqueue=enqueue,
             trigger="cli",
         )
@@ -1491,6 +1507,7 @@ def plan_yfinance_nse_canary(
         f"Symbols: {nse['active_symbols']} selected from "
         f"{nse['eligible_symbols_before_limit']} eligible"
     )
+    console.print("Selected: " + ", ".join(nse.get("selected_provider_symbols", [])))
     quarantined = nse.get("provider_quarantined_symbols", [])
     if quarantined:
         console.print(
@@ -1540,6 +1557,52 @@ def check_nse_yfinance_cutover() -> None:
     for issue in result.blocking_issues:
         console.print(f"[red]Blocked: {issue}[/red]")
     if result.status == "fail":
+        raise typer.Exit(code=1)
+
+
+@app.command("phase3-readiness")
+def phase3_readiness() -> None:
+    """Evaluate the durable Phase 3 promotion gates without changing evidence."""
+
+    current_settings = get_settings()
+    store = TimescaleStore(current_settings.database_url)
+    readiness = Phase3ReadinessRepository(store.engine).readiness(
+        required_passing_windows=current_settings.nse_cutover_required_passing_windows
+    )
+    console.print(
+        "Phase 3 production readiness: "
+        + ("[green]READY[/green]" if readiness.ready_for_production else "[red]BLOCKED[/red]")
+    )
+    for gate in readiness.gates:
+        state = "PASS" if gate.passed else "BLOCKED"
+        console.print(f"{gate.name}: {state} — {gate.reason}")
+    if not readiness.ready_for_production:
+        raise typer.Exit(code=1)
+
+
+@app.command("verify-market-data-aggregation-golden")
+def verify_market_data_aggregation_golden(
+    dataset_path: Annotated[
+        Path,
+        typer.Option(help="Locked NSE aggregation golden-dataset JSON path."),
+    ] = Path("evaluations/market_data/nse_intraday_aggregation_v1.json"),
+    candidate_output: Annotated[
+        Path | None,
+        typer.Option(help="Optional output from another runtime using the golden output schema."),
+    ] = None,
+) -> None:
+    dataset = load_aggregation_golden(dataset_path)
+    report = (
+        evaluate_aggregation_candidate(dataset, load_candidate_output(candidate_output))
+        if candidate_output is not None
+        else evaluate_python_aggregation_golden(dataset)
+    )
+    console.print(f"Aggregation golden: {'PASS' if report.passed else 'FAIL'}")
+    console.print(f"Dataset: {report.dataset_id} ({report.dataset_sha256})")
+    console.print(f"Cases: {report.cases_passed}/{report.cases_total}")
+    for mismatch in report.mismatches:
+        console.print(f"[red]{mismatch}[/red]")
+    if not report.passed:
         raise typer.Exit(code=1)
 
 
@@ -1859,6 +1922,51 @@ def fetch_yfinance_intraday(
     console.print(f"Fetch failures: {result.metrics['failure_rows']}")
     if store_db:
         console.print(f"Upserted ohlcv_intraday rows: {result.metrics['timescale_rows']}")
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command("fetch-yfinance-nse-minute")
+def fetch_yfinance_nse_minute(
+    from_datetime: Annotated[
+        str | None,
+        typer.Option(help="Optional ISO start within configured yfinance 1m retention."),
+    ] = None,
+    to_datetime: Annotated[
+        str | None,
+        typer.Option(help="Optional ISO end; defaults to the current time."),
+    ] = None,
+    symbol_limit: Annotated[
+        int | None,
+        typer.Option(min=1, max=500, help="Bounded active NSE symbol count."),
+    ] = None,
+    symbols: Annotated[
+        str | None,
+        typer.Option(help="Optional comma-separated NSE or Yahoo symbols."),
+    ] = None,
+) -> None:
+    """Fetch validated NSE 1m candles with raw evidence and ClickHouse replication."""
+
+    selected_symbols = (
+        [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
+    )
+    try:
+        result = run_yfinance_nse_minute_pipeline(
+            from_datetime=from_datetime,
+            to_datetime=to_datetime,
+            symbol_limit=symbol_limit,
+            provider_symbols=selected_symbols,
+            trigger="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(
+        f"NSE 1m: {result.metrics['validated_rows']} validated, "
+        f"{result.metrics['clickhouse_rows']} replicated"
+    )
+    console.print(f"Eligible sessions: {result.metrics['eligible_sessions']}")
+    console.print("Symbols: " + ", ".join(result.metrics["selected_provider_symbols"]))
+    console.print(f"Raw snapshot: {result.metrics['raw_snapshot_uri']}")
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")
 

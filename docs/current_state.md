@@ -71,6 +71,22 @@ operational and daily-OHLCV authority, existing API reads do not depend on
 ClickHouse, and no production activation or canary acceptance is implied by
 the repository implementation. See `docs/phase2_storage_foundation.md`.
 
+The Phase 3 NSE data-platform implementation has started behind disabled,
+fail-closed feature gates. The repository now contains provider-neutral candle
+contracts, immutable raw yfinance snapshots, common candle validation, a
+validated ClickHouse daily replica path, bounded NSE `1m` ingestion,
+candle-level missing/error explanations, and fail-closed per-batch replication
+checkpoints with count, digest, and watermark evidence. Session-anchored `5m`,
+`15m`, `30m`, and `1h` aggregates are available on request from validated
+ClickHouse `1m` rows with explicit completeness and lineage. The authenticated
+Data Console exposes latest-run daily/minute freshness, completeness, explained
+and unexplained gaps, quarantine counts, safe raw-manifest lineage, and current
+ClickHouse replication evidence. A manual-only Dagster job can audit one
+calendar-month historical daily partition and safely upsert missing or divergent
+replica rows while leaving unexpected destination-only rows fail-closed for
+manual review. It is not production-active and does not yet satisfy the Phase 3
+exit gate. See `docs/phase3_nse_data_platform.md`.
+
 ## Provider state
 
 The distinction between implemented capability, repository default, configured
@@ -94,7 +110,7 @@ BigQuery production sync. `NSE_DAILY_PRIMARY_SOURCE=upstox` and
 
 ## Dagster state
 
-The repository defines 19 schedules. Every schedule has
+The repository defines 20 schedules. Every schedule has
 `DefaultScheduleStatus.STOPPED`.
 
 | Schedule | Job | Repository default |
@@ -103,6 +119,7 @@ The repository defines 19 schedules. Every schedule has
 | `north_america_daily_yfinance_schedule` | `north_america_daily_yfinance_job` | stopped |
 | `fx_intraday_dukascopy_schedule` | `fx_intraday_dukascopy_job` | stopped |
 | `yfinance_fx_intraday_schedule` | `yfinance_fx_intraday_job` | stopped |
+| `yfinance_nse_minute_schedule` | `yfinance_nse_minute_job` | stopped |
 | `nse_universe_refresh_schedule` | `nse_universe_refresh_job` | stopped |
 | `tsx_universe_refresh_schedule` | `tsx_universe_refresh_job` | stopped |
 | `us_universe_refresh_schedule` | `us_universe_refresh_job` | stopped |

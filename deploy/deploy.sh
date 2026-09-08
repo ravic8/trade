@@ -556,6 +556,11 @@ if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   "${compose[@]}" run --rm minio-research-init
 fi
 
+if [[ "${PROD_PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}" == "true" ]]; then
+  log "verifying durable Phase 3 production-readiness evidence"
+  "${compose[@]}" run --rm --no-deps api trade-research phase3-readiness
+fi
+
 log "starting production stack"
 "${compose[@]}" up -d --remove-orphans
 if [[ "$cloudbeaver_policy_changed" == true \

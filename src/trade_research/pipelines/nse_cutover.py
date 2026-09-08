@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 
 from trade_research.config import get_settings
+from trade_research.market_data.cutover import NseProviderCutoverRepository
 from trade_research.pipelines.base import PipelineRunResult
 from trade_research.pipelines.daily_ohlcv import run_upstox_daily_ohlcv_pipeline
 from trade_research.storage import ParquetStore, TimescaleStore
@@ -216,13 +217,27 @@ def run_nse_yfinance_cutover_readiness(
             "comparison_state": comparison_state,
         }
     )
-    return PipelineRunResult(
+    result = PipelineRunResult(
         name="nse_yfinance_cutover_readiness",
         status="pass" if not blocking else "fail",
         rows=int(metrics["overlap_rows"]),
         metrics=metrics,
         blocking_issues=blocking,
     )
+    if hasattr(db, "engine"):
+        evidence = NseProviderCutoverRepository(db.engine).record_comparison(
+            status=result.status,
+            metrics=result.metrics,
+            blocking_issues=result.blocking_issues,
+            observed_at=observed_at,
+        )
+        result.metrics.update(
+            {
+                "evidence_id": evidence["evidence_id"],
+                "evidence_sha256": evidence["evidence_sha256"],
+            }
+        )
+    return result
 
 
 def run_nse_daily_ohlcv_primary_pipeline(
@@ -263,8 +278,19 @@ def run_nse_daily_ohlcv_primary_pipeline(
     readiness = run_nse_yfinance_cutover_readiness(trigger=trigger)
     artifacts = {}
     snapshot_rows = 0
-    if readiness.status == "pass":
-        db = TimescaleStore(settings.database_url)
+    db = TimescaleStore(settings.database_url)
+    cutover = NseProviderCutoverRepository(db.engine).status(
+        configured_primary=settings.nse_daily_primary_source,
+        required_passing_windows=settings.nse_cutover_required_passing_windows,
+        evidence_limit=1,
+    )
+    approval_issue = None
+    if readiness.status == "pass" and cutover.effective_primary != "yfinance":
+        approval_issue = (
+            "NSE yfinance primary is configured but has no active authenticated "
+            "cutover approval. Upstox remains the effective primary."
+        )
+    if readiness.status == "pass" and approval_issue is None:
         snapshot = db.daily_ohlcv_frame(exchange="NSE", source="yfinance")
         snapshot_rows = len(snapshot)
         if not snapshot.empty:
@@ -274,19 +300,28 @@ def run_nse_daily_ohlcv_primary_pipeline(
             )
     return PipelineRunResult(
         name="nse_daily_ohlcv",
-        status=readiness.status,
+        status="fail" if approval_issue else readiness.status,
         rows=snapshot_rows,
         artifacts=artifacts,
         metrics={
             **readiness.metrics,
             "primary_source": "yfinance",
+            "effective_primary_source": cutover.effective_primary,
+            "cutover_decision_sha256": (
+                cutover.active_decision.decision_sha256
+                if cutover.active_decision is not None
+                else None
+            ),
             "snapshot_rows": snapshot_rows,
         },
         warnings=[
             "Yahoo NSE ingestion is executed by the durable planner/worker; "
             "this asset validates the primary dataset instead of downloading inline."
         ],
-        blocking_issues=readiness.blocking_issues,
+        blocking_issues=[
+            *readiness.blocking_issues,
+            *([approval_issue] if approval_issue else []),
+        ],
     )
 
 
