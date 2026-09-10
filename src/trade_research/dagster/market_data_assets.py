@@ -103,7 +103,7 @@ def nse_daily_clickhouse_partition_reconciliation(context):
         "Record one audited NSE Upstox-vs-yfinance provider comparison window for "
         "Phase 3 production readiness."
     ),
-    )
+)
 def nse_yfinance_provider_comparison(context) -> PipelineRunResult:
     result = run_nse_yfinance_cutover_readiness(
         trigger="dagster",
@@ -121,10 +121,13 @@ def nse_yfinance_provider_comparison(context) -> PipelineRunResult:
             "row_overlap_ratio": metrics.get("row_overlap_ratio", 0),
             "close_match_ratio": metrics.get("close_match_ratio", 0),
             "evidence_id": metrics.get("evidence_id", ""),
+            "blocking_issues": "\n".join(result.blocking_issues),
         }
     )
     if result.status != "pass":
+        details = "; ".join(result.blocking_issues) or "no blocking details were returned"
         raise RuntimeError(
-            "NSE provider comparison did not pass; review the recorded evidence before retrying."
+            "NSE provider comparison did not pass: "
+            f"{details}. Review the recorded evidence before retrying."
         )
     return result

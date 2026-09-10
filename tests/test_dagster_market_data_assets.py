@@ -57,5 +57,5 @@ def test_provider_comparison_asset_fails_dagster_run_on_blocked_window(
         lambda **_kwargs: _comparison_result(status="fail"),
     )
 
-    with pytest.raises(RuntimeError, match="NSE provider comparison did not pass"):
+    with pytest.raises(RuntimeError, match="comparison failed"):
         market_data_assets.nse_yfinance_provider_comparison(dagster.build_op_context())
