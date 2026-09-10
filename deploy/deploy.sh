@@ -428,6 +428,9 @@ restore_minio_rollback_image() {
 
   log "restoring MinIO image $minio_previous_image_ref"
   export PROD_MINIO_IMAGE="$minio_rollback_tag"
+  if ! start_managed_kes_if_needed; then
+    return 1
+  fi
   if ! "${compose[@]}" up -d --no-deps --force-recreate minio; then
     log "MinIO rollback container could not be started"
     return 1
@@ -440,6 +443,18 @@ restore_minio_rollback_image() {
   return 0
 }
 
+start_managed_kes_if_needed() {
+  if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" != "true" ]]; then
+    return 0
+  fi
+
+  log "starting repository-managed KES before MinIO"
+  if ! "${compose[@]}" up -d --no-deps kes; then
+    log "repository-managed KES could not be started"
+    return 1
+  fi
+}
+
 start_and_validate_minio() {
   preserve_minio_rollback_image
   reject_minio_downgrade
@@ -450,7 +465,9 @@ start_and_validate_minio() {
     "${compose[@]}" pull kes
   fi
   log "starting MinIO before replacing application services"
-  if ! "${compose[@]}" up -d --no-deps minio || ! wait_for_minio; then
+  if ! start_managed_kes_if_needed \
+    || ! "${compose[@]}" up -d --no-deps minio \
+    || ! wait_for_minio; then
     log "requested MinIO image failed its readiness check"
     "${compose[@]}" logs --tail=120 minio >&2 || true
     restore_minio_rollback_image || true
