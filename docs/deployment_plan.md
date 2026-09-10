@@ -374,9 +374,13 @@ before application containers are replaced. A failed MinIO candidate is
 automatically replaced with the captured image, while the deployment still
 fails so the candidate cannot be mistaken for a successful release.
 The base production Compose file does not inject empty KMS variables. Setting
-`PROD_MINIO_KMS_ENABLED=true` activates `docker-compose.prod.kms.yml`, and the
-deploy script then requires every KMS/KES value. Research-storage deployment is
-refused unless that explicit KMS activation is present.
+`PROD_MINIO_KMS_ENABLED=true` activates a KMS overlay, and the deploy script
+then requires every KMS/KES value. By default this uses
+`docker-compose.prod.kms.yml` for an external MinIO KMS/KES endpoint. If
+`PROD_SELF_MANAGED_KES_ENABLED=true`, deployment first runs
+`deploy/managed-kes.sh`, generates persistent host-owned KES material when
+missing, and uses `docker-compose.prod.managed-kes.yml` instead. Research
+storage deployment is refused unless explicit KMS activation is present.
 
 The deploy workflow is implemented in `.github/workflows/deploy.yml`. It runs
 after the `CI` workflow succeeds on `main`, and it can also be started manually

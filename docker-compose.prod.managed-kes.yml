@@ -1,0 +1,24 @@
+services:
+  kes:
+    image: ${PROD_KES_IMAGE:-minio/kes:latest}
+    profiles: ["research"]
+    command: ["server", "--config", "/etc/kes/config.yaml"]
+    expose:
+      - "7373"
+    volumes:
+      - ${PROD_KES_CONFIG_DIR:-/opt/trade/kes/config}:/etc/kes:ro
+      - ${PROD_KES_CERT_DIR:-/opt/trade/kes/certs}:/certs:ro
+      - ${PROD_KES_KEY_DIR:-/opt/trade/kes/keys}:/keys
+    restart: unless-stopped
+
+  minio:
+    environment:
+      MINIO_KMS_KES_ENDPOINT: https://kes:7373
+      MINIO_KMS_KES_API_KEY: ${PROD_MINIO_KMS_API_KEY:?set PROD_MINIO_KMS_API_KEY}
+      MINIO_KMS_KES_CAPATH: /run/kes/server.crt
+      MINIO_KMS_KES_KEY_NAME: ${PROD_MINIO_KMS_SSE_KEY:?set PROD_MINIO_KMS_SSE_KEY}
+    volumes:
+      - ${PROD_KES_CERT_DIR:-/opt/trade/kes/certs}/server.crt:/run/kes/server.crt:ro
+    depends_on:
+      kes:
+        condition: service_started

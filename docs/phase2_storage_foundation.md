@@ -146,8 +146,11 @@ that evidence does not satisfy the Phase 2 exit gate.
 
 1. Capture fresh capacity and Phase 1 backup evidence.
 2. Install all dedicated credentials in `/opt/trade/.env`.
-   Configure `PROD_MINIO_KMS_*` for a production MinIO KMS/KES deployment;
-   Phase 2 object writes intentionally fail without a configured key manager.
+   Configure `PROD_MINIO_KMS_*` for an external production MinIO KMS/KES
+   deployment, or explicitly set `PROD_SELF_MANAGED_KES_ENABLED=true` to let
+   `deploy/managed-kes.sh` generate a private single-host KES filesystem
+   keystore. Phase 2 object writes intentionally fail without a configured key
+   manager.
 3. Set only `PROD_RESEARCH_STORAGE_DEPLOY_ENABLED=true` and deploy.
 4. Confirm PostgreSQL and ClickHouse migration heads, role isolation, and
    object-store policy isolation.

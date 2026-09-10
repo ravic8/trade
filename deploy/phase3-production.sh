@@ -97,6 +97,8 @@ credential_status() {
 print_status() {
   load_environment
   printf 'PROD_MINIO_KMS_ENABLED=%s\n' "${PROD_MINIO_KMS_ENABLED:-false}"
+  printf 'PROD_SELF_MANAGED_KES_ENABLED=%s\n' \
+    "${PROD_SELF_MANAGED_KES_ENABLED:-false}"
   printf 'PROD_RESEARCH_STORAGE_DEPLOY_ENABLED=%s\n' \
     "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}"
   printf 'PROD_RESEARCH_STORAGE_ENABLED=%s\n' \
@@ -127,20 +129,31 @@ disable_application_plane() {
 
 bootstrap_canary_plane() {
   load_environment
-  [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]] || \
-    fail "production MinIO KMS must be enabled before Phase 3 storage provisioning"
-  for key in \
-    PROD_MINIO_KMS_SERVER \
-    PROD_MINIO_KMS_ENCLAVE \
-    PROD_MINIO_KMS_API_KEY \
-    PROD_MINIO_KMS_SSE_KEY; do
-    is_secure_value "${!key:-}" || fail "$key is not securely configured"
-  done
-
   require_command openssl
   require_command awk
   require_command install
   backup_environment
+
+  if [[ "${PROD_MINIO_KMS_ENABLED:-false}" != "true" ]]; then
+    log "enabling repository-managed private KES for Phase 3 canary storage"
+    set_environment_value PROD_SELF_MANAGED_KES_ENABLED true
+    set_environment_value PROD_MINIO_KMS_ENABLED true
+  fi
+  if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
+    set_environment_value PROD_MINIO_KMS_SERVER "${PROD_MINIO_KMS_SERVER:-https://kes:7373}"
+    set_environment_value PROD_MINIO_KMS_ENCLAVE "${PROD_MINIO_KMS_ENCLAVE:-trade-production}"
+    set_environment_value PROD_MINIO_KMS_SSE_KEY "${PROD_MINIO_KMS_SSE_KEY:-trade-research-sse}"
+  fi
+  for key in \
+    PROD_MINIO_KMS_SERVER \
+    PROD_MINIO_KMS_ENCLAVE \
+    PROD_MINIO_KMS_SSE_KEY; do
+    is_secure_value "${!key:-}" || fail "$key is not securely configured"
+  done
+  if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" != "true" ]]; then
+    is_secure_value "${PROD_MINIO_KMS_API_KEY:-}" || \
+      fail "PROD_MINIO_KMS_API_KEY is not securely configured"
+  fi
 
   ensure_generated_secret PROD_CLICKHOUSE_ADMIN_PASSWORD password
   ensure_generated_secret PROD_CLICKHOUSE_MIGRATION_PASSWORD password
@@ -182,7 +195,11 @@ print_readiness() {
     -f "$APP_DIR/docker-compose.prod.yml"
   )
   if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
-    compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")
+    if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
+      compose+=(-f "$APP_DIR/docker-compose.prod.managed-kes.yml")
+    else
+      compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")
+    fi
   fi
   compose+=(--profile research)
   set +e
