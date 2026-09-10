@@ -197,6 +197,27 @@ def test_nse_minute_pipeline_snapshots_raw_but_replicates_completed_sessions(
     assert _Store.instances[0].finished[0]["status"] == "completed"
 
 
+def test_completed_session_rows_clips_provider_overfetch_to_request_window() -> None:
+    frame = pd.DataFrame(
+        [
+            _row(datetime(2026, 9, 4, 3, 44, tzinfo=UTC)),
+            _row(datetime(2026, 9, 4, 3, 45, tzinfo=UTC)),
+            _row(datetime(2026, 9, 4, 10, 0, tzinfo=UTC)),
+        ]
+    )
+
+    completed = nse_minute._completed_session_rows(
+        frame,
+        {date(2026, 9, 4)},
+        window_start=datetime(2026, 9, 4, 3, 45, tzinfo=UTC),
+        window_end=datetime(2026, 9, 4, 10, 0, tzinfo=UTC),
+    )
+
+    assert completed["Timestamp"].tolist() == [
+        datetime(2026, 9, 4, 3, 45, tzinfo=UTC)
+    ]
+
+
 def test_nse_minute_pipeline_rejects_window_beyond_configured_retention(monkeypatch) -> None:
     monkeypatch.setattr(nse_minute, "get_settings", _settings)
 
