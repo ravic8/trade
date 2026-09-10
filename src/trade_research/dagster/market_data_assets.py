@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dagster import Bool, Field, Int, String, asset
+from dagster import Bool, Field, Int, MetadataValue, String, asset
 
 from trade_research.market_data.partition_reconciliation import (
     run_nse_daily_partition_reconciliation,
@@ -120,12 +120,30 @@ def nse_yfinance_provider_comparison(context) -> PipelineRunResult:
             "overlapping_symbols": metrics.get("overlapping_symbols", 0),
             "row_overlap_ratio": metrics.get("row_overlap_ratio", 0),
             "close_match_ratio": metrics.get("close_match_ratio", 0),
+            "missing_yfinance_rows": metrics.get("missing_yfinance_rows", 0),
+            "missing_upstox_rows": metrics.get("missing_upstox_rows", 0),
+            "missing_yfinance_symbols": metrics.get("missing_yfinance_symbols", 0),
+            "missing_upstox_symbols": metrics.get("missing_upstox_symbols", 0),
+            "missing_yfinance_rows_by_session": MetadataValue.json(
+                metrics.get("missing_yfinance_rows_by_session", {})
+            ),
+            "missing_upstox_rows_by_session": MetadataValue.json(
+                metrics.get("missing_upstox_rows_by_session", {})
+            ),
+            "missing_yfinance_row_samples": MetadataValue.json(
+                metrics.get("missing_yfinance_row_samples", [])
+            ),
+            "missing_upstox_row_samples": MetadataValue.json(
+                metrics.get("missing_upstox_row_samples", [])
+            ),
             "evidence_id": metrics.get("evidence_id", ""),
             "blocking_issues": "\n".join(result.blocking_issues),
         }
     )
     if result.status != "pass":
-        details = "; ".join(result.blocking_issues) or "no blocking details were returned"
+        details = (
+            "; ".join(result.blocking_issues).rstrip(".") or "no blocking details were returned"
+        )
         raise RuntimeError(
             "NSE provider comparison did not pass: "
             f"{details}. Review the recorded evidence before retrying."

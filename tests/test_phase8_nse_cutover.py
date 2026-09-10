@@ -86,6 +86,29 @@ def test_provider_comparison_detects_close_divergence_and_missing_rows() -> None
     assert result["row_overlap_ratio"] == pytest.approx(2 / 3)
     assert result["close_match_ratio"] == 0
     assert result["yfinance_latest_date"] == "2026-07-14"
+    assert result["missing_yfinance_rows"] == 1
+    assert result["missing_upstox_rows"] == 0
+    assert result["missing_yfinance_rows_by_session"] == {"2026-07-15": 1}
+    assert result["missing_yfinance_row_samples"] == ["AAA@2026-07-15"]
+
+
+def test_provider_comparison_uses_the_active_comparison_universe() -> None:
+    sessions = [date(2026, 7, 14), date(2026, 7, 15)]
+    upstox = _candles(["ACTIVE", "DELISTED"], sessions)
+    yfinance = _candles(["ACTIVE.NS"], sessions)
+
+    result = nse_cutover.compare_nse_provider_frames(
+        upstox,
+        yfinance,
+        sessions=sessions,
+        close_tolerance=0.01,
+        comparison_symbols=["ACTIVE.NS"],
+    )
+
+    assert result["row_overlap_ratio"] == 1
+    assert result["comparison_universe_symbols"] == 1
+    assert result["upstox_rows_excluded_by_universe"] == 2
+    assert result["missing_yfinance_rows"] == 0
 
 
 def test_provider_freshness_is_independent_when_symbols_do_not_overlap() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -18,6 +19,7 @@ def compare_nse_provider_frames(
     *,
     sessions: list[date],
     close_tolerance: float,
+    comparison_symbols: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Compare raw daily candles on exchange symbol/date over shared symbols."""
     if not sessions:
@@ -25,6 +27,17 @@ def compare_nse_provider_frames(
     session_set = set(sessions)
     left = _comparison_rows(upstox, session_set, "upstox")
     right = _comparison_rows(yfinance, session_set, "yfinance")
+    selected_symbols = {
+        normalized
+        for value in (comparison_symbols or ())
+        if (normalized := _normalize_comparison_symbol(value))
+    }
+    upstox_excluded_rows = yfinance_excluded_rows = 0
+    if selected_symbols:
+        upstox_excluded_rows = int((~left["symbol"].isin(selected_symbols)).sum())
+        yfinance_excluded_rows = int((~right["symbol"].isin(selected_symbols)).sum())
+        left = left[left["symbol"].isin(selected_symbols)]
+        right = right[right["symbol"].isin(selected_symbols)]
     upstox_latest_date = _latest_date(left)
     yfinance_latest_date = _latest_date(right)
     upstox_window_rows = len(left)
@@ -40,6 +53,8 @@ def compare_nse_provider_frames(
         how="inner",
         suffixes=("_upstox", "_yfinance"),
     )
+    upstox_only = _rows_missing_from(left, right)
+    yfinance_only = _rows_missing_from(right, left)
     denominator = max(len(left), len(right), 1)
     row_overlap_ratio = len(overlap) / denominator
     if overlap.empty:
@@ -50,9 +65,8 @@ def compare_nse_provider_frames(
         denominator_close = overlap[["close_upstox", "close_yfinance"]].abs().max(axis=1)
         denominator_close = denominator_close.where(denominator_close > 0, 1.0)
         differences = (
-            (overlap["close_upstox"] - overlap["close_yfinance"]).abs()
-            / denominator_close
-        )
+            overlap["close_upstox"] - overlap["close_yfinance"]
+        ).abs() / denominator_close
         close_mismatches = int((differences > close_tolerance).sum())
         close_match_ratio = 1 - (close_mismatches / len(overlap))
         maximum_close_difference = float(differences.max())
@@ -70,6 +84,17 @@ def compare_nse_provider_frames(
         "overlap_rows": int(len(overlap)),
         "row_overlap_ratio": float(row_overlap_ratio),
         "overlapping_symbols": len(shared_symbols),
+        "comparison_universe_symbols": (len(selected_symbols) if selected_symbols else None),
+        "upstox_rows_excluded_by_universe": upstox_excluded_rows,
+        "yfinance_rows_excluded_by_universe": yfinance_excluded_rows,
+        "missing_yfinance_rows": int(len(upstox_only)),
+        "missing_upstox_rows": int(len(yfinance_only)),
+        "missing_yfinance_symbols": int(upstox_only["symbol"].nunique()),
+        "missing_upstox_symbols": int(yfinance_only["symbol"].nunique()),
+        "missing_yfinance_rows_by_session": _missing_rows_by_session(upstox_only),
+        "missing_upstox_rows_by_session": _missing_rows_by_session(yfinance_only),
+        "missing_yfinance_row_samples": _missing_row_samples(upstox_only),
+        "missing_upstox_row_samples": _missing_row_samples(yfinance_only),
         "close_tolerance": float(close_tolerance),
         "close_match_ratio": float(close_match_ratio),
         "close_mismatches": close_mismatches,
@@ -121,9 +146,7 @@ def run_nse_yfinance_cutover_readiness(
         return PipelineRunResult(
             name="nse_yfinance_cutover_readiness",
             status="fail",
-            blocking_issues=[
-                "Insufficient validated NSE sessions for the provider comparison."
-            ],
+            blocking_issues=["Insufficient validated NSE sessions for the provider comparison."],
             metrics={"trigger": trigger, "ready": False, "sessions": len(sessions)},
         )
     upstox = db.daily_ohlcv_frame(
@@ -132,17 +155,23 @@ def run_nse_yfinance_cutover_readiness(
     yfinance = db.daily_ohlcv_frame(
         exchange="NSE", source="yfinance", start_date=sessions[0], end_date=sessions[-1]
     )
+    comparison_symbols: list[str] = []
+    universe_loader = getattr(db, "active_yfinance_daily_instruments", None)
+    if universe_loader is not None:
+        for row in universe_loader("NSE"):
+            comparison_symbols.extend(
+                str(value) for value in (row.get("symbol"), row.get("provider_symbol")) if value
+            )
     metrics = compare_nse_provider_frames(
         upstox,
         yfinance,
         sessions=sessions,
         close_tolerance=settings.nse_provider_comparison_close_tolerance,
+        comparison_symbols=comparison_symbols or None,
     )
     blocking: list[str] = []
     missing_providers = [
-        provider
-        for provider in ("upstox", "yfinance")
-        if not metrics[f"{provider}_window_rows"]
+        provider for provider in ("upstox", "yfinance") if not metrics[f"{provider}_window_rows"]
     ]
     if missing_providers:
         blocking.append(
@@ -162,18 +191,18 @@ def run_nse_yfinance_cutover_readiness(
     has_overlap = metrics["overlapping_symbols"] > 0
     if (
         has_overlap
-        and metrics["row_overlap_ratio"]
-        < settings.nse_provider_comparison_minimum_row_overlap
+        and metrics["row_overlap_ratio"] < settings.nse_provider_comparison_minimum_row_overlap
     ):
         blocking.append(
             "NSE provider row overlap is below threshold: "
             f"{metrics['row_overlap_ratio']:.4f}<"
-            f"{settings.nse_provider_comparison_minimum_row_overlap:.4f}."
+            f"{settings.nse_provider_comparison_minimum_row_overlap:.4f}; "
+            f"missing yfinance rows={metrics['missing_yfinance_rows']}, "
+            f"missing Upstox rows={metrics['missing_upstox_rows']}."
         )
     if (
         has_overlap
-        and metrics["close_match_ratio"]
-        < settings.nse_provider_comparison_minimum_close_match
+        and metrics["close_match_ratio"] < settings.nse_provider_comparison_minimum_close_match
     ):
         blocking.append(
             "NSE provider close-price match is below threshold: "
@@ -209,9 +238,7 @@ def run_nse_yfinance_cutover_readiness(
             "minimum_symbols": settings.nse_provider_comparison_minimum_symbols,
             "minimum_row_overlap": settings.nse_provider_comparison_minimum_row_overlap,
             "minimum_close_match": settings.nse_provider_comparison_minimum_close_match,
-            "maximum_session_lag": (
-                settings.nse_provider_comparison_maximum_session_lag
-            ),
+            "maximum_session_lag": (settings.nse_provider_comparison_maximum_session_lag),
             "missing_providers": missing_providers,
             "stale_providers": stale_providers,
             "comparison_state": comparison_state,
@@ -337,16 +364,46 @@ def _comparison_rows(
     if missing:
         raise ValueError(f"{provider} comparison frame is missing: {sorted(missing)}")
     result = frame.loc[:, ["symbol", "date", "close"]].copy()
-    result["symbol"] = result["symbol"].astype(str).str.strip().str.upper()
-    result["symbol"] = result["symbol"].str.replace(r"\.NS$", "", regex=True)
+    result["symbol"] = result["symbol"].map(_normalize_comparison_symbol)
     result["date"] = pd.to_datetime(result["date"], errors="coerce").dt.date
     result["close"] = pd.to_numeric(result["close"], errors="coerce")
     result = result[
-        result["date"].isin(sessions)
-        & result["symbol"].ne("")
-        & result["close"].notna()
+        result["date"].isin(sessions) & result["symbol"].ne("") & result["close"].notna()
     ]
     return result.drop_duplicates(["symbol", "date"], keep="last")
+
+
+def _normalize_comparison_symbol(value: object) -> str:
+    symbol = str(value or "").strip().upper()
+    return symbol[:-3] if symbol.endswith(".NS") else symbol
+
+
+def _rows_missing_from(source: pd.DataFrame, target: pd.DataFrame) -> pd.DataFrame:
+    columns = ["symbol", "date"]
+    if source.empty:
+        return pd.DataFrame(columns=columns)
+    target_keys = target.loc[:, columns].drop_duplicates()
+    joined = source.loc[:, columns].merge(
+        target_keys,
+        on=columns,
+        how="left",
+        indicator=True,
+    )
+    return joined.loc[joined["_merge"] == "left_only", columns].reset_index(drop=True)
+
+
+def _missing_rows_by_session(frame: pd.DataFrame) -> dict[str, int]:
+    if frame.empty:
+        return {}
+    counts = frame.groupby("date", sort=True).size()
+    return {value.isoformat(): int(count) for value, count in counts.items()}
+
+
+def _missing_row_samples(frame: pd.DataFrame, *, limit: int = 25) -> list[str]:
+    if frame.empty:
+        return []
+    ordered = frame.sort_values(["date", "symbol"]).head(limit)
+    return [f"{row.symbol}@{row.date.isoformat()}" for row in ordered.itertuples(index=False)]
 
 
 def _latest_date(frame: pd.DataFrame) -> str | None:

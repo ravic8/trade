@@ -23,8 +23,7 @@ class ExchangeSessionRepository(Protocol):
         exchange: str,
         year: int,
         max_age_days: int | None = None,
-    ) -> dict[str, Any] | None:
-        ...
+    ) -> dict[str, Any] | None: ...
 
     def upsert_exchange_holidays(
         self,
@@ -34,19 +33,16 @@ class ExchangeSessionRepository(Protocol):
         early_close_dates,
         source_url: str,
         fetched_at: datetime | None = None,
-    ) -> int:
-        ...
+    ) -> int: ...
 
-    def upsert_exchange_sessions(self, sessions) -> int:
-        ...
+    def upsert_exchange_sessions(self, sessions) -> int: ...
 
     def delete_exchange_sessions(
         self,
         exchange: str,
         start_date: date,
         end_date: date,
-    ) -> int:
-        ...
+    ) -> int: ...
 
     def observed_daily_session_dates(
         self,
@@ -55,8 +51,7 @@ class ExchangeSessionRepository(Protocol):
         end_date: date,
         *,
         minimum_instruments: int = 10,
-    ) -> set[date]:
-        ...
+    ) -> set[date]: ...
 
 
 def run_exchange_session_materialization_pipeline(
@@ -73,16 +68,8 @@ def run_exchange_session_materialization_pipeline(
     settings = get_settings()
     canonical_exchange = canonical_equity_exchange(exchange)
     current_date = as_of_date or date.today()
-    history = (
-        settings.exchange_session_history_years
-        if history_years is None
-        else history_years
-    )
-    future = (
-        settings.exchange_session_future_years
-        if future_years is None
-        else future_years
-    )
+    history = settings.exchange_session_history_years if history_years is None else history_years
+    future = settings.exchange_session_future_years if future_years is None else future_years
     if history < 0 or future < 0:
         raise ValueError("history_years and future_years must be non-negative")
     start_date = date(current_date.year - history, 1, 1)
@@ -121,9 +108,7 @@ def run_exchange_session_materialization_pipeline(
             canonical_exchange,
             start_date,
             requested_end_date,
-            minimum_instruments=(
-                settings.exchange_session_observed_open_minimum_instruments
-            ),
+            minimum_instruments=(settings.exchange_session_observed_open_minimum_instruments),
         )
         if observed_loader is not None
         else set()
@@ -140,12 +125,8 @@ def run_exchange_session_materialization_pipeline(
         sessions,
         start_date,
         current_year_end,
-        minimum_open_days_per_full_year=(
-            settings.exchange_session_minimum_open_days_per_year
-        ),
-        maximum_open_days_per_full_year=(
-            settings.exchange_session_maximum_open_days_per_year
-        ),
+        minimum_open_days_per_full_year=(settings.exchange_session_minimum_open_days_per_year),
+        maximum_open_days_per_full_year=(settings.exchange_session_maximum_open_days_per_year),
     )
     future_years_skipped: dict[int, list[str]] = {}
     if validation.accepted:
@@ -185,12 +166,8 @@ def run_exchange_session_materialization_pipeline(
         sessions,
         start_date,
         end_date,
-        minimum_open_days_per_full_year=(
-            settings.exchange_session_minimum_open_days_per_year
-        ),
-        maximum_open_days_per_full_year=(
-            settings.exchange_session_maximum_open_days_per_year
-        ),
+        minimum_open_days_per_full_year=(settings.exchange_session_minimum_open_days_per_year),
+        maximum_open_days_per_full_year=(settings.exchange_session_maximum_open_days_per_year),
     )
     shadow = shadow_compare_exchange_sessions(sessions, holiday_records)
     observed_special_sessions = [
@@ -243,17 +220,16 @@ def run_exchange_session_materialization_pipeline(
             "trading_days": validation.trading_day_count,
             "closed_days": validation.closed_day_count,
             "early_closes": validation.early_close_count,
-            "observed_special_sessions": [
-                value.isoformat() for value in observed_special_sessions
-            ],
+            "observed_special_sessions": [value.isoformat() for value in observed_special_sessions],
             "open_days_by_year": validation.open_days_by_year,
             "shadow_compared_years": list(shadow.compared_years),
             "shadow_discrepancy_count": shadow.discrepancy_count,
-            "shadow_legacy_only_dates": [
-                value.isoformat() for value in shadow.legacy_only_dates
-            ],
+            "shadow_legacy_only_dates": [value.isoformat() for value in shadow.legacy_only_dates],
             "shadow_materialized_only_dates": [
                 value.isoformat() for value in shadow.materialized_only_dates
+            ],
+            "shadow_explained_materialized_only_dates": [
+                value.isoformat() for value in shadow.explained_materialized_only_dates
             ],
             "planning_enabled": settings.materialized_exchange_sessions_enabled,
             "trigger": trigger,
@@ -272,9 +248,7 @@ def _stored_holiday_records(
     records: dict[int, ExchangeHolidays] = {}
     for year in range(start_year, end_year + 1):
         row = repository.exchange_holidays(exchange, year)
-        if row is None or not (
-            row.get("closed_dates") or row.get("early_close_dates")
-        ):
+        if row is None or not (row.get("closed_dates") or row.get("early_close_dates")):
             continue
         records[year] = _holiday_record(row)
     return records
@@ -282,9 +256,7 @@ def _stored_holiday_records(
 
 def _holiday_record(row: Mapping[str, Any]) -> ExchangeHolidays:
     return ExchangeHolidays(
-        closed_dates=frozenset(
-            date.fromisoformat(value) for value in row.get("closed_dates", [])
-        ),
+        closed_dates=frozenset(date.fromisoformat(value) for value in row.get("closed_dates", [])),
         early_close_dates=frozenset(
             date.fromisoformat(value) for value in row.get("early_close_dates", [])
         ),

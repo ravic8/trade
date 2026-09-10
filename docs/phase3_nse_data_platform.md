@@ -86,6 +86,13 @@ disabled.
 - Every completed Upstox-versus-yfinance readiness comparison is now retained
   as content-addressed, append-only evidence. Repeating an identical comparison
   reuses the same evidence ID instead of increasing the observation count.
+- The completed-session NSE planner also checks the exact provider-comparison
+  window for historical Yahoo gaps and enqueues bounded repairs. Comparison
+  evidence reports provider-specific missing rows by session with bounded
+  symbol/date samples, so a failed overlap gate is directly actionable.
+- Calendar shadow validation treats market-data-confirmed special NSE sessions
+  as explained differences while continuing to block unexplained differences.
+  Explained dates remain visible in the materialization metadata.
 - Cutover eligibility requires five consecutive distinct passing session
   windows by default. An authenticated administrator must approve the exact
   evidence-bundle digest; the approval and its actor, reason, timestamp, and
