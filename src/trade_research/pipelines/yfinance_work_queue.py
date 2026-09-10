@@ -54,6 +54,7 @@ def run_yfinance_daily_work_planner(
     include_incremental: bool = True,
     include_initial_backfill: bool = True,
     include_gap_repair: bool = False,
+    gap_repair_session_count: int | None = None,
     enqueue: bool = True,
     instrument_limit_per_exchange: int | None = None,
     provider_symbols: Iterable[str] | None = None,
@@ -70,6 +71,8 @@ def run_yfinance_daily_work_planner(
         )
     if instrument_limit_per_exchange is not None and instrument_limit_per_exchange < 1:
         raise ValueError("instrument_limit_per_exchange must be positive when provided.")
+    if gap_repair_session_count is not None and gap_repair_session_count < 1:
+        raise ValueError("gap_repair_session_count must be positive when provided.")
     requested_symbols = _normalize_requested_symbols(provider_symbols)
     if requested_symbols and len(resolved_exchanges) != 1:
         raise ValueError("provider_symbols requires exactly one requested exchange.")
@@ -261,9 +264,14 @@ def run_yfinance_daily_work_planner(
                     if enqueue:
                         exchange_inserted += db.enqueue_pipeline_work_items(work)
                 if include_gap_repair:
+                    repair_sessions = (
+                        sessions[-gap_repair_session_count:]
+                        if gap_repair_session_count is not None
+                        else sessions
+                    )
                     work = planner.plan_gap_repair(
                         chunk,
-                        sessions,
+                        repair_sessions,
                         stored_dates,
                         covered_windows=covered_windows,
                         now=observed_at,
@@ -319,6 +327,7 @@ def run_yfinance_daily_work_planner(
             "include_incremental": include_incremental,
             "include_initial_backfill": include_initial_backfill,
             "include_gap_repair": include_gap_repair,
+            "gap_repair_session_count": gap_repair_session_count,
             "exchanges": exchange_metrics,
             "queue": db.pipeline_work_queue_summary(),
         },

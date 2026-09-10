@@ -46,6 +46,84 @@ def test_enabled_exchanges_are_resolved_from_cutover_flags() -> None:
     assert yfinance_work_queue.enabled_yfinance_daily_exchanges(settings) == ("US",)
 
 
+def test_planner_limits_gap_repair_to_the_requested_recent_sessions(monkeypatch) -> None:
+    sessions = [date(2026, 6, 1) + timedelta(days=index) for index in range(30)]
+    captured: dict[str, object] = {}
+
+    class Store:
+        def initialize(self) -> None:
+            pass
+
+        def latest_provider_eligible_exchange_session(self, *_args, **_kwargs):
+            return {"session_date": sessions[-1]}
+
+        def exchange_sessions(self, *_args, **_kwargs):
+            return [
+                {
+                    "session_date": session,
+                    "is_trading_day": True,
+                    "validation_status": "valid",
+                }
+                for session in sessions
+            ]
+
+        def cancel_pipeline_work_items_before_listing(self, **_kwargs):
+            return 0
+
+        def active_yfinance_daily_instruments(self, _exchange):
+            return [
+                {
+                    "canonical_instrument_id": "eq_reliance",
+                    "provider_symbol": "RELIANCE.NS",
+                    "provider_instrument_key": "YF|RELIANCE.NS",
+                    "listing_status": "active",
+                    "pipeline_eligibility": "incremental",
+                }
+            ]
+
+        def latest_daily_ohlcv_dates(self, *_args, **_kwargs):
+            return {"YF|RELIANCE.NS": sessions[-1]}
+
+        def daily_ohlcv_dates_by_instrument(self, *_args, **_kwargs):
+            return {"YF|RELIANCE.NS": set(sessions)}
+
+        def enqueue_pipeline_work_items(self, work):
+            return len(list(work))
+
+        def pipeline_work_queue_summary(self):
+            return {}
+
+    def capture_gap_repair(
+        _self,
+        _instruments,
+        repair_sessions,
+        _stored_dates,
+        **_kwargs,
+    ):
+        captured["sessions"] = repair_sessions
+        return []
+
+    monkeypatch.setattr(
+        yfinance_work_queue,
+        "get_settings",
+        lambda: Settings(_env_file=None, yfinance_nse_enabled=True),
+    )
+    monkeypatch.setattr(yfinance_work_queue, "TimescaleStore", lambda _url: Store())
+    monkeypatch.setattr(DailyWorkPlanner, "plan_gap_repair", capture_gap_repair)
+
+    result = yfinance_work_queue.run_yfinance_daily_work_planner(
+        exchanges=("NSE",),
+        include_incremental=False,
+        include_initial_backfill=False,
+        include_gap_repair=True,
+        gap_repair_session_count=20,
+        at=NOW,
+    )
+
+    assert captured["sessions"] == sessions[-20:]
+    assert result.metrics["gap_repair_session_count"] == 20
+
+
 class _EmptyMappingsResult:
     def mappings(self):
         return self

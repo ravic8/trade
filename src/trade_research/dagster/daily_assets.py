@@ -111,8 +111,7 @@ def bigquery_tsx_ohlcv_canary(context) -> BigQuerySyncResult:
     )
     if result.status in {"failed", "gated"}:
         raise RuntimeError(
-            result.error_details
-            or "BigQuery TSX canary is gated or failed reconciliation."
+            result.error_details or "BigQuery TSX canary is gated or failed reconciliation."
         )
     return result
 
@@ -203,9 +202,12 @@ def yfinance_daily_work_plan(context) -> PipelineRunResult:
     description="Plan NSE Yahoo work after the provider grace period for the completed session.",
 )
 def yfinance_nse_completed_session_work_plan(context) -> PipelineRunResult:
+    settings = get_settings()
     result = run_yfinance_daily_work_planner(
         exchanges=("NSE",),
         include_initial_backfill=False,
+        include_gap_repair=True,
+        gap_repair_session_count=settings.nse_provider_comparison_sessions,
         trigger="dagster",
     )
     _record_pipeline_result(context, result)
@@ -698,9 +700,7 @@ def _require_upstream_artifact(result: PipelineRunResult, name: str) -> Path:
             f"Upstream pipeline {result.name} did not publish required artifact: {name}"
         )
     if not path.is_file():
-        raise RuntimeError(
-            f"Required upstream artifact does not exist for {result.name}: {path}"
-        )
+        raise RuntimeError(f"Required upstream artifact does not exist for {result.name}: {path}")
     return path
 
 

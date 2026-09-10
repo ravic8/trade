@@ -63,16 +63,8 @@ class MemorySessionStore:
 
     def upsert_exchange_sessions(self, sessions) -> int:
         incoming = list(sessions)
-        rows_by_key = {
-            (row["exchange"], row["session_date"]): row
-            for row in self.sessions
-        }
-        rows_by_key.update(
-            {
-                (row["exchange"], row["session_date"]): row
-                for row in incoming
-            }
-        )
+        rows_by_key = {(row["exchange"], row["session_date"]): row for row in self.sessions}
+        rows_by_key.update({(row["exchange"], row["session_date"]): row for row in incoming})
         self.sessions = list(rows_by_key.values())
         return len(incoming)
 
@@ -85,10 +77,7 @@ class MemorySessionStore:
         retained = [
             row
             for row in self.sessions
-            if not (
-                row["exchange"] == exchange
-                and start_date <= row["session_date"] <= end_date
-            )
+            if not (row["exchange"] == exchange and start_date <= row["session_date"] <= end_date)
         ]
         deleted = len(self.sessions) - len(retained)
         self.sessions = retained
@@ -102,11 +91,7 @@ class MemorySessionStore:
         *,
         minimum_instruments: int = 10,
     ) -> set[date]:
-        return {
-            value
-            for value in self.observed_dates
-            if start_date <= value <= end_date
-        }
+        return {value for value in self.observed_dates if start_date <= value <= end_date}
 
 
 def test_phase3_defaults_keep_planning_in_shadow_mode() -> None:
@@ -131,9 +116,7 @@ def test_us_materialization_includes_closed_dates_and_early_closes() -> None:
     assert by_date[date(2026, 7, 3)].is_trading_day is False
     assert by_date[date(2026, 7, 4)].is_trading_day is False
     assert by_date[date(2026, 11, 27)].is_early_close is True
-    assert by_date[date(2026, 11, 27)].market_close_utc == datetime(
-        2026, 11, 27, 18, 0, tzinfo=UTC
-    )
+    assert by_date[date(2026, 11, 27)].market_close_utc == datetime(2026, 11, 27, 18, 0, tzinfo=UTC)
 
 
 def test_tsx_materialization_represents_christmas_eve_early_close() -> None:
@@ -318,21 +301,30 @@ def test_session_classification_respects_close_and_provider_grace() -> None:
         )
     )
 
-    assert classify_exchange_session(
-        session,
-        at=datetime(2026, 7, 2, 19, 0, tzinfo=UTC),
-        provider_grace_minutes=120,
-    ) == "market_not_closed"
-    assert classify_exchange_session(
-        session,
-        at=datetime(2026, 7, 2, 20, 30, tzinfo=UTC),
-        provider_grace_minutes=120,
-    ) == "provider_pending"
-    assert classify_exchange_session(
-        session,
-        at=datetime(2026, 7, 2, 22, 1, tzinfo=UTC),
-        provider_grace_minutes=120,
-    ) == "expected"
+    assert (
+        classify_exchange_session(
+            session,
+            at=datetime(2026, 7, 2, 19, 0, tzinfo=UTC),
+            provider_grace_minutes=120,
+        )
+        == "market_not_closed"
+    )
+    assert (
+        classify_exchange_session(
+            session,
+            at=datetime(2026, 7, 2, 20, 30, tzinfo=UTC),
+            provider_grace_minutes=120,
+        )
+        == "provider_pending"
+    )
+    assert (
+        classify_exchange_session(
+            session,
+            at=datetime(2026, 7, 2, 22, 1, tzinfo=UTC),
+            provider_grace_minutes=120,
+        )
+        == "expected"
+    )
 
 
 def test_first_trade_date_excludes_prelisting_sessions_from_coverage() -> None:
@@ -369,9 +361,7 @@ def test_yfinance_missing_plan_does_not_queue_prelisting_dates() -> None:
         limit=None,
     )
 
-    assert plan[["fetch_start", "fetch_end", "expected_rows"]].to_dict(
-        orient="records"
-    ) == [
+    assert plan[["fetch_start", "fetch_end", "expected_rows"]].to_dict(orient="records") == [
         {
             "fetch_start": "2026-07-08",
             "fetch_end": "2026-07-08",
@@ -437,9 +427,7 @@ def test_materialization_pipeline_persists_valid_full_year(monkeypatch) -> None:
                     date(2026, 12, 25),
                 }
             ),
-            early_close_dates=frozenset(
-                {date(2026, 11, 27), date(2026, 12, 24)}
-            ),
+            early_close_dates=frozenset({date(2026, 11, 27), date(2026, 12, 24)}),
             source_url="official-test",
         ),
         generated_at=datetime(2026, 7, 17, tzinfo=UTC),
@@ -535,11 +523,12 @@ def test_materialization_ignores_poisoned_empty_year_and_keeps_special_sessions(
         trigger="test",
     )
 
-    assert result.status == "warn"
+    assert result.status == "pass"
     assert result.rows == 1096
     assert result.metrics["shadow_compared_years"] == [2025, 2026]
-    assert result.metrics["shadow_discrepancy_count"] == 3
-    assert result.metrics["shadow_materialized_only_dates"] == [
+    assert result.metrics["shadow_discrepancy_count"] == 0
+    assert result.metrics["shadow_materialized_only_dates"] == []
+    assert result.metrics["shadow_explained_materialized_only_dates"] == [
         "2025-02-01",
         "2025-10-21",
         "2026-02-01",
@@ -587,6 +576,5 @@ def test_materialization_pipeline_skips_an_incomplete_future_year(monkeypatch) -
     assert result.metrics["future_rows_deleted"] == 1
     assert all(row["session_date"].year == 2026 for row in store.sessions)
     assert any(
-        "Skipped incomplete future calendar year 2027" in warning
-        for warning in result.warnings
+        "Skipped incomplete future calendar year 2027" in warning for warning in result.warnings
     )

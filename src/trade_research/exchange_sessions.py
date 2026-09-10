@@ -17,9 +17,7 @@ from trade_research.market_calendar import (
     validated_exchange_calendar_years,
 )
 
-PANDAS_MARKET_CALENDARS_SOURCE_URL = (
-    "https://pandas-market-calendars.readthedocs.io/en/latest/"
-)
+PANDAS_MARKET_CALENDARS_SOURCE_URL = "https://pandas-market-calendars.readthedocs.io/en/latest/"
 _CALENDAR_NAMES = {"NSE": "NSE", "TSX": "TSX", "US": "NYSE"}
 
 
@@ -33,16 +31,14 @@ class ExchangeSessionStore(Protocol):
         exchange: str,
         start_date: date,
         end_date: date,
-    ) -> list[dict[str, Any]]:
-        ...
+    ) -> list[dict[str, Any]]: ...
 
     def exchange_holidays(
         self,
         exchange: str,
         year: int,
         max_age_days: int | None = None,
-    ) -> dict[str, Any] | None:
-        ...
+    ) -> dict[str, Any] | None: ...
 
 
 @dataclass(frozen=True)
@@ -77,6 +73,7 @@ class ExchangeSessionValidation:
 class ExchangeSessionShadowComparison:
     legacy_only_dates: tuple[date, ...]
     materialized_only_dates: tuple[date, ...]
+    explained_materialized_only_dates: tuple[date, ...]
     compared_years: tuple[int, ...]
 
     @property
@@ -106,10 +103,7 @@ def build_materialized_exchange_sessions(
     calendar_name = _CALENDAR_NAMES[canonical_exchange]
     calendar = market_calendars.get_calendar(calendar_name)
     schedule = calendar.schedule(start_date=start_date, end_date=end_date)
-    schedule_by_date = {
-        index.date(): row
-        for index, row in schedule.iterrows()
-    }
+    schedule_by_date = {index.date(): row for index, row in schedule.iterrows()}
     overrides = holiday_overrides or {}
     special_open_dates = observed_special_open_dates or frozenset()
     generated = _as_utc(generated_at or datetime.now(UTC))
@@ -122,9 +116,7 @@ def build_materialized_exchange_sessions(
     while current <= end_date:
         override = overrides.get(current.year)
         schedule_row = schedule_by_date.get(current)
-        is_calendar_override_closed = (
-            override is not None and current in override.closed_dates
-        )
+        is_calendar_override_closed = override is not None and current in override.closed_dates
         is_observed_special_open = current in special_open_dates and (
             schedule_row is None or is_calendar_override_closed
         )
@@ -181,8 +173,8 @@ def build_materialized_exchange_sessions(
                 config.early_close_time,
                 config.timezone,
             )
-        local_close = market_close.astimezone(ZoneInfo(config.timezone)).timetz().replace(
-            tzinfo=None
+        local_close = (
+            market_close.astimezone(ZoneInfo(config.timezone)).timetz().replace(tzinfo=None)
         )
         rows.append(
             MaterializedExchangeSession(
@@ -215,9 +207,7 @@ def validate_materialized_exchange_sessions(
     expected_row_count = (end_date - start_date).days + 1
     dates = [row["session_date"] for row in normalized]
     if len(normalized) != expected_row_count:
-        errors.append(
-            f"incomplete_date_range:{len(normalized)}!={expected_row_count}"
-        )
+        errors.append(f"incomplete_date_range:{len(normalized)}!={expected_row_count}")
     if len(set(dates)) != len(dates):
         errors.append("duplicate_session_dates")
     if dates and (min(dates) != start_date or max(dates) != end_date):
@@ -230,9 +220,7 @@ def validate_materialized_exchange_sessions(
     for row in normalized:
         session_date = row["session_date"]
         if row["is_trading_day"]:
-            open_days_by_year[session_date.year] = (
-                open_days_by_year.get(session_date.year, 0) + 1
-            )
+            open_days_by_year[session_date.year] = open_days_by_year.get(session_date.year, 0) + 1
             market_open = row["market_open_utc"]
             market_close = row["market_close_utc"]
             if (
@@ -282,13 +270,17 @@ def shadow_compare_exchange_sessions(
     holiday_records: Mapping[int, ExchangeHolidays],
 ) -> ExchangeSessionShadowComparison:
     materialized_by_year: dict[int, set[date]] = {}
+    observed_special_dates: set[date] = set()
     for row in (_session_mapping(item) for item in sessions):
         if row["is_trading_day"]:
             materialized_by_year.setdefault(row["session_date"].year, set()).add(
                 row["session_date"]
             )
+            if row.get("validation_status") == "valid_observed_special_session":
+                observed_special_dates.add(row["session_date"])
     legacy_only: set[date] = set()
     materialized_only: set[date] = set()
+    explained_materialized_only: set[date] = set()
     compared_years: list[int] = []
     for year, holidays in sorted(holiday_records.items()):
         if year not in materialized_by_year:
@@ -304,10 +296,13 @@ def shadow_compare_exchange_sessions(
         )
         materialized = materialized_by_year.get(year, set())
         legacy_only.update(legacy - materialized)
-        materialized_only.update(materialized - legacy)
+        materialized_difference = materialized - legacy
+        explained_materialized_only.update(materialized_difference & observed_special_dates)
+        materialized_only.update(materialized_difference - observed_special_dates)
     return ExchangeSessionShadowComparison(
         legacy_only_dates=tuple(sorted(legacy_only)),
         materialized_only_dates=tuple(sorted(materialized_only)),
+        explained_materialized_only_dates=tuple(sorted(explained_materialized_only)),
         compared_years=tuple(compared_years),
     )
 
@@ -326,17 +321,14 @@ def resolve_expected_session_dates(
         rows = store.exchange_sessions(canonical_exchange, start_date, end_date)
         expected_count = (end_date - start_date).days + 1
         if len(rows) != expected_count or any(
-            not str(row.get("validation_status") or "").startswith("valid")
-            for row in rows
+            not str(row.get("validation_status") or "").startswith("valid") for row in rows
         ):
             raise ExchangeSessionError(
                 f"Materialized {canonical_exchange} sessions are incomplete or invalid for "
                 f"{start_date} through {end_date}."
             )
         return ExpectedSessionResolution(
-            dates=tuple(
-                row["session_date"] for row in rows if row.get("is_trading_day")
-            ),
+            dates=tuple(row["session_date"] for row in rows if row.get("is_trading_day")),
             source="materialized_exchange_sessions",
         )
 
@@ -350,9 +342,7 @@ def resolve_expected_session_dates(
                 holidays=holidays,
             )
         ),
-        source=(
-            "stored_exchange_holidays" if holidays is not None else "weekdays_only_fallback"
-        ),
+        source=("stored_exchange_holidays" if holidays is not None else "weekdays_only_fallback"),
     )
 
 

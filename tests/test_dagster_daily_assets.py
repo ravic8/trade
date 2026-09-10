@@ -351,9 +351,7 @@ def test_completed_session_gate_records_degraded_noop_without_failing(
         ),
     )
 
-    result = daily_assets.nse_completed_session_opportunity_targets(
-        dagster.build_op_context()
-    )
+    result = daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
 
     assert result.business_outcome == "degraded"
 
@@ -373,9 +371,7 @@ def test_completed_session_gate_fails_degraded_ready_materialization(
     )
 
     with pytest.raises(RuntimeError, match="1 target row failed validation"):
-        daily_assets.nse_completed_session_opportunity_targets(
-            dagster.build_op_context()
-        )
+        daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
 
 
 def test_result_metadata_exposes_canonical_business_outcome() -> None:
@@ -415,13 +411,8 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
 ) -> None:
     calls: list[tuple[str, object]] = []
 
-    def fake_planner(*, exchanges, include_initial_backfill, trigger):
-        calls.append(
-            (
-                "planner",
-                (exchanges, include_initial_backfill, trigger),
-            )
-        )
+    def fake_planner(**kwargs):
+        calls.append(("planner", kwargs))
         return _result("yfinance_daily_work_planner")
 
     def fake_targets(*, exchange, ohlcv_source):
@@ -439,7 +430,16 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
     daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
 
     assert calls == [
-        ("planner", (("NSE",), False, "dagster")),
+        (
+            "planner",
+            {
+                "exchanges": ("NSE",),
+                "include_initial_backfill": False,
+                "include_gap_repair": True,
+                "gap_repair_session_count": 20,
+                "trigger": "dagster",
+            },
+        ),
         ("targets", ("NSE", "yfinance")),
     ]
 
