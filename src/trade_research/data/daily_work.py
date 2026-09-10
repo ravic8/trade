@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -123,6 +123,7 @@ class DailyWorkPlanner:
         instruments: Sequence[DailyInstrument],
         sessions: Sequence[date],
         *,
+        run_key: str | None = None,
         now: datetime | None = None,
     ) -> list[DailyWorkItem]:
         ordered_sessions = sorted(set(sessions))
@@ -133,15 +134,21 @@ class DailyWorkPlanner:
         for instrument in instruments:
             instrument_sessions = _eligible_sessions(instrument, ordered_sessions)
             if instrument_sessions:
-                work.append(
-                    self._item(
+                item = self._item(
                         instrument,
                         work_type="bounded_canary",
                         window_start=instrument_sessions[0],
                         window_end=instrument_sessions[-1],
                         now=observed_at,
                     )
-                )
+                if run_key:
+                    idempotency_key = f"{item.idempotency_key}|canary_run={run_key}"
+                    item = replace(
+                        item,
+                        work_item_id=str(uuid5(NAMESPACE_URL, idempotency_key)),
+                        idempotency_key=idempotency_key,
+                    )
+                work.append(item)
         return work
 
     def plan_initial_backfill(

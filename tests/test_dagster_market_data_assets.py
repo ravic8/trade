@@ -77,6 +77,7 @@ def test_minute_asset_supports_manual_launch_context(monkeypatch) -> None:
                 "validated_rows": 100,
                 "clickhouse_rows": 100,
                 "failure_rows": 0,
+                "run_id": "minute-canary-run",
                 "raw_snapshot_uri": "s3://redacted",
             },
         )

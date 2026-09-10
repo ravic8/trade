@@ -328,11 +328,10 @@ def test_phase3_daily_canary_plans_and_claims_only_bounded_nse_work(
     monkeypatch.setattr(daily_assets, "run_yfinance_nse_canary_planner", fake_plan)
     monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_queue", fake_worker)
 
-    result = daily_assets.yfinance_nse_daily_canary(
-        dagster.build_op_context(
-            op_config={"symbol_limit": 2, "symbols": "RELIANCE,TCS"}
-        )
+    context = dagster.build_op_context(
+        op_config={"symbol_limit": 2, "symbols": "RELIANCE,TCS"}
     )
+    result = daily_assets.yfinance_nse_daily_canary(context)
 
     assert result.metrics["run_id"] == "daily-canary-run"
     assert calls == [
@@ -344,6 +343,7 @@ def test_phase3_daily_canary_plans_and_claims_only_bounded_nse_work(
                 "enqueue": True,
                 "force_refresh": True,
                 "session_count": 20,
+                "run_key": context.run_id,
                 "trigger": "dagster",
             },
         ),

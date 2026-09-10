@@ -57,6 +57,7 @@ def run_yfinance_daily_work_planner(
     gap_repair_session_count: int | None = None,
     include_bounded_canary: bool = False,
     bounded_canary_session_count: int | None = None,
+    bounded_canary_run_key: str | None = None,
     enqueue: bool = True,
     instrument_limit_per_exchange: int | None = None,
     provider_symbols: Iterable[str] | None = None,
@@ -292,6 +293,7 @@ def run_yfinance_daily_work_planner(
             work = planner.plan_bounded_canary(
                 instruments,
                 canary_sessions,
+                run_key=bounded_canary_run_key,
                 now=observed_at,
             )
             exchange_generated += len(work)
@@ -348,6 +350,7 @@ def run_yfinance_daily_work_planner(
             "gap_repair_session_count": gap_repair_session_count,
             "include_bounded_canary": include_bounded_canary,
             "bounded_canary_session_count": bounded_canary_session_count,
+            "bounded_canary_run_key": bounded_canary_run_key,
             "exchanges": exchange_metrics,
             "queue": db.pipeline_work_queue_summary(),
         },
@@ -400,6 +403,7 @@ def run_yfinance_nse_canary_planner(
     enqueue: bool = False,
     force_refresh: bool = False,
     session_count: int | None = None,
+    run_key: str | None = None,
     trigger: str = "pipeline",
     at: datetime | None = None,
 ) -> PipelineRunResult:
@@ -434,6 +438,7 @@ def run_yfinance_nse_canary_planner(
             if force_refresh
             else None
         ),
+        bounded_canary_run_key=run_key if force_refresh else None,
         enqueue=enqueue,
         instrument_limit_per_exchange=symbol_limit,
         provider_symbols=requested_symbols,
