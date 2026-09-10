@@ -209,6 +209,7 @@ print_readiness() {
   if [[ "$status" -ne 0 ]]; then
     log "readiness remains blocked; no activation setting was changed"
   fi
+  return "$status"
 }
 
 case "$OPERATION" in
