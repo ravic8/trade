@@ -59,3 +59,38 @@ def test_provider_comparison_asset_fails_dagster_run_on_blocked_window(
 
     with pytest.raises(RuntimeError, match="comparison failed"):
         market_data_assets.nse_yfinance_provider_comparison(dagster.build_op_context())
+
+
+def test_minute_asset_supports_manual_launch_context(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_minute(**kwargs):
+        captured.update(kwargs)
+        return market_data_assets.PipelineRunResult(
+            name="yfinance_nse_1m_ohlcv",
+            status="pass",
+            rows=100,
+            metrics={
+                "eligible_sessions": 5,
+                "selected_symbols": 2,
+                "raw_rows": 100,
+                "validated_rows": 100,
+                "clickhouse_rows": 100,
+                "failure_rows": 0,
+                "raw_snapshot_uri": "s3://redacted",
+            },
+        )
+
+    monkeypatch.setattr(
+        market_data_assets,
+        "run_yfinance_nse_minute_pipeline",
+        fake_minute,
+    )
+
+    result = market_data_assets.yfinance_nse_minute_ohlcv(
+        dagster.build_op_context(op_config={"symbol_limit": 2})
+    )
+
+    assert result.status == "pass"
+    assert captured["at"] is None
+    assert captured["symbol_limit"] == 2

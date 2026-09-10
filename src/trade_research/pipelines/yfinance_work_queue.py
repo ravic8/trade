@@ -55,6 +55,8 @@ def run_yfinance_daily_work_planner(
     include_initial_backfill: bool = True,
     include_gap_repair: bool = False,
     gap_repair_session_count: int | None = None,
+    include_bounded_canary: bool = False,
+    bounded_canary_session_count: int | None = None,
     enqueue: bool = True,
     instrument_limit_per_exchange: int | None = None,
     provider_symbols: Iterable[str] | None = None,
@@ -73,6 +75,12 @@ def run_yfinance_daily_work_planner(
         raise ValueError("instrument_limit_per_exchange must be positive when provided.")
     if gap_repair_session_count is not None and gap_repair_session_count < 1:
         raise ValueError("gap_repair_session_count must be positive when provided.")
+    if bounded_canary_session_count is not None and bounded_canary_session_count < 1:
+        raise ValueError("bounded_canary_session_count must be positive when provided.")
+    if include_bounded_canary and bounded_canary_session_count is None:
+        raise ValueError(
+            "bounded_canary_session_count is required when include_bounded_canary is true."
+        )
     requested_symbols = _normalize_requested_symbols(provider_symbols)
     if requested_symbols and len(resolved_exchanges) != 1:
         raise ValueError("provider_symbols requires exactly one requested exchange.")
@@ -279,6 +287,16 @@ def run_yfinance_daily_work_planner(
                     exchange_generated += len(work)
                     if enqueue:
                         exchange_inserted += db.enqueue_pipeline_work_items(work)
+        if include_bounded_canary:
+            canary_sessions = sessions[-bounded_canary_session_count:]
+            work = planner.plan_bounded_canary(
+                instruments,
+                canary_sessions,
+                now=observed_at,
+            )
+            exchange_generated += len(work)
+            if enqueue:
+                exchange_inserted += db.enqueue_pipeline_work_items(work)
 
         generated += exchange_generated
         inserted += exchange_inserted
@@ -328,6 +346,8 @@ def run_yfinance_daily_work_planner(
             "include_initial_backfill": include_initial_backfill,
             "include_gap_repair": include_gap_repair,
             "gap_repair_session_count": gap_repair_session_count,
+            "include_bounded_canary": include_bounded_canary,
+            "bounded_canary_session_count": bounded_canary_session_count,
             "exchanges": exchange_metrics,
             "queue": db.pipeline_work_queue_summary(),
         },
@@ -378,6 +398,8 @@ def run_yfinance_nse_canary_planner(
     symbol_limit: int,
     provider_symbols: Iterable[str] | None = None,
     enqueue: bool = False,
+    force_refresh: bool = False,
+    session_count: int | None = None,
     trigger: str = "pipeline",
     at: datetime | None = None,
 ) -> PipelineRunResult:
@@ -404,8 +426,14 @@ def run_yfinance_nse_canary_planner(
     result = run_yfinance_daily_work_planner(
         exchanges=("NSE",),
         include_incremental=False,
-        include_initial_backfill=True,
+        include_initial_backfill=not force_refresh,
         include_gap_repair=False,
+        include_bounded_canary=force_refresh,
+        bounded_canary_session_count=(
+            session_count or settings.nse_provider_comparison_sessions
+            if force_refresh
+            else None
+        ),
         enqueue=enqueue,
         instrument_limit_per_exchange=symbol_limit,
         provider_symbols=requested_symbols,
@@ -440,6 +468,8 @@ def run_yfinance_daily_work_queue(
     *,
     worker_id: str | None = None,
     claim_size: int | None = None,
+    exchange: str | None = None,
+    work_type: str | None = None,
     trigger: str = "pipeline",
     provider: YFinanceBatchProvider | None = None,
     at: datetime | None = None,
@@ -471,6 +501,8 @@ def run_yfinance_daily_work_queue(
         worker_id=resolved_worker_id,
         limit=claim_size or settings.yfinance_work_claim_size,
         at=observed_at,
+        exchange=exchange,
+        work_type=work_type,
     )
     if not claimed:
         return PipelineRunResult(
@@ -491,13 +523,14 @@ def run_yfinance_daily_work_queue(
 
     run_id = db.start_ingestion_run(
         job_name="yfinance_daily_work_queue",
-        exchange="MULTI",
+        exchange=exchange.upper() if exchange else "MULTI",
         source="yfinance",
         items_requested=len(claimed),
         run_metadata={
             "trigger": trigger,
             "worker_id": resolved_worker_id,
             "claimed_work_item_ids": [row["work_item_id"] for row in claimed],
+            "work_type_filter": work_type,
         },
     )
     exchange_results: dict[str, dict[str, int | str]] = {}

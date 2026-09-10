@@ -7,6 +7,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 WORK_PRIORITIES = {
+    "bounded_canary": 5,
     "daily_incremental": 10,
     "daily_incremental_retry": 20,
     "new_symbol_backfill": 30,
@@ -115,6 +116,32 @@ class DailyWorkPlanner:
                     now=observed_at,
                 )
             )
+        return work
+
+    def plan_bounded_canary(
+        self,
+        instruments: Sequence[DailyInstrument],
+        sessions: Sequence[date],
+        *,
+        now: datetime | None = None,
+    ) -> list[DailyWorkItem]:
+        ordered_sessions = sorted(set(sessions))
+        if not ordered_sessions:
+            return []
+        observed_at = _as_utc(now or datetime.now(UTC))
+        work: list[DailyWorkItem] = []
+        for instrument in instruments:
+            instrument_sessions = _eligible_sessions(instrument, ordered_sessions)
+            if instrument_sessions:
+                work.append(
+                    self._item(
+                        instrument,
+                        work_type="bounded_canary",
+                        window_start=instrument_sessions[0],
+                        window_end=instrument_sessions[-1],
+                        now=observed_at,
+                    )
+                )
         return work
 
     def plan_initial_backfill(

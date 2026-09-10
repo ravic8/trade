@@ -31,6 +31,7 @@ from trade_research.dagster.daily_assets import (
     yfinance_fx_crypto_intraday_ohlcv,
     yfinance_fx_intraday_gap_validation,
     yfinance_nse_completed_session_work_plan,
+    yfinance_nse_daily_canary,
     yfinance_tsx_completed_session_work_plan,
     yfinance_us_completed_session_work_plan,
     yfinance_us_daily_ohlcv,
@@ -98,6 +99,11 @@ nse_daily_clickhouse_partition_reconciliation_job = define_asset_job(
 nse_yfinance_provider_comparison_job = define_asset_job(
     name="nse_yfinance_provider_comparison_job",
     selection=[nse_yfinance_provider_comparison],
+)
+
+yfinance_nse_daily_canary_job = define_asset_job(
+    name="yfinance_nse_daily_canary_job",
+    selection=[yfinance_nse_daily_canary],
 )
 
 yfinance_nse_completed_session_work_planner_job = define_asset_job(
@@ -372,6 +378,7 @@ defs = Definitions(
         us_universe_snapshot,
         yfinance_daily_work_plan,
         yfinance_nse_completed_session_work_plan,
+        yfinance_nse_daily_canary,
         yfinance_tsx_completed_session_work_plan,
         yfinance_us_completed_session_work_plan,
         yfinance_daily_work_worker,
@@ -408,6 +415,7 @@ defs = Definitions(
         yfinance_nse_minute_job,
         nse_daily_clickhouse_partition_reconciliation_job,
         nse_yfinance_provider_comparison_job,
+        yfinance_nse_daily_canary_job,
         nse_universe_refresh_job,
         tsx_universe_refresh_job,
         us_universe_refresh_job,

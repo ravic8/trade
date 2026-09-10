@@ -32,6 +32,7 @@ from trade_research.pipelines import (
     run_yfinance_daily_work_planner,
     run_yfinance_daily_work_queue,
     run_yfinance_intraday_ohlcv_pipeline,
+    run_yfinance_nse_canary_planner,
 )
 from trade_research.validation import resolve_latest_expected_trading_date
 
@@ -211,6 +212,62 @@ def yfinance_nse_completed_session_work_plan(context) -> PipelineRunResult:
         trigger="dagster",
     )
     _record_pipeline_result(context, result)
+    return result
+
+
+@asset(
+    group_name="nse_market_data",
+    compute_kind="yfinance",
+    config_schema={
+        "symbol_limit": Field(Int, default_value=25),
+        "symbols": Field(String, is_required=False),
+    },
+    description=(
+        "Run one bounded NSE Yahoo daily refresh with durable quality and "
+        "ClickHouse evidence for Phase 3 readiness."
+    ),
+)
+def yfinance_nse_daily_canary(context) -> PipelineRunResult:
+    settings = get_settings()
+    symbol_limit = int(context.op_config["symbol_limit"])
+    if symbol_limit > settings.phase3_canary_max_instruments:
+        raise ValueError(
+            "Daily canary symbol limit exceeds the Phase 3 readiness maximum: "
+            f"{symbol_limit}>{settings.phase3_canary_max_instruments}."
+        )
+    symbols = context.op_config.get("symbols")
+    provider_symbols = (
+        [value.strip() for value in symbols.split(",") if value.strip()]
+        if symbols
+        else None
+    )
+    plan = run_yfinance_nse_canary_planner(
+        symbol_limit=symbol_limit,
+        provider_symbols=provider_symbols,
+        enqueue=True,
+        force_refresh=True,
+        session_count=settings.nse_provider_comparison_sessions,
+        trigger="dagster",
+    )
+    result = run_yfinance_daily_work_queue(
+        claim_size=symbol_limit,
+        exchange="NSE",
+        work_type="bounded_canary",
+        trigger="dagster",
+    )
+    result.metrics.update(
+        {
+            "canary": True,
+            "canary_symbol_limit": symbol_limit,
+            "canary_work_generated": plan.metrics.get("work_generated", 0),
+            "canary_work_inserted": plan.metrics.get("work_inserted", 0),
+        }
+    )
+    if not result.metrics.get("run_id"):
+        raise RuntimeError(
+            "No new bounded daily canary work was available for this session window."
+        )
+    _record_pipeline_result(context, result, fail_on_degraded=True)
     return result
 
 

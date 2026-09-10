@@ -302,6 +302,63 @@ def test_phase5_queue_assets_call_durable_pipelines(monkeypatch) -> None:
     ]
 
 
+def test_phase3_daily_canary_plans_and_claims_only_bounded_nse_work(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_plan(**kwargs):
+        calls.append(("plan", kwargs))
+        return daily_assets.PipelineRunResult(
+            name="planner",
+            status="pass",
+            rows=2,
+            metrics={"work_generated": 2, "work_inserted": 2},
+        )
+
+    def fake_worker(**kwargs):
+        calls.append(("worker", kwargs))
+        return daily_assets.PipelineRunResult(
+            name="worker",
+            status="pass",
+            rows=40,
+            metrics={"run_id": "daily-canary-run"},
+        )
+
+    monkeypatch.setattr(daily_assets, "run_yfinance_nse_canary_planner", fake_plan)
+    monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_queue", fake_worker)
+
+    result = daily_assets.yfinance_nse_daily_canary(
+        dagster.build_op_context(
+            op_config={"symbol_limit": 2, "symbols": "RELIANCE,TCS"}
+        )
+    )
+
+    assert result.metrics["run_id"] == "daily-canary-run"
+    assert calls == [
+        (
+            "plan",
+            {
+                "symbol_limit": 2,
+                "provider_symbols": ["RELIANCE", "TCS"],
+                "enqueue": True,
+                "force_refresh": True,
+                "session_count": 20,
+                "trigger": "dagster",
+            },
+        ),
+        (
+            "worker",
+            {
+                "claim_size": 2,
+                "exchange": "NSE",
+                "work_type": "bounded_canary",
+                "trigger": "dagster",
+            },
+        ),
+    ]
+
+
 def test_yfinance_worker_asset_fails_dagster_run_on_partial_business_outcome(
     monkeypatch,
 ) -> None:
