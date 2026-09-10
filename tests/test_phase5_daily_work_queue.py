@@ -266,6 +266,18 @@ def test_incremental_planning_uses_five_session_overlap_and_higher_priority() ->
     assert work[0].priority < WORK_PRIORITIES["initial_backfill"]
 
 
+def test_bounded_canary_planning_refreshes_existing_rows_at_highest_priority() -> None:
+    sessions = [date(2026, 7, day) for day in (14, 15, 16, 17)]
+
+    work = DailyWorkPlanner().plan_bounded_canary([INSTRUMENT], sessions, now=NOW)
+
+    assert len(work) == 1
+    assert work[0].work_type == "bounded_canary"
+    assert work[0].window_start == sessions[0]
+    assert work[0].window_end == sessions[-1]
+    assert work[0].priority < WORK_PRIORITIES["daily_incremental"]
+
+
 def test_work_item_identity_is_stable_across_repeated_planning() -> None:
     sessions = [date(2026, 7, 16), date(2026, 7, 17)]
     planner = DailyWorkPlanner()

@@ -32,7 +32,7 @@ def yfinance_nse_minute_ohlcv(context) -> PipelineRunResult:
             [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
         ),
         trigger="dagster",
-        at=context.scheduled_execution_time,
+        at=getattr(context, "scheduled_execution_time", None),
     )
     context.add_output_metadata(
         {

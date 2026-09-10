@@ -2525,6 +2525,8 @@ class TimescaleStore:
         limit: int,
         at: datetime | None = None,
         provider: str = "yfinance",
+        exchange: str | None = None,
+        work_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Atomically claim ready work using PostgreSQL SKIP LOCKED."""
         if limit <= 0:
@@ -2544,7 +2546,13 @@ class TimescaleStore:
             .where(
                 pipeline_work_items_table.c.attempt_count < pipeline_work_items_table.c.max_attempts
             )
-            .order_by(
+        )
+        if exchange is not None:
+            query = query.where(pipeline_work_items_table.c.exchange == exchange.upper())
+        if work_type is not None:
+            query = query.where(pipeline_work_items_table.c.work_type == work_type)
+        query = (
+            query.order_by(
                 pipeline_work_items_table.c.priority,
                 pipeline_work_items_table.c.created_at,
                 pipeline_work_items_table.c.work_item_id,

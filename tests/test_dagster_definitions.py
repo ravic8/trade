@@ -62,6 +62,17 @@ def test_phase3_provider_comparison_is_manual_only() -> None:
     )
 
 
+def test_phase3_daily_canary_is_manual_only() -> None:
+    assert (
+        definitions.yfinance_nse_daily_canary_job.name
+        == "yfinance_nse_daily_canary_job"
+    )
+    assert all(
+        schedule.name != "yfinance_nse_daily_canary_schedule"
+        for schedule in definitions.defs.schedules
+    )
+
+
 def test_phase2_universe_refresh_jobs_and_schedules_are_stopped_by_default() -> None:
     for exchange in ("nse", "tsx", "us"):
         job = getattr(definitions, f"{exchange}_universe_refresh_job")

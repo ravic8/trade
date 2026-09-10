@@ -213,6 +213,12 @@ ClickHouse remains a replica. It cannot overwrite PostgreSQL daily candles.
   provider-comparison windows. Implementation alone intentionally leaves the
   production gate blocked until those live evidence records pass.
 
+Production canary data is generated through the manual-only
+`yfinance_nse_daily_canary_job` and two independent launches of
+`yfinance_nse_minute_job`, each limited to at most
+`PHASE3_CANARY_MAX_INSTRUMENTS`. The daily job uses a dedicated queue work type
+and cannot claim unrelated exchange or incremental work.
+
 ## Exit gate
 
 Phase 3 is not complete until daily completeness meets the approved threshold
