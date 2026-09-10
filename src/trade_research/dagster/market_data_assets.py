@@ -44,6 +44,7 @@ def yfinance_nse_minute_ohlcv(context) -> PipelineRunResult:
             "validated_rows": result.metrics["validated_rows"],
             "clickhouse_rows": result.metrics["clickhouse_rows"],
             "failure_rows": result.metrics["failure_rows"],
+            "run_id": str(result.metrics.get("run_id") or ""),
             "raw_snapshot_uri": result.metrics["raw_snapshot_uri"] or "",
         }
     )

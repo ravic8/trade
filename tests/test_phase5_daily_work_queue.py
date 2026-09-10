@@ -269,13 +269,20 @@ def test_incremental_planning_uses_five_session_overlap_and_higher_priority() ->
 def test_bounded_canary_planning_refreshes_existing_rows_at_highest_priority() -> None:
     sessions = [date(2026, 7, day) for day in (14, 15, 16, 17)]
 
-    work = DailyWorkPlanner().plan_bounded_canary([INSTRUMENT], sessions, now=NOW)
+    planner = DailyWorkPlanner()
+    work = planner.plan_bounded_canary(
+        [INSTRUMENT], sessions, run_key="dagster-run-1", now=NOW
+    )
+    rerun = planner.plan_bounded_canary(
+        [INSTRUMENT], sessions, run_key="dagster-run-2", now=NOW
+    )
 
     assert len(work) == 1
     assert work[0].work_type == "bounded_canary"
     assert work[0].window_start == sessions[0]
     assert work[0].window_end == sessions[-1]
     assert work[0].priority < WORK_PRIORITIES["daily_incremental"]
+    assert work[0].work_item_id != rerun[0].work_item_id
 
 
 def test_work_item_identity_is_stable_across_repeated_planning() -> None:

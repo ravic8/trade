@@ -247,6 +247,7 @@ def yfinance_nse_daily_canary(context) -> PipelineRunResult:
         enqueue=True,
         force_refresh=True,
         session_count=settings.nse_provider_comparison_sessions,
+        run_key=context.run_id,
         trigger="dagster",
     )
     result = run_yfinance_daily_work_queue(
@@ -263,6 +264,8 @@ def yfinance_nse_daily_canary(context) -> PipelineRunResult:
             "canary_work_inserted": plan.metrics.get("work_inserted", 0),
         }
     )
+    if result.metrics.get("run_id"):
+        result.metrics["run_id"] = str(result.metrics["run_id"])
     if not result.metrics.get("run_id"):
         raise RuntimeError(
             "No new bounded daily canary work was available for this session window."
