@@ -670,7 +670,7 @@ for attempt in {1..30}; do
     research_storage_health_ok=false
     if [[ -n "$("${compose[@]}" ps --status running -q clickhouse)" ]] \
       && "${compose[@]}" exec -T clickhouse clickhouse-client \
-        --user "$PROD_CLICKHOUSE_API_USER" \
+        --user "${PROD_CLICKHOUSE_API_USER:-api_reader}" \
         --password "$PROD_CLICKHOUSE_API_PASSWORD" \
         --query "SELECT count() FROM research.schema_migrations" >/dev/null; then
       research_storage_health_ok=true
