@@ -51,6 +51,17 @@ def test_phase3_daily_partition_reconciliation_is_manual_only() -> None:
     )
 
 
+def test_phase3_provider_comparison_is_manual_only() -> None:
+    assert (
+        definitions.nse_yfinance_provider_comparison_job.name
+        == "nse_yfinance_provider_comparison_job"
+    )
+    assert all(
+        schedule.name != "nse_yfinance_provider_comparison_schedule"
+        for schedule in definitions.defs.schedules
+    )
+
+
 def test_phase2_universe_refresh_jobs_and_schedules_are_stopped_by_default() -> None:
     for exchange in ("nse", "tsx", "us"):
         job = getattr(definitions, f"{exchange}_universe_refresh_job")

@@ -5,7 +5,11 @@ from dagster import Bool, Field, Int, String, asset
 from trade_research.market_data.partition_reconciliation import (
     run_nse_daily_partition_reconciliation,
 )
-from trade_research.pipelines import PipelineRunResult, run_yfinance_nse_minute_pipeline
+from trade_research.pipelines import (
+    PipelineRunResult,
+    run_nse_yfinance_cutover_readiness,
+    run_yfinance_nse_minute_pipeline,
+)
 
 
 @asset(
@@ -88,5 +92,39 @@ def nse_daily_clickhouse_partition_reconciliation(context):
         raise RuntimeError(
             "NSE daily ClickHouse partition remains mismatched; review the durable "
             "replication checkpoint before retrying."
+        )
+    return result
+
+
+@asset(
+    group_name="nse_market_data",
+    compute_kind="provider_comparison",
+    description=(
+        "Record one audited NSE Upstox-vs-yfinance provider comparison window for "
+        "Phase 3 production readiness."
+    ),
+    )
+def nse_yfinance_provider_comparison(context) -> PipelineRunResult:
+    result = run_nse_yfinance_cutover_readiness(
+        trigger="dagster",
+        at=getattr(context, "scheduled_execution_time", None),
+    )
+    metrics = result.metrics
+    context.add_output_metadata(
+        {
+            "status": result.status,
+            "rows": result.rows,
+            "comparison_state": metrics.get("comparison_state", "unavailable"),
+            "window_start": metrics.get("window_start", ""),
+            "window_end": metrics.get("window_end", ""),
+            "overlapping_symbols": metrics.get("overlapping_symbols", 0),
+            "row_overlap_ratio": metrics.get("row_overlap_ratio", 0),
+            "close_match_ratio": metrics.get("close_match_ratio", 0),
+            "evidence_id": metrics.get("evidence_id", ""),
+        }
+    )
+    if result.status != "pass":
+        raise RuntimeError(
+            "NSE provider comparison did not pass; review the recorded evidence before retrying."
         )
     return result
