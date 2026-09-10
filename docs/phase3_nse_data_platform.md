@@ -152,6 +152,19 @@ The production deployment script enforces the same rule after PostgreSQL
 migration and stops the deployment if activation is requested while any
 durable readiness gate is blocked.
 
+For the Phase 3 canary plane, production may use an external MinIO KMS/KES
+endpoint or the explicitly opted-in repository-managed KES service:
+
+```text
+PROD_SELF_MANAGED_KES_ENABLED=true
+```
+
+The managed path renders a private KES filesystem keystore under
+`/opt/trade/kes`, mounts it only on the Docker network, and sets MinIO's
+documented `MINIO_KMS_KES_*` variables. It is intended to unblock the
+single-host V1 canary path; a third-party or MinIO KMS remains the preferred
+long-term production key manager.
+
 The provider observation gate defaults to:
 
 ```text

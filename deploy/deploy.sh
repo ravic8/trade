@@ -154,6 +154,14 @@ if [[ "${PROD_RESEARCH_STORAGE_ENABLED:-false}" == "true" \
   exit 1
 fi
 
+if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
+  "$APP_DIR/deploy/managed-kes.sh" prepare
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
   minio_kms_names=(
     PROD_MINIO_KMS_SERVER
@@ -240,6 +248,12 @@ fi
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   mkdir_from_var "${PROD_CLICKHOUSE_DATA_DIR:-/opt/trade/clickhouse}"
 fi
+if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
+  mkdir_from_var "${PROD_KES_CONFIG_DIR:-/opt/trade/kes/config}"
+  mkdir_from_var "${PROD_KES_CERT_DIR:-/opt/trade/kes/certs}"
+  mkdir_from_var "${PROD_KES_KEY_DIR:-/opt/trade/kes/keys}"
+  mkdir_from_var "${PROD_KES_SECRET_DIR:-/opt/trade/kes/secrets}"
+fi
 if [[ "${PROD_OTEL_ENABLED:-true}" == "true" ]]; then
   mkdir_from_var "${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}"
   mkdir_from_var "${alertmanager_data_dir:-${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}}"
@@ -268,7 +282,11 @@ fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.yml")
 if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
-  compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")
+  if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
+    compose+=(-f "$APP_DIR/docker-compose.prod.managed-kes.yml")
+  else
+    compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")
+  fi
 fi
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   compose+=(--profile research)
@@ -287,6 +305,9 @@ diagnostic_services=(
 )
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   diagnostic_services+=(clickhouse)
+fi
+if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
+  diagnostic_services+=(kes)
 fi
 
 dump_service_diagnostics() {
@@ -425,6 +446,9 @@ start_and_validate_minio() {
 
   log "pulling the requested MinIO server and client images"
   "${compose[@]}" pull minio minio-init
+  if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
+    "${compose[@]}" pull kes
+  fi
   log "starting MinIO before replacing application services"
   if ! "${compose[@]}" up -d --no-deps minio || ! wait_for_minio; then
     log "requested MinIO image failed its readiness check"

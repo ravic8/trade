@@ -515,12 +515,19 @@ def test_production_minio_kms_environment_is_opt_in() -> None:
     kms_overlay = (repository_root / "docker-compose.prod.kms.yml").read_text(
         encoding="utf-8"
     )
+    managed_kes_overlay = (
+        repository_root / "docker-compose.prod.managed-kes.yml"
+    ).read_text(encoding="utf-8")
     deploy = (repository_root / "deploy/deploy.sh").read_text(encoding="utf-8")
 
     assert "MINIO_KMS_SERVER:" not in compose
     assert "MINIO_KMS_SERVER:" in kms_overlay
+    assert "MINIO_KMS_KES_ENDPOINT:" in managed_kes_overlay
+    assert "kes:" in managed_kes_overlay
     assert "PROD_MINIO_KMS_ENABLED" in deploy
-    assert 'compose+=(-f "$APP_DIR/docker-compose.prod.kms.yml")' in deploy
+    assert 'docker-compose.prod.managed-kes.yml")' in deploy
+    assert 'docker-compose.prod.kms.yml")' in deploy
+    assert 'deploy/managed-kes.sh" prepare' in deploy
 
 
 def _call_index(calls: list[str], fragment: str) -> int:
