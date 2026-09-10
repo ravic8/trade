@@ -37,6 +37,7 @@ from trade_research.dagster.daily_assets import (
 )
 from trade_research.dagster.market_data_assets import (
     nse_daily_clickhouse_partition_reconciliation,
+    nse_yfinance_provider_comparison,
     yfinance_nse_minute_ohlcv,
 )
 from trade_research.dagster.workflow_requests import (
@@ -92,6 +93,11 @@ yfinance_daily_work_planner_job = define_asset_job(
 nse_daily_clickhouse_partition_reconciliation_job = define_asset_job(
     name="nse_daily_clickhouse_partition_reconciliation_job",
     selection=[nse_daily_clickhouse_partition_reconciliation],
+)
+
+nse_yfinance_provider_comparison_job = define_asset_job(
+    name="nse_yfinance_provider_comparison_job",
+    selection=[nse_yfinance_provider_comparison],
 )
 
 yfinance_nse_completed_session_work_planner_job = define_asset_job(
@@ -383,6 +389,7 @@ defs = Definitions(
         yfinance_fx_intraday_gap_validation,
         yfinance_nse_minute_ohlcv,
         nse_daily_clickhouse_partition_reconciliation,
+        nse_yfinance_provider_comparison,
         processed_dataset_validation,
         daily_features_v1,
         daily_targets_v1,
@@ -400,6 +407,7 @@ defs = Definitions(
         yfinance_fx_intraday_job,
         yfinance_nse_minute_job,
         nse_daily_clickhouse_partition_reconciliation_job,
+        nse_yfinance_provider_comparison_job,
         nse_universe_refresh_job,
         tsx_universe_refresh_job,
         us_universe_refresh_job,
