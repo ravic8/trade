@@ -528,6 +528,7 @@ def test_production_minio_kms_environment_is_opt_in() -> None:
     assert 'docker-compose.prod.managed-kes.yml")' in deploy
     assert 'docker-compose.prod.kms.yml")' in deploy
     assert 'deploy/managed-kes.sh" prepare' in deploy
+    assert 'up -d --no-deps kes' in deploy
 
 
 def _call_index(calls: list[str], fragment: str) -> int:
