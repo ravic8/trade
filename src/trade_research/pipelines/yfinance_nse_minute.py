@@ -137,7 +137,12 @@ def run_yfinance_nse_minute_pipeline(
             run_id=str(run_id),
             failures=failures,
         )
-        frame = _completed_session_rows(raw_frame, eligible_sessions)
+        frame = _completed_session_rows(
+            raw_frame,
+            eligible_sessions,
+            window_start=start,
+            window_end=end,
+        )
         canonical_instrument_ids = {
             instrument.yahoo_symbol: str(row["canonical_instrument_id"])
             for instrument, row in zip(instruments, selected_rows, strict=True)
@@ -319,14 +324,25 @@ def _instrument(row: dict) -> YFinanceIntradayInstrument:
     )
 
 
-def _completed_session_rows(frame: pd.DataFrame, eligible_sessions: set[date]) -> pd.DataFrame:
+def _completed_session_rows(
+    frame: pd.DataFrame,
+    eligible_sessions: set[date],
+    *,
+    window_start: datetime,
+    window_end: datetime,
+) -> pd.DataFrame:
     if frame.empty:
         return frame
     if "Timestamp" not in frame.columns:
         raise ValueError("NSE minute frame does not contain a Timestamp column.")
     timestamps = pd.to_datetime(frame["Timestamp"], errors="coerce", utc=True)
     local_dates = timestamps.dt.tz_convert(_NSE_TIMEZONE).dt.date
-    completed = timestamps.notna() & local_dates.isin(eligible_sessions)
+    completed = (
+        timestamps.notna()
+        & timestamps.ge(window_start)
+        & timestamps.lt(window_end)
+        & local_dates.isin(eligible_sessions)
+    )
     return frame.loc[completed].reset_index(drop=True)
 
 
