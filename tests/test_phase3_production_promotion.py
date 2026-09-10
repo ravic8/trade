@@ -70,6 +70,61 @@ def test_unsupported_operation_fails_closed(tmp_path: Path) -> None:
     assert "unsupported operation" in completed.stderr
 
 
+def test_readiness_returns_nonzero_when_gate_is_blocked(tmp_path: Path) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *"trade-research phase3-readiness"* ]]; then
+  printf '%s\n' 'Phase 3 production readiness: BLOCKED'
+  exit 1
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env_file = tmp_path / "production.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROD_MINIO_KMS_ENABLED=true",
+                "PROD_SELF_MANAGED_KES_ENABLED=true",
+                "PROD_RESEARCH_STORAGE_DEPLOY_ENABLED=true",
+                "PROD_RESEARCH_STORAGE_ENABLED=true",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "TRADE_APP_DIR": str(repository_root),
+            "TRADE_ENV_FILE": str(env_file),
+            "FAKE_DOCKER_LOG": str(docker_log),
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(repository_root / "deploy/phase3-production.sh"), "readiness"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 1
+    assert "Phase 3 production readiness: BLOCKED" in completed.stdout
+    assert "readiness remains blocked" in completed.stdout
+
+
 def test_bootstrap_stages_storage_before_enabling_canary_plane(tmp_path: Path) -> None:
     repository_root = Path(__file__).resolve().parents[1]
     fake_app = tmp_path / "app"
