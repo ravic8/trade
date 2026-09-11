@@ -77,6 +77,8 @@ def test_minute_asset_supports_manual_launch_context(monkeypatch) -> None:
                 "validated_rows": 100,
                 "clickhouse_rows": 100,
                 "failure_rows": 0,
+                "window_start": "2026-09-01T00:00:00+00:00",
+                "window_end": "2026-09-08T00:00:00+00:00",
                 "run_id": "minute-canary-run",
                 "raw_snapshot_uri": "s3://redacted",
             },
@@ -89,12 +91,20 @@ def test_minute_asset_supports_manual_launch_context(monkeypatch) -> None:
     )
 
     result = market_data_assets.yfinance_nse_minute_ohlcv(
-        dagster.build_op_context(op_config={"symbol_limit": 2})
+        dagster.build_op_context(
+            op_config={
+                "symbol_limit": 2,
+                "from_datetime": "2026-09-01T00:00:00Z",
+                "to_datetime": "2026-09-08T00:00:00Z",
+            }
+        )
     )
 
     assert result.status == "pass"
     assert captured["at"] is None
     assert captured["symbol_limit"] == 2
+    assert captured["from_datetime"] == "2026-09-01T00:00:00Z"
+    assert captured["to_datetime"] == "2026-09-08T00:00:00Z"
 
 
 def test_bounded_canary_assessment_uses_production_thresholds(monkeypatch) -> None:

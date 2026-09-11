@@ -23,6 +23,7 @@ from trade_research.market_data.ingestion import (
 )
 from trade_research.market_data.quality import (
     MarketDataQualityRepository,
+    MarketDataQualityStatus,
     nse_minute_missing_quality_outcomes,
 )
 from trade_research.pipelines.base import PipelineRunResult
@@ -190,18 +191,27 @@ def run_yfinance_nse_minute_pipeline(
             raw_frame,
             eligible_sessions,
         )
-        MarketDataQualityRepository(db.engine).record(
-            nse_minute_missing_quality_outcomes(
-                request=validated.request,
-                source_run_id=str(run_id),
-                canonical_instrument_ids=canonical_instrument_ids,
-                eligible_sessions=eligible_sessions,
-                accepted=validated.candles,
-                unavailable_provider_symbols=unavailable_provider_symbols,
-                observed_availability_sessions=observed_availability_sessions,
-                observed_session_windows=observed_session_windows,
-                unavailable_reason_codes=unavailable_reason_codes,
-            )
+        missing_outcomes = nse_minute_missing_quality_outcomes(
+            request=validated.request,
+            source_run_id=str(run_id),
+            canonical_instrument_ids=canonical_instrument_ids,
+            eligible_sessions=eligible_sessions,
+            accepted=validated.candles,
+            unavailable_provider_symbols=unavailable_provider_symbols,
+            observed_availability_sessions=observed_availability_sessions,
+            observed_session_windows=observed_session_windows,
+            unavailable_reason_codes=unavailable_reason_codes,
+        )
+        MarketDataQualityRepository(db.engine).record(missing_outcomes)
+        missing_rows_by_symbol: dict[str, int] = {}
+        for outcome in missing_outcomes:
+            if outcome.status is MarketDataQualityStatus.MISSING:
+                missing_rows_by_symbol[outcome.provider_symbol] = (
+                    missing_rows_by_symbol.get(outcome.provider_symbol, 0) + 1
+                )
+        provider_unavailable_rows = sum(
+            outcome.status is MarketDataQualityStatus.PROVIDER_UNAVAILABLE
+            for outcome in missing_outcomes
         )
         clickhouse_rows = replicate_validated_batch(
             settings,
@@ -231,6 +241,8 @@ def run_yfinance_nse_minute_pipeline(
                 ),
                 "eligible_sessions": len(eligible_sessions),
                 "availability_observations": len(availability_observations),
+                "missing_rows": sum(missing_rows_by_symbol.values()),
+                "provider_unavailable_rows": provider_unavailable_rows,
             },
         )
     except Exception as exc:
@@ -266,6 +278,9 @@ def run_yfinance_nse_minute_pipeline(
             "clickhouse_rows": clickhouse_rows,
             "failure_rows": len(failures),
             "availability_observations": len(availability_observations),
+            "missing_rows": sum(missing_rows_by_symbol.values()),
+            "missing_rows_by_symbol": missing_rows_by_symbol,
+            "provider_unavailable_rows": provider_unavailable_rows,
             "raw_snapshot_uri": (
                 validated.raw_snapshot.storage_uri if validated.raw_snapshot else None
             ),
