@@ -62,6 +62,17 @@ def test_phase3_provider_comparison_is_manual_only() -> None:
     )
 
 
+def test_phase3_bounded_canary_assessment_is_manual_only() -> None:
+    assert (
+        definitions.phase3_bounded_canary_assessment_job.name
+        == "phase3_bounded_canary_assessment_job"
+    )
+    assert all(
+        schedule.name != "phase3_bounded_canary_assessment_schedule"
+        for schedule in definitions.defs.schedules
+    )
+
+
 def test_phase3_daily_canary_is_manual_only() -> None:
     assert (
         definitions.yfinance_nse_daily_canary_job.name
