@@ -220,6 +220,9 @@ Production canary data is generated through the manual-only
 and cannot claim unrelated exchange or incremental work. Record their durable
 evidence with the manual-only `phase3_bounded_canary_assessment_job`; it applies
 the configured production thresholds and does not change activation.
+For deterministic minute reruns, provide the same explicit `from_datetime`,
+`to_datetime`, and `symbols` configuration to both job launches. Dagster output
+metadata includes per-symbol missing-candle counts for evidence review.
 
 ## Exit gate
 

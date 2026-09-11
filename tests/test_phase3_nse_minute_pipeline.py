@@ -193,6 +193,9 @@ def test_nse_minute_pipeline_snapshots_raw_but_replicates_completed_sessions(
     assert result.metrics["raw_rows"] == 2
     assert result.metrics["validated_rows"] == 1
     assert result.metrics["eligible_sessions"] == 1
+    assert result.metrics["missing_rows"] == 0
+    assert result.metrics["missing_rows_by_symbol"] == {}
+    assert result.metrics["provider_unavailable_rows"] == 0
     assert result.metrics["raw_snapshot_uri"] == "s3://trade-raw/minute.json"
     assert _Store.instances[0].finished[0]["status"] == "completed"
 

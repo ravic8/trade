@@ -23,6 +23,8 @@ from trade_research.storage import TimescaleStore
     config_schema={
         "symbol_limit": Field(Int, is_required=False),
         "symbols": Field(String, is_required=False),
+        "from_datetime": Field(String, is_required=False),
+        "to_datetime": Field(String, is_required=False),
     },
     description=(
         "Fetch bounded NSE 1m data, retain immutable raw evidence, validate completed "
@@ -32,6 +34,8 @@ from trade_research.storage import TimescaleStore
 def yfinance_nse_minute_ohlcv(context) -> PipelineRunResult:
     symbols = context.op_config.get("symbols")
     result = run_yfinance_nse_minute_pipeline(
+        from_datetime=context.op_config.get("from_datetime"),
+        to_datetime=context.op_config.get("to_datetime"),
         symbol_limit=context.op_config.get("symbol_limit"),
         provider_symbols=(
             [value.strip() for value in symbols.split(",") if value.strip()] if symbols else None
@@ -49,6 +53,15 @@ def yfinance_nse_minute_ohlcv(context) -> PipelineRunResult:
             "validated_rows": result.metrics["validated_rows"],
             "clickhouse_rows": result.metrics["clickhouse_rows"],
             "failure_rows": result.metrics["failure_rows"],
+            "window_start": result.metrics["window_start"],
+            "window_end": result.metrics["window_end"],
+            "missing_rows": result.metrics.get("missing_rows", 0),
+            "missing_rows_by_symbol": MetadataValue.json(
+                result.metrics.get("missing_rows_by_symbol", {})
+            ),
+            "provider_unavailable_rows": result.metrics.get(
+                "provider_unavailable_rows", 0
+            ),
             "run_id": str(result.metrics.get("run_id") or ""),
             "raw_snapshot_uri": result.metrics["raw_snapshot_uri"] or "",
         }
