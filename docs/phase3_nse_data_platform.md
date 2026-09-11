@@ -217,7 +217,9 @@ Production canary data is generated through the manual-only
 `yfinance_nse_daily_canary_job` and two independent launches of
 `yfinance_nse_minute_job`, each limited to at most
 `PHASE3_CANARY_MAX_INSTRUMENTS`. The daily job uses a dedicated queue work type
-and cannot claim unrelated exchange or incremental work.
+and cannot claim unrelated exchange or incremental work. Record their durable
+evidence with the manual-only `phase3_bounded_canary_assessment_job`; it applies
+the configured production thresholds and does not change activation.
 
 ## Exit gate
 

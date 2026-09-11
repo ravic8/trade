@@ -95,3 +95,61 @@ def test_minute_asset_supports_manual_launch_context(monkeypatch) -> None:
     assert result.status == "pass"
     assert captured["at"] is None
     assert captured["symbol_limit"] == 2
+
+
+def test_bounded_canary_assessment_uses_production_thresholds(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    settings = type(
+        "Settings",
+        (),
+        {
+            "database_url": "postgresql://test/test",
+            "phase3_canary_max_instruments": 25,
+            "phase3_minimum_completeness": 0.995,
+            "phase3_required_observed_sessions": 5,
+        },
+    )()
+    store = type("Store", (), {"engine": object(), "initialize": lambda self: None})()
+
+    class Repository:
+        def __init__(self, engine) -> None:
+            assert engine is store.engine
+
+        def assess_canary(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "pass",
+                "evidence_id": "e" * 64,
+                "source_run_ids": {
+                    "daily": "daily-run",
+                    "minute": "minute-run",
+                    "minute_rerun": "minute-rerun",
+                },
+                "session_dates": ["2026-09-01"],
+                "blocking_issues": [],
+                "evidence_refs": {"replication_checkpoint_ids": ["checkpoint"]},
+            }
+
+    monkeypatch.setattr(market_data_assets, "get_settings", lambda: settings)
+    monkeypatch.setattr(market_data_assets, "TimescaleStore", lambda _url: store)
+    monkeypatch.setattr(market_data_assets, "Phase3ReadinessRepository", Repository)
+
+    result = market_data_assets.phase3_bounded_canary_assessment(
+        dagster.build_op_context(
+            op_config={
+                "daily_run_id": "daily-run",
+                "minute_run_id": "minute-run",
+                "minute_rerun_id": "minute-rerun",
+            }
+        )
+    )
+
+    assert result["status"] == "pass"
+    assert captured == {
+        "daily_run_id": "daily-run",
+        "minute_run_id": "minute-run",
+        "minute_rerun_id": "minute-rerun",
+        "max_instruments": 25,
+        "minimum_completeness": 0.995,
+        "required_observed_sessions": 5,
+    }

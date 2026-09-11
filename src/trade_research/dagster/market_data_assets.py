@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+from typing import Any
+
 from dagster import Bool, Field, Int, MetadataValue, String, asset
 
+from trade_research.config import get_settings
 from trade_research.market_data.partition_reconciliation import (
     run_nse_daily_partition_reconciliation,
 )
+from trade_research.market_data.readiness import Phase3ReadinessRepository
 from trade_research.pipelines import (
     PipelineRunResult,
     run_nse_yfinance_cutover_readiness,
     run_yfinance_nse_minute_pipeline,
 )
+from trade_research.storage import TimescaleStore
 
 
 @asset(
@@ -51,6 +56,47 @@ def yfinance_nse_minute_ohlcv(context) -> PipelineRunResult:
     if result.business_outcome != "succeeded":
         raise RuntimeError("NSE minute ingestion completed with degraded or failed status.")
     return result
+
+
+@asset(
+    group_name="nse_market_data",
+    compute_kind="readiness",
+    config_schema={
+        "daily_run_id": Field(String),
+        "minute_run_id": Field(String),
+        "minute_rerun_id": Field(String),
+    },
+    description=(
+        "Assess bounded production daily and minute canaries from durable source-run "
+        "evidence without changing Phase 3 activation."
+    ),
+)
+def phase3_bounded_canary_assessment(context) -> dict[str, Any]:
+    settings = get_settings()
+    store = TimescaleStore(settings.database_url)
+    store.initialize()
+    evidence = Phase3ReadinessRepository(store.engine).assess_canary(
+        daily_run_id=context.op_config["daily_run_id"],
+        minute_run_id=context.op_config["minute_run_id"],
+        minute_rerun_id=context.op_config["minute_rerun_id"],
+        max_instruments=settings.phase3_canary_max_instruments,
+        minimum_completeness=settings.phase3_minimum_completeness,
+        required_observed_sessions=settings.phase3_required_observed_sessions,
+    )
+    context.add_output_metadata(
+        {
+            "status": evidence["status"],
+            "evidence_id": evidence["evidence_id"],
+            "source_run_ids": MetadataValue.json(evidence["source_run_ids"]),
+            "session_dates": MetadataValue.json(evidence["session_dates"]),
+            "blocking_issues": MetadataValue.json(evidence["blocking_issues"]),
+            "evidence_refs": MetadataValue.json(evidence["evidence_refs"]),
+        }
+    )
+    if evidence["status"] != "pass":
+        details = "; ".join(evidence["blocking_issues"]) or "no blocking details returned"
+        raise RuntimeError(f"Phase 3 bounded canary assessment failed: {details}")
+    return evidence
 
 
 @asset(
