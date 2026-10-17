@@ -439,11 +439,11 @@ Private local evidence is under
 is `/opt/trade/maintenance/20261017-daily-cutover-20f0a42a1344`. These paths contain
 sensitive recovery material and are excluded from Git.
 
-The final backend image ID is
+The initial cutover backend image ID was
 `sha256:ba2aa99ad8c0c58a9034931c31d6043927aba4a283172c4bf8d2a036e682eb34`.
 The independent frontend is `trade-web:daily-split-20261017`, ID
 `sha256:e0f3fc14e060e7d39a9b973dbace39a1ad9edb2587cf99a93c746949014577da`.
-The server's `production-release.json` also records the application image ID and
+The server's `production-release.json` records the current application image ID and
 release tag. `api.inspect.private.json`, `dagster-daemon.inspect.private.json`,
 `web.inspect.private.json`, `.env.before` and `workspace.yaml.before` retain the
 previous application configuration. Rollback stops the daemon between runs,
