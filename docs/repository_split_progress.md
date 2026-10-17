@@ -439,8 +439,8 @@ Private local evidence is under
 is `/opt/trade/maintenance/20261017-daily-cutover-20f0a42a1344`. These paths contain
 sensitive recovery material and are excluded from Git.
 
-The final backend image is `trade-data-api:daily-d7ba0b3-ba2aa99ad8c0`,
-ID `sha256:ba2aa99ad8c0c58a9034931c31d6043927aba4a283172c4bf8d2a036e682eb34`.
+The final backend image ID is
+`sha256:ba2aa99ad8c0c58a9034931c31d6043927aba4a283172c4bf8d2a036e682eb34`.
 The independent frontend is `trade-web:daily-split-20261017`, ID
 `sha256:e0f3fc14e060e7d39a9b973dbace39a1ad9edb2587cf99a93c746949014577da`.
 The server's `production-release.json` also records the application image ID and
