@@ -77,8 +77,7 @@ for key, value in u.query.items():
     if key not in options or not isinstance(value, str):
         raise RuntimeError("Unsupported PostgreSQL connection option for recovery")
     connection[options[key]] = value
-optional = [name for name in ("filing_enabled", "filing_index_enabled", "chat_enabled",
-            "clickhouse_enabled", "object_store_enabled", "bigquery_enabled") if getattr(s, name)]
+optional = [name for name in ("clickhouse_enabled", "object_store_enabled") if getattr(s, name)]
 print(json.dumps({"state": state, "connection": connection, "optional_enabled": optional}))
 e.dispose()
 """
