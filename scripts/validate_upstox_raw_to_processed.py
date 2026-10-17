@@ -376,17 +376,17 @@ def _build_report(
         "",
         "## Conversion Code Inspected",
         "",
-        "- `src/trade_research/data/upstox.py`: "
+        "- `src/trade_data/data/upstox.py`: "
         "`UpstoxHistoricalDataProvider.fetch_daily_candles` calls the v3 "
         "`/historical-candle/.../days/1` endpoint and passes "
         "`payload['data']['candles']` to `_daily_candles_to_frame`.",
         "- `_daily_candles_to_frame` maps candle `[0]` to `Date`, `[1]` to "
         "`Open`, `[2]` to `High`, `[3]` to `Low`, `[4]` to `Close`, `[5]` to "
         "`Volume`, and `[6]` to `OpenInterest` when present.",
-        "- `src/trade_research/cli.py`: `fetch-upstox-nse-daily` concatenates "
+        "- `src/trade_data/cli.py`: `fetch-upstox-nse-daily` concatenates "
         "per-symbol DataFrames and writes `nse_daily_ohlcv_upstox.parquet`; it "
         "writes failures and audit CSVs but not raw JSON payloads.",
-        "- `src/trade_research/storage/timescale.py`: DB conversion preserves "
+        "- `src/trade_data/storage/timescale.py`: DB conversion preserves "
         "`Date`, `InstrumentKey`, `Symbol`, OHLCV, and `OpenInterest`, while "
         "dropping rows only when one of `Date/Open/High/Low/Close/Volume` is null.",
         "",

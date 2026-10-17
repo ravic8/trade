@@ -55,7 +55,7 @@ def upgrade() -> None:
     # Imported lazily so Alembic can load the revision graph without importing
     # application storage code. The names above, rather than all metadata
     # tables, define the immutable pre-Alembic ownership boundary.
-    from trade_research.storage.timescale import metadata
+    from trade_data.storage.timescale import metadata
 
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":

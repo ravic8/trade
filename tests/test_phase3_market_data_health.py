@@ -8,16 +8,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from trade_research.control_plane.tables import (
+from trade_data.control_plane.tables import (
     artifact_manifests_table,
     market_data_availability_observations_table,
     market_data_quality_outcomes_table,
     market_data_replication_checkpoints_table,
 )
-from trade_research.market_data.health import MarketDataHealthRepository
+from trade_data.market_data.health import MarketDataHealthRepository
 
 NOW = datetime(2026, 9, 5, 13, 0, tzinfo=UTC)
-api_module = import_module("trade_research.api.app")
+api_module = import_module("trade_data.api.app")
 
 
 def _engine():
@@ -49,7 +49,7 @@ def _quality_row(
         "request_id": f"request-{source_run_id}",
         "provider": "yfinance",
         "exchange": "NSE",
-        "interval": "1m",
+        "interval": "1d",
         "instrument_id": instrument_id,
         "provider_symbol": "RELIANCE.NS",
         "session_date": date(2026, 9, 5),
@@ -129,9 +129,9 @@ def test_health_uses_latest_run_and_surfaces_quality_lineage_and_replication() -
                     "source_run_id": "latest-run",
                     "source_store": "timescaledb",
                     "destination_store": "clickhouse",
-                    "dataset_key": "ohlcv_intraday",
+                    "dataset_key": "ohlcv_daily",
                     "exchange": "NSE",
-                    "interval": "1m",
+                    "interval": "1d",
                     "status": "reconciled",
                     "source_row_count": 2,
                     "destination_row_count": 2,
@@ -160,7 +160,7 @@ def test_health_uses_latest_run_and_surfaces_quality_lineage_and_replication() -
                     "request_id": "request-latest-run",
                     "provider": "yfinance",
                     "exchange": "NSE",
-                    "interval": "1m",
+                    "interval": "1d",
                     "instrument_id": "NSE_EQ|RELIANCE",
                     "provider_symbol": "RELIANCE.NS",
                     "requested_start": NOW - timedelta(days=7),
@@ -180,10 +180,27 @@ def test_health_uses_latest_run_and_surfaces_quality_lineage_and_replication() -
             ],
         )
 
-    snapshot = MarketDataHealthRepository(engine).snapshot(
-        workspace_id="workspace-1"
-    )
+    # Historical minute ledgers remain stored, but cannot affect daily operations.
+    with engine.begin() as connection:
+        for table, primary_key in (
+            (market_data_quality_outcomes_table, "quality_outcome_id"),
+            (market_data_replication_checkpoints_table, "replication_checkpoint_id"),
+            (market_data_availability_observations_table, "availability_observation_id"),
+        ):
+            row = dict(connection.execute(table.select().limit(1)).mappings().one())
+            row[primary_key] = "legacy-minute-" + row[primary_key]
+            row["interval"] = "1m"
+            row["source_run_id"] = "legacy-minute-run"
+            if "dataset_key" in row:
+                row["dataset_key"] = "ohlcv_intraday"
+                row["status"] = "failed"
+            connection.execute(table.insert(), row)
 
+    snapshot = MarketDataHealthRepository(engine).snapshot(workspace_id="workspace-1")
+
+    assert {
+        row.interval for row in (*snapshot.quality, *snapshot.replication, *snapshot.availability)
+    } == {"1d"}
     assert snapshot.health_status == "failed"
     assert len(snapshot.quality) == 1
     summary = snapshot.quality[0]
@@ -226,11 +243,11 @@ def test_market_data_health_api_is_workspace_scoped(monkeypatch) -> None:
     repository = MarketDataHealthRepository(_engine())
     snapshot = repository.snapshot(workspace_id="workspace-1")
     monkeypatch.setattr(
-        "trade_research.api.app._market_data_health_repository",
+        "trade_data.api.app._market_data_health_repository",
         lambda: _HealthRepository(snapshot),
     )
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: SimpleNamespace(
             phase3_market_data_enabled=True,
             clickhouse_enabled=True,
@@ -263,12 +280,8 @@ def test_market_data_health_api_is_workspace_scoped(monkeypatch) -> None:
 
 def test_market_data_health_api_rejects_unsupported_scope() -> None:
     with TestClient(api_module.app) as client:
-        exchange = client.get(
-            "/api/data/operations/market-data-health?exchange=TSX"
-        )
-        provider = client.get(
-            "/api/data/operations/market-data-health?provider=upstox"
-        )
+        exchange = client.get("/api/data/operations/market-data-health?exchange=TSX")
+        provider = client.get("/api/data/operations/market-data-health?provider=upstox")
         workspace = client.get(
             "/api/data/operations/market-data-health",
             headers={"X-Workspace-ID": " "},

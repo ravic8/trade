@@ -16,8 +16,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from trade_research.data.yahoo import YahooFinanceMarketDataProvider  # noqa: E402
-from trade_research.universe.nse import NSEUniverseProvider  # noqa: E402
+from trade_data.data.yahoo import YahooFinanceMarketDataProvider  # noqa: E402
+from trade_data.universe.nse import NSEUniverseProvider  # noqa: E402
 
 
 DEFAULT_OUTPUT = ROOT / "data/processed/universe/liquid_nse_stocks.csv"

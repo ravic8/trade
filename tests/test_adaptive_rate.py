@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from trade_research.config import Settings
-from trade_research.data.adaptive_rate import YahooAdaptiveRateGovernor
-from trade_research.data.provider_retry import ProviderFailureClassification
+from trade_data.config import Settings
+from trade_data.data.adaptive_rate import YahooAdaptiveRateGovernor
+from trade_data.data.provider_retry import ProviderFailureClassification
 
 
 class _Limiter:

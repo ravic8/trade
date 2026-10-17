@@ -5,16 +5,16 @@ from datetime import UTC, date, datetime, timedelta
 import pandas as pd
 import pytest
 
-from trade_research.config import Settings
-from trade_research.data.daily_work import (
+from trade_data.config import Settings
+from trade_data.data.daily_work import (
     WORK_PRIORITIES,
     DailyInstrument,
     DailyWorkPlanner,
     durable_retry_delay,
 )
-from trade_research.data.yahoo_executor import YahooExecutionSummary
-from trade_research.pipelines import yfinance_work_queue
-from trade_research.storage.timescale import TimescaleStore
+from trade_data.data.yahoo_executor import YahooExecutionSummary
+from trade_data.pipelines import yfinance_work_queue
+from trade_data.storage.timescale import TimescaleStore
 
 NOW = datetime(2026, 7, 17, 12, tzinfo=UTC)
 INSTRUMENT = DailyInstrument(
@@ -178,7 +178,7 @@ def test_latest_date_lookup_chunks_a_full_us_universe() -> None:
     )
 
     assert result == {}
-    assert len(store.engine.connection.instrument_key_counts) == 23
+    assert len(store.engine.connection.instrument_key_counts) == 46
     assert max(store.engine.connection.instrument_key_counts) == 250
     assert store.engine.connection.instrument_key_counts[-1] == 86
 
@@ -487,7 +487,7 @@ def test_worker_records_exchange_scoped_results_for_multi_exchange_run(monkeypat
 
 
 def test_executor_outcomes_preserve_work_item_identity() -> None:
-    from trade_research.data.yahoo_executor import _ticker_outcomes
+    from trade_data.data.yahoo_executor import _ticker_outcomes
 
     outcomes = _ticker_outcomes(
         [
@@ -786,3 +786,60 @@ def test_phase3_daily_calendar_filter_preserves_raw_rows_for_evidence() -> None:
 
     assert selected["Date"].tolist() == [date(2026, 7, 16), date(2026, 7, 17)]
     assert frame["Date"].tolist()[-1] == date(2026, 7, 18)
+
+
+def test_latest_date_lookup_falls_back_only_for_missing_recent_symbols() -> None:
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self.rows
+
+    class Connection(_RecordingConnection):
+        def __init__(self):
+            super().__init__()
+            self.statements = []
+
+        def execute(self, statement):
+            self.statements.append(statement)
+            if len(self.statements) == 1:
+                return Result([
+                    {"instrument_key": "YF|ACTIVE", "latest_date": date(2026, 10, 15)}
+                ])
+            return Result([
+                {"instrument_key": "YF|OLD", "latest_date": date(2020, 1, 1)},
+                {"instrument_key": "YF|EMPTY", "latest_date": None},
+            ])
+
+    store = object.__new__(TimescaleStore)
+    store.engine = _RecordingEngine()
+    connection = Connection()
+    store.engine.connection = connection
+
+    assert store.latest_daily_ohlcv_dates(
+        ["YF|ACTIVE", "YF|OLD", "YF|EMPTY"], source="yfinance", valid_only=True
+    ) == {"YF|ACTIVE": date(2026, 10, 15), "YF|OLD": date(2020, 1, 1)}
+    assert len(connection.statements) == 2
+    recent, fallback = [statement.compile() for statement in connection.statements]
+    assert any(isinstance(value, date) for value in recent.params.values())
+    assert not any(isinstance(value, date) for value in fallback.params.values())
+    assert ["YF|OLD", "YF|EMPTY"] in fallback.params.values()
+    assert "ok" in recent.params.values()
+    assert "ok" in fallback.params.values()
+
+
+def test_invalid_instrument_does_not_fail_other_work_outcomes() -> None:
+    result = yfinance_work_queue._quarantine_invalid_work_outcomes(
+        [{"work_item_id": "1", "status": "success"},
+         {"work_item_id": "2", "status": "success"}],
+        [{"work_item_id": "1", "canonical_instrument_id": "bad"},
+         {"work_item_id": "2", "canonical_instrument_id": "good"}],
+        {"bad"},
+    )
+    assert result[0]["status"] == "invalid_market_data"
+    assert result[0]["retryable"] is False
+    assert result[1] == {"work_item_id": "2", "status": "success"}

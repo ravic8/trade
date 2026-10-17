@@ -5,8 +5,8 @@ from pathlib import Path
 
 import clickhouse_connect
 
-from trade_research.config import get_settings
-from trade_research.storage.clickhouse_migrations import (
+from trade_data.config import get_settings
+from trade_data.storage.clickhouse_migrations import (
     ClickHouseMigrator,
     discover_migrations,
 )

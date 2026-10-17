@@ -4,8 +4,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from trade_research import cli
-from trade_research.cli_guard import COMMAND_EFFECTS, CommandEffect, enforce_cli_policy
+from trade_data import cli
+from trade_data.cli_guard import COMMAND_EFFECTS, CommandEffect, enforce_cli_policy
 
 
 def test_every_registered_cli_command_has_an_effect_classification() -> None:

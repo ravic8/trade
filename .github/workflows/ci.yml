@@ -6,6 +6,33 @@ on:
     branches: [main]
 
 jobs:
+  fresh-setup:
+    name: Core bootstrap, external endpoints, and recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build, migrate, diagnose, and verify empty core
+        run: python scripts/verify_fresh_setup.py
+      - name: Verify externally supplied core endpoints and outages
+        run: python scripts/verify_external_services.py
+      - name: Verify core backup, restore, upgrade, and volume retention
+        run: python scripts/verify_core_recovery.py
+      - name: Verify recovery with external authenticated infrastructure
+        run: python scripts/verify_core_recovery.py --external --report output/core-recovery/external.json
+      - name: Preserve acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-acceptance
+          path: |
+            output/fresh-setup/
+            output/external-services/
+            output/core-recovery/
+
   python:
     name: Python unit, contracts, and coverage
     runs-on: ubuntu-latest
@@ -17,17 +44,21 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install package
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: python -m pip install uv==0.11.24 && uv sync --frozen --extra dev && echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Ruff
         run: python -m ruff check
       - name: Mypy ratchet boundary
         run: >-
-          python -m mypy src/trade_research/validation src/trade_research/contracts
-          src/trade_research/cli_guard.py
+          python -m mypy src/trade_data/validation src/trade_data/contracts
+          src/trade_data/cli_guard.py src/trade_data/data/daily_provider.py
+          src/trade_data/pipelines/daily_runtime.py
+          src/trade_data/operations/daily_canary.py
+          src/trade_data/storage/ingestion_runs.py
+          src/trade_data/storage/daily_contract.py src/trade_data/config_validation.py
       - name: Current-state documentation
         run: python scripts/check_current_state_docs.py
       - name: Pytest with coverage gate
-        run: python -m pytest --cov=trade_research --cov-report=term-missing --cov-report=xml
+        run: python -m pytest --cov=trade_data --cov-report=term-missing --cov-report=xml
       - uses: actions/upload-artifact@v4
         with:
           name: python-coverage
@@ -66,7 +97,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install package
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: python -m pip install uv==0.11.24 && uv sync --frozen --extra dev && echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Empty database upgrade
         run: python -m alembic upgrade head
       - name: PostgreSQL and Redis integration
@@ -121,7 +152,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install package
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        run: python -m pip install uv==0.11.24 && uv sync --frozen --extra dev && echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Start private storage services
         run: docker compose --profile research up -d clickhouse minio
       - name: Reconcile storage identities and buckets
@@ -145,32 +176,6 @@ jobs:
         if: always()
         run: docker compose --profile research down -v
 
-  web:
-    name: Web unit, build, and browser smoke
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-      - name: Lint
-        run: npm run lint
-      - name: Unit tests
-        run: npm test
-      - name: Build
-        run: npm run build
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-      - name: Desktop and mobile smoke tests
-        run: npm run test:e2e
-
   security:
     name: Dependency, secret, and source scanning
     runs-on: ubuntu-latest
@@ -181,17 +186,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
       - name: Python dependency audit
         run: |
           python -m pip install --upgrade pip "setuptools>=83" pip-audit
           python -m pip install -e .
           python -m pip_audit
-      - name: JavaScript dependency audit
-        working-directory: apps/web
-        run: npm audit --audit-level=critical
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env:
@@ -210,14 +209,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build API image
-        run: docker build -f Dockerfile.api -t trade-research-api:ci .
+        run: docker build -f Dockerfile.api -t trade-data-api:ci .
       - name: Scan API image
         run: >-
           docker run --rm
           -v /var/run/docker.sock:/var/run/docker.sock
           aquasec/trivy:0.69.3 image
           --severity CRITICAL --ignore-unfixed --exit-code 1
-          trade-research-api:ci
+          trade-data-api:ci
 
   production-compose:
     name: Production Compose
@@ -233,4 +232,4 @@ jobs:
       - name: Validate Docker build definitions
         run: >-
           docker compose --env-file .env.prod.example -f docker-compose.prod.yml
-          build --check api web
+          build --check api

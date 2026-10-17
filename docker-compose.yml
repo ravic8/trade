@@ -9,49 +9,33 @@ services:
     environment:
       APP_ENV: docker
       DATA_DIR: /app/data
-      DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
-      REDIS_URL: redis://redis:6379/0
-      QDRANT_URL: http://qdrant:6333
-      CLICKHOUSE_ENABLED: "false"
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://trade:trade@postgres:5432/trade_research}
+      REDIS_URL: ${COMPOSE_REDIS_URL:-redis://redis:6379/0}
+      CLICKHOUSE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       CLICKHOUSE_WRITE_ENABLED: "false"
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: 8123
       CLICKHOUSE_DATABASE: research
       CLICKHOUSE_USERNAME: api_reader
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_API_PASSWORD:-local-api-reader}
-      OBJECT_STORE_ENABLED: "false"
+      OBJECT_STORE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       OBJECT_STORE_WRITE_ENABLED: "false"
-      OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORE_ENDPOINT_URL: ${COMPOSE_OBJECT_STORE_ENDPOINT_URL:-http://minio:9000}
       OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_API_ACCESS_KEY_ID:-local-api-artifacts}
       OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_API_SECRET_ACCESS_KEY:-local-api-artifacts-secret}
       OBJECT_STORE_RAW_BUCKET: trade-raw
       OBJECT_STORE_DATASETS_BUCKET: trade-datasets
-      OBJECT_STORE_MODELS_BUCKET: trade-models
-      OBJECT_STORE_EXPERIMENTS_BUCKET: trade-experiments
       OBJECT_STORE_EXPORTS_BUCKET: trade-exports
-      FILING_QUEUE_MODE: celery
-      FILING_ARTIFACT_BACKEND: s3
-      FILING_S3_ENDPOINT_URL: http://minio:9000
-      FILING_S3_BUCKET: lens-filings
-      FILING_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      FILING_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      FILING_CHECKPOINT_SCHEMA: filing_checkpoints
-      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
       TELEMETRY_RELEASE: ${TELEMETRY_RELEASE:-local}
       INGESTION_PROFILE: local
       UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
       DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
-      API_CORS_ORIGINS: http://localhost:5173,http://localhost:8000
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:5173,http://localhost:8000}
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
@@ -59,10 +43,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
-      minio:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
@@ -70,75 +50,8 @@ services:
       timeout: 5s
       retries: 5
 
-  filing-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    command:
-      [
-        "celery",
-        "-A",
-        "trade_research.filings.tasks:celery_app",
-        "worker",
-        "--loglevel=INFO",
-        "--queues=filing_intelligence",
-        "--concurrency=${FILING_WORKER_CONCURRENCY:-2}",
-      ]
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      APP_ENV: docker
-      DATA_DIR: /app/data
-      DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
-      REDIS_URL: redis://redis:6379/0
-      QDRANT_URL: http://qdrant:6333
-      FILING_QUEUE_MODE: celery
-      FILING_ARTIFACT_BACKEND: s3
-      FILING_S3_ENDPOINT_URL: http://minio:9000
-      FILING_S3_BUCKET: lens-filings
-      FILING_S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      FILING_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      FILING_CHECKPOINT_SCHEMA: filing_checkpoints
-      FILING_WORKER_CONCURRENCY: ${FILING_WORKER_CONCURRENCY:-2}
-      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
-      OTEL_ENABLED: ${OTEL_ENABLED:-false}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      TELEMETRY_RELEASE: ${TELEMETRY_RELEASE:-local}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    volumes:
-      - ./data:/app/data
-      - ./artifacts:/app/artifacts
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
-      minio:
-        condition: service_healthy
-
-  web:
-    image: node:22-alpine
-    working_dir: /app
-    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
-    environment:
-      VITE_API_BASE_URL: http://localhost:8000
-      VITE_API_PROXY_TARGET: http://api:8000
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./apps/web:/app
-      - web_node_modules:/app/node_modules
-    depends_on:
-      api:
-        condition: service_started
-
   dagster-webserver:
+    profiles: ["ingestion"]
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -159,9 +72,8 @@ services:
       APP_ENV: docker
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
-      DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
-      REDIS_URL: redis://redis:6379/0
-      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://trade:trade@postgres:5432/trade_research}
+      REDIS_URL: ${COMPOSE_REDIS_URL:-redis://redis:6379/0}
       CLICKHOUSE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       CLICKHOUSE_WRITE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       CLICKHOUSE_HOST: clickhouse
@@ -171,29 +83,18 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_DAGSTER_PASSWORD:-local-dagster-writer}
       OBJECT_STORE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       OBJECT_STORE_WRITE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
-      OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORE_ENDPOINT_URL: ${COMPOSE_OBJECT_STORE_ENDPOINT_URL:-http://minio:9000}
       OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-local-dagster-artifacts}
       OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-local-dagster-artifacts-secret}
       OBJECT_STORE_RAW_BUCKET: trade-raw
       OBJECT_STORE_DATASETS_BUCKET: trade-datasets
-      OBJECT_STORE_MODELS_BUCKET: trade-models
-      OBJECT_STORE_EXPERIMENTS_BUCKET: trade-experiments
       OBJECT_STORE_EXPORTS_BUCKET: trade-exports
       PHASE3_MARKET_DATA_ENABLED: ${PHASE3_MARKET_DATA_ENABLED:-false}
-      PHASE3_PRODUCTION_ACTIVATION_ENABLED: ${PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}
       PHASE3_YFINANCE_ADAPTER_VERSION: ${PHASE3_YFINANCE_ADAPTER_VERSION:-yfinance-v1}
-      YFINANCE_NSE_MINUTE_ENABLED: ${YFINANCE_NSE_MINUTE_ENABLED:-false}
-      YFINANCE_NSE_MINUTE_LOOKBACK_DAYS: ${YFINANCE_NSE_MINUTE_LOOKBACK_DAYS:-7}
-      YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN: ${YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN:-100}
-      PHASE3_CANARY_MAX_INSTRUMENTS: ${PHASE3_CANARY_MAX_INSTRUMENTS:-25}
-      PHASE3_MINIMUM_COMPLETENESS: ${PHASE3_MINIMUM_COMPLETENESS:-0.995}
-      PHASE3_REQUIRED_OBSERVED_SESSIONS: ${PHASE3_REQUIRED_OBSERVED_SESSIONS:-5}
       INGESTION_PROFILE: local
       UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
       DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "3000:3000"
     volumes:
@@ -204,11 +105,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
+        condition: service_healthy
 
   dagster-daemon:
+    profiles: ["ingestion"]
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -220,9 +120,8 @@ services:
       APP_ENV: docker
       DATA_DIR: /app/data
       DAGSTER_HOME: /app/dagster_home
-      DATABASE_URL: postgresql+psycopg://trade:trade@postgres:5432/trade_research
-      REDIS_URL: redis://redis:6379/0
-      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://trade:trade@postgres:5432/trade_research}
+      REDIS_URL: ${COMPOSE_REDIS_URL:-redis://redis:6379/0}
       CLICKHOUSE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       CLICKHOUSE_WRITE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       CLICKHOUSE_HOST: clickhouse
@@ -232,29 +131,18 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_DAGSTER_PASSWORD:-local-dagster-writer}
       OBJECT_STORE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
       OBJECT_STORE_WRITE_ENABLED: ${RESEARCH_STORAGE_ENABLED:-false}
-      OBJECT_STORE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORE_ENDPOINT_URL: ${COMPOSE_OBJECT_STORE_ENDPOINT_URL:-http://minio:9000}
       OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-local-dagster-artifacts}
       OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-local-dagster-artifacts-secret}
       OBJECT_STORE_RAW_BUCKET: trade-raw
       OBJECT_STORE_DATASETS_BUCKET: trade-datasets
-      OBJECT_STORE_MODELS_BUCKET: trade-models
-      OBJECT_STORE_EXPERIMENTS_BUCKET: trade-experiments
       OBJECT_STORE_EXPORTS_BUCKET: trade-exports
       PHASE3_MARKET_DATA_ENABLED: ${PHASE3_MARKET_DATA_ENABLED:-false}
-      PHASE3_PRODUCTION_ACTIVATION_ENABLED: ${PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}
       PHASE3_YFINANCE_ADAPTER_VERSION: ${PHASE3_YFINANCE_ADAPTER_VERSION:-yfinance-v1}
-      YFINANCE_NSE_MINUTE_ENABLED: ${YFINANCE_NSE_MINUTE_ENABLED:-false}
-      YFINANCE_NSE_MINUTE_LOOKBACK_DAYS: ${YFINANCE_NSE_MINUTE_LOOKBACK_DAYS:-7}
-      YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN: ${YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN:-100}
-      PHASE3_CANARY_MAX_INSTRUMENTS: ${PHASE3_CANARY_MAX_INSTRUMENTS:-25}
-      PHASE3_MINIMUM_COMPLETENESS: ${PHASE3_MINIMUM_COMPLETENESS:-0.995}
-      PHASE3_REQUIRED_OBSERVED_SESSIONS: ${PHASE3_REQUIRED_OBSERVED_SESSIONS:-5}
       INGESTION_PROFILE: local
       UPSTOX_HISTORICAL_CONCURRENCY: ${UPSTOX_HISTORICAL_CONCURRENCY:-4}
       DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
@@ -263,9 +151,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
+        condition: service_healthy
 
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -274,7 +160,7 @@ services:
       POSTGRES_USER: trade
       POSTGRES_PASSWORD: trade
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -348,19 +234,20 @@ services:
 
   redis:
     image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     ports:
-      - "6379:6379"
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
+      - "${REDIS_PORT:-6379}:6379"
 
   minio:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    profiles: ["research"]
+    image: trade-minio:RELEASE.2025-09-07T16-13-09Z
+    build:
+      context: .
+      dockerfile: minio/Dockerfile.minio
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
@@ -379,7 +266,11 @@ services:
       retries: 5
 
   minio-research-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    profiles: ["research"]
+    image: trade-minio-mc:RELEASE.2025-08-13T08-35-41Z
+    build:
+      context: .
+      dockerfile: minio/Dockerfile.mc
     depends_on:
       minio:
         condition: service_healthy
@@ -388,8 +279,6 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       RAW_BUCKET: trade-raw
       DATASETS_BUCKET: trade-datasets
-      MODELS_BUCKET: trade-models
-      EXPERIMENTS_BUCKET: trade-experiments
       EXPORTS_BUCKET: trade-exports
       DAGSTER_ACCESS_KEY: ${OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-local-dagster-artifacts}
       DAGSTER_SECRET_KEY: ${OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-local-dagster-artifacts-secret}
@@ -401,6 +290,7 @@ services:
     restart: "no"
 
   otel-collector:
+    profiles: ["observability"]
     image: otel/opentelemetry-collector-contrib:latest
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
@@ -411,6 +301,7 @@ services:
       - "9464:9464"
 
   prometheus:
+    profiles: ["observability"]
     image: prom/prometheus:latest
     command: ["--config.file=/etc/prometheus/prometheus.yaml"]
     volumes:
@@ -423,6 +314,7 @@ services:
         condition: service_started
 
   dbeaver:
+    profiles: ["admin"]
     image: dbeaver/cloudbeaver:latest
     ports:
       - "8978:8978"
@@ -431,14 +323,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      qdrant:
-        condition: service_started
 
 volumes:
   postgres_data:
-  qdrant_data:
   minio_data:
   clickhouse_data:
   prometheus_data:
   dbeaver_data:
-  web_node_modules:

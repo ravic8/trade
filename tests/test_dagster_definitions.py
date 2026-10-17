@@ -3,41 +3,7 @@ from importlib import import_module
 import pytest
 
 dagster = pytest.importorskip("dagster")
-definitions = import_module("trade_research.dagster.definitions")
-
-
-def test_fx_intraday_dukascopy_job_and_schedule_are_registered() -> None:
-    assert definitions.fx_intraday_dukascopy_job.name == "fx_intraday_dukascopy_job"
-    assert (
-        definitions.fx_intraday_dukascopy_schedule.name
-        == "fx_intraday_dukascopy_schedule"
-    )
-    assert (
-        definitions.fx_intraday_dukascopy_schedule.default_status
-        == dagster.DefaultScheduleStatus.STOPPED
-    )
-
-
-def test_yfinance_fx_intraday_job_and_schedule_are_registered() -> None:
-    assert definitions.yfinance_fx_intraday_job.name == "yfinance_fx_intraday_job"
-    assert (
-        definitions.yfinance_fx_intraday_schedule.name
-        == "yfinance_fx_intraday_schedule"
-    )
-    assert (
-        definitions.yfinance_fx_intraday_schedule.default_status
-        == dagster.DefaultScheduleStatus.STOPPED
-    )
-
-
-def test_phase3_nse_minute_job_and_schedule_are_registered_but_stopped() -> None:
-    assert definitions.yfinance_nse_minute_job.name == "yfinance_nse_minute_job"
-    assert definitions.yfinance_nse_minute_schedule.name == "yfinance_nse_minute_schedule"
-    assert definitions.yfinance_nse_minute_schedule.cron_schedule == "30 12 * * 1-5"
-    assert (
-        definitions.yfinance_nse_minute_schedule.default_status
-        == dagster.DefaultScheduleStatus.STOPPED
-    )
+definitions = import_module("trade_data.dagster.definitions")
 
 
 def test_phase3_daily_partition_reconciliation_is_manual_only() -> None:
@@ -58,17 +24,6 @@ def test_phase3_provider_comparison_is_manual_only() -> None:
     )
     assert all(
         schedule.name != "nse_yfinance_provider_comparison_schedule"
-        for schedule in definitions.defs.schedules
-    )
-
-
-def test_phase3_bounded_canary_assessment_is_manual_only() -> None:
-    assert (
-        definitions.phase3_bounded_canary_assessment_job.name
-        == "phase3_bounded_canary_assessment_job"
-    )
-    assert all(
-        schedule.name != "phase3_bounded_canary_assessment_schedule"
         for schedule in definitions.defs.schedules
     )
 
@@ -133,50 +88,6 @@ def test_phase5_yfinance_queue_jobs_and_schedules_are_stopped_by_default() -> No
         assert planner_schedule.cron_schedule == "0 18 * * 1-5"
         assert planner_schedule.execution_timezone == timezone
         assert planner_schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
-    assert (
-        definitions.nse_completed_session_opportunity_targets_schedule.cron_schedule
-        == "15 13-18 * * 1-5"
-    )
-    assert (
-        definitions.nse_completed_session_opportunity_targets_schedule.default_status
-        == dagster.DefaultScheduleStatus.STOPPED
-    )
-    for exchange in ("tsx", "us"):
-        job = getattr(
-            definitions,
-            f"{exchange}_completed_session_opportunity_targets_job",
-        )
-        schedule = getattr(
-            definitions,
-            f"{exchange}_completed_session_opportunity_targets_schedule",
-        )
-        assert job.name == f"{exchange}_completed_session_opportunity_targets_job"
-        assert schedule.default_status == dagster.DefaultScheduleStatus.STOPPED
-        assert schedule.cron_schedule == [
-            "15 18-23 * * 1-5",
-            "15 0-1 * * 2-6",
-        ]
-        assert schedule.execution_timezone == (
-            "America/Toronto" if exchange == "tsx" else "America/New_York"
-        )
-
-
-def test_bigquery_export_job_and_schedule_are_registered_but_stopped() -> None:
-    assert definitions.bigquery_export_sync_job.name == "bigquery_export_sync_job"
-    assert definitions.bigquery_daily_sync_schedule.name == "bigquery_daily_sync_schedule"
-    assert (
-        definitions.bigquery_daily_sync_schedule.default_status
-        == dagster.DefaultScheduleStatus.STOPPED
-    )
-    assert (
-        definitions.bigquery_tsx_ohlcv_canary_job.name
-        == "bigquery_tsx_ohlcv_canary_job"
-    )
-    assert all(
-        schedule.name != "bigquery_tsx_ohlcv_canary_schedule"
-        for schedule in definitions.defs.schedules
-    )
-
 
 def test_api_workflow_requests_have_one_stopped_by_default_dagster_dispatcher() -> None:
     assert definitions.data_pipeline_request_job.name == "data_pipeline_request_job"
@@ -185,3 +96,16 @@ def test_api_workflow_requests_have_one_stopped_by_default_dagster_dispatcher() 
         definitions.data_pipeline_request_sensor.default_status
         == dagster.DefaultSensorStatus.STOPPED
     )
+
+
+def test_only_daily_jobs_and_assets_are_registered() -> None:
+    dagster.Definitions.validate_loadable(definitions.defs)
+    names = {job.name for job in definitions.defs.jobs}
+    names.update(schedule.name for schedule in definitions.defs.schedules)
+    names.update(key.to_user_string() for asset in definitions.defs.assets for key in asset.keys)
+    for name in names:
+        assert not any(token in name for token in (
+            "opportunity", "research", "feature", "target", "ml_dataset",
+            "intraday", "minute", "bigquery", "bounded_canary",
+        )), name
+    assert len(list(definitions.defs.schedules)) == 12

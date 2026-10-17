@@ -4,10 +4,10 @@ from time import sleep
 
 import pandas as pd
 
-import trade_research.pipelines.yfinance_daily as yfinance_daily
-from trade_research.config import Settings
-from trade_research.data.rate_limits import RateLimitDecision
-from trade_research.pipelines.yfinance_daily import (
+import trade_data.pipelines.yfinance_daily as yfinance_daily
+from trade_data.config import Settings
+from trade_data.data.rate_limits import RateLimitDecision
+from trade_data.pipelines.yfinance_daily import (
     _execute_yfinance_daily_batches_with_controls,
     _fetch_yfinance_daily_batches_with_controls,
     _retry_database_write,

@@ -8,9 +8,9 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import Column, DateTime, MetaData, String, Table, create_engine, text
 
-from trade_research.config import Settings
-from trade_research.pipelines import universe_snapshot
-from trade_research.universe.persisted import (
+from trade_data.config import Settings
+from trade_data.pipelines import universe_snapshot
+from trade_data.universe.persisted import (
     UniverseRefreshResult,
     UniverseValidationResult,
 )

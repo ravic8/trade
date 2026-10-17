@@ -8,13 +8,13 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
-from trade_research.config import Settings
-from trade_research.pipelines import yfinance_work_queue
-from trade_research.pipelines.base import PipelineRunResult
-from trade_research.schemas import Symbol
-from trade_research.storage.timescale import TimescaleStore
-from trade_research.universe.persisted import reconcile_universe_snapshot
-from trade_research.universe.tsx_reconciliation import (
+from trade_data.config import Settings
+from trade_data.pipelines import yfinance_work_queue
+from trade_data.pipelines.base import PipelineRunResult
+from trade_data.schemas import Symbol
+from trade_data.storage.timescale import TimescaleStore
+from trade_data.universe.persisted import reconcile_universe_snapshot
+from trade_data.universe.tsx_reconciliation import (
     ReconciledTSXUniverseProvider,
     TMXDirectoryEntry,
     TMXIssuer,

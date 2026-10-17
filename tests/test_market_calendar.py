@@ -3,8 +3,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import trade_research.market_calendar as market_calendar_module
-from trade_research.market_calendar import (
+import trade_data.market_calendar as market_calendar_module
+from trade_data.market_calendar import (
     NSE_FALLBACK_CLOSED_DATES,
     ExchangeHolidays,
     MarketCalendarError,
@@ -100,7 +100,7 @@ def test_fetch_exchange_holidays_supports_ca_alias(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "trade_research.market_calendar.fetch_tsx_holidays",
+        "trade_data.market_calendar.fetch_tsx_holidays",
         fake_tsx_holidays,
     )
 
@@ -174,7 +174,7 @@ def test_session_decision_skips_exchange_holiday(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "trade_research.market_calendar.fetch_exchange_holidays",
+        "trade_data.market_calendar.fetch_exchange_holidays",
         fake_holidays,
     )
     decision = session_decision(
@@ -195,7 +195,7 @@ def test_session_decision_allows_post_close_hourly_fetch(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "trade_research.market_calendar.fetch_exchange_holidays",
+        "trade_data.market_calendar.fetch_exchange_holidays",
         fake_holidays,
     )
     decision = session_decision(

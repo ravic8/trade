@@ -1,3 +1,5 @@
+> Historical storage/research canary document. Current scope: [daily repository status](current_state.md). Retired canary tools are archived in trade-research/migration/storage-utilities-before-daily-cleanup.
+
 # Phase 2 Storage Foundation
 
 Status: foundation and operational tooling implemented; production evidence,

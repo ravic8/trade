@@ -1,0 +1,75 @@
+"""Frozen column vocabulary for historical database compatibility.
+
+Applied migrations must not depend on research builders. These names describe
+existing tables; new feature versions belong in the research repository.
+"""
+
+FEATURE_COLUMNS_V1_0 = (
+    "ret_1d",
+    "ret_2d",
+    "ret_3d",
+    "ret_5d",
+    "ret_10d",
+    "ret_20d",
+    "ret_60d",
+    "ret_120d",
+    "log_ret_1d",
+    "sma_10",
+    "sma_20",
+    "sma_50",
+    "sma_100",
+    "sma_200",
+    "ema_10",
+    "ema_20",
+    "ema_50",
+    "ema_100",
+    "ema_200",
+    "close_vs_sma_20",
+    "close_vs_sma_50",
+    "close_vs_sma_200",
+    "close_vs_ema_20",
+    "close_vs_ema_50",
+    "close_vs_ema_200",
+    "sma_20_vs_sma_50",
+    "sma_50_vs_sma_200",
+    "volatility_10d",
+    "volatility_20d",
+    "volatility_60d",
+    "volatility_ratio_20d_60d",
+    "true_range",
+    "atr_14",
+    "atr_pct_14",
+    "volume_avg_20d",
+    "volume_avg_60d",
+    "volume_ratio_20d",
+    "volume_ratio_60d",
+    "turnover",
+    "turnover_avg_20d",
+    "turnover_avg_60d",
+    "turnover_ratio_20d",
+    "turnover_ratio_60d",
+)
+
+DAILY_FORWARD_TARGET_COLUMNS_V1_0 = (
+    "forward_ret_1d",
+    "forward_ret_5d",
+    "forward_ret_10d",
+    "forward_ret_20d",
+    "forward_ret_60d",
+    "forward_outperform_universe_20d",
+    "top_quantile_forward_return_20d",
+)
+
+DAILY_OPPORTUNITY_TARGET_COLUMNS_V1_0 = (
+    "session_return",
+    "gap",
+    "true_return",
+    "upside",
+    "downside",
+    "giveback",
+    "recovery",
+    "session_range",
+    "true_upside",
+    "true_downside",
+    "true_range",
+)

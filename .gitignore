@@ -15,6 +15,7 @@ __pycache__/
 .env.*
 !.env.example
 !.env.prod.example
+!.env.external.example
 
 /data/
 /backups/
@@ -34,7 +35,11 @@ node_modules/
 dist/
 apps/web/node_modules/
 apps/web/dist/
+/native/market_data/build/
 
 .DS_Store
 
 *.log
+
+.coverage*
+coverage.xml

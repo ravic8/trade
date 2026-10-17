@@ -2,14 +2,14 @@
 set -eu
 
 mc alias set trade http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-for bucket in "$RAW_BUCKET" "$DATASETS_BUCKET" "$MODELS_BUCKET" "$EXPERIMENTS_BUCKET" "$EXPORTS_BUCKET"; do
+for bucket in "$RAW_BUCKET" "$DATASETS_BUCKET" "$EXPORTS_BUCKET"; do
   mc mb --ignore-existing "trade/$bucket"
   mc version enable "trade/$bucket"
 done
 
 bucket_resources=""
 object_resources=""
-for bucket in "$RAW_BUCKET" "$DATASETS_BUCKET" "$MODELS_BUCKET" "$EXPERIMENTS_BUCKET" "$EXPORTS_BUCKET"; do
+for bucket in "$RAW_BUCKET" "$DATASETS_BUCKET" "$EXPORTS_BUCKET"; do
   if [ -n "$bucket_resources" ]; then
     bucket_resources="$bucket_resources,"
     object_resources="$object_resources,"
@@ -36,4 +36,4 @@ fi
 mc admin policy attach trade research-write --user "$DAGSTER_ACCESS_KEY"
 mc admin policy attach trade research-read --user "$API_ACCESS_KEY"
 
-printf 'Research object-store buckets and identities are reconciled.\n'
+printf 'Daily object-store buckets and identities are reconciled.\n'

@@ -27,8 +27,8 @@ import yfinance as yf
 from curl_cffi import requests as curl_requests
 from yfinance.exceptions import YFRateLimitError
 
-from trade_research.universe.nse import NSEUniverseProvider
-from trade_research.universe.yfinance_full import (
+from trade_data.universe.nse import NSEUniverseProvider
+from trade_data.universe.yfinance_full import (
     YFinanceCanadaUniverseProvider,
     YFinanceUSUniverseProvider,
 )

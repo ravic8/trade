@@ -1,9 +1,9 @@
 ---
-document_status: current
+document_status: historical
 last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
 last_verified_date: 2026-07-24
 owner: trade-research-platform
-replaced_by: null
+replaced_by: docs/current_state.md
 ---
 
 # Phase 0 CLI and Mutation Inventory
@@ -28,7 +28,7 @@ remove these surfaces; later phases guard, replace, or retire them.
 
 ## Typer CLI
 
-All commands are defined in `src/trade_research/cli.py`.
+All commands are defined in `src/trade_data/cli.py`.
 
 | Command | Class | Primary writes/effects | Dagster equivalent or target |
 |---|---|---|---|

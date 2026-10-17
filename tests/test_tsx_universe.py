@@ -2,7 +2,7 @@ from io import StringIO
 
 import pandas as pd
 
-from trade_research.universe.tsx import TSXUniverseProvider
+from trade_data.universe.tsx import TSXUniverseProvider
 
 
 def test_tsx_universe_uses_yahoo_hyphens_for_classes_and_units(monkeypatch) -> None:
@@ -20,7 +20,7 @@ def test_tsx_universe_filters_other_canadian_venues_and_preserves_yahoo_symbols(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "trade_research.universe.tsx.pd.read_csv",
+        "trade_data.universe.tsx.pd.read_csv",
         lambda _: pd.DataFrame(
             {
                 "Symbol": [

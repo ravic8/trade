@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from trade_research.validation.daily_pipeline import LatestTradingDate
+from trade_data.validation.calendar import LatestTradingDate
 
 dagster = pytest.importorskip("dagster")
-daily_assets = import_module("trade_research.dagster.daily_assets")
+daily_assets = import_module("trade_data.dagster.daily_assets")
 
 
 def _result(
@@ -23,132 +23,6 @@ def _result(
         artifacts=artifacts or {},
         metrics={"row_count": 3, "nested": {"ignored": True}},
     )
-
-
-def test_bigquery_asset_passes_dagster_scope_and_emits_disabled_status(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_sync(**kwargs):
-        captured.update(kwargs)
-        return daily_assets.BigQuerySyncResult(run_id="dagster-bq", status="disabled")
-
-    monkeypatch.setattr(daily_assets, "run_bigquery_sync", fake_sync)
-    context = dagster.build_op_context(
-        op_config={
-            "exchange": "TSX",
-            "year": 2025,
-            "entities": ["ohlcv_daily"],
-        }
-    )
-    result = daily_assets.bigquery_export_sync(context)
-
-    assert result.status == "disabled"
-    assert captured == {
-        "exchange": "TSX",
-        "year": 2025,
-        "entities": ["ohlcv_daily"],
-        "trigger": "dagster",
-        "run_id": context.run_id,
-    }
-
-
-def test_bigquery_canary_asset_uses_fixed_canary_runner(monkeypatch) -> None:
-    monkeypatch.setattr(
-        daily_assets,
-        "run_bigquery_tsx_canary",
-        lambda: daily_assets.BigQuerySyncResult(run_id="tsx-canary", status="completed"),
-    )
-
-    result = daily_assets.bigquery_tsx_ohlcv_canary(dagster.build_op_context())
-
-    assert result.run_id == "tsx-canary"
-    assert result.status == "completed"
-
-
-def test_daily_feature_asset_calls_pipeline_after_validation(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("daily_features")
-
-    monkeypatch.setattr(daily_assets, "run_daily_feature_pipeline", fake_pipeline)
-
-    result = daily_assets.daily_features_v1(
-        dagster.build_op_context(),
-        daily_ohlcv=_result("upstox_daily_ohlcv"),
-    )
-
-    assert result.name == "daily_features"
-    assert captured == {
-        "input_source": "timescale",
-        "ohlcv_source": "upstox",
-        "store_db": True,
-        "incremental": True,
-        "lookback_days": 320,
-        "export_db_snapshot": True,
-    }
-
-
-def test_daily_feature_asset_stops_on_failed_validation(monkeypatch) -> None:
-    monkeypatch.setattr(
-        daily_assets,
-        "run_daily_feature_pipeline",
-        lambda **kwargs: pytest.fail("feature pipeline should not run"),
-    )
-
-    with pytest.raises(RuntimeError, match="Upstream pipeline failed"):
-        daily_assets.daily_features_v1(
-            dagster.build_op_context(),
-            daily_ohlcv=_result("upstox_daily_ohlcv", status="fail"),
-        )
-
-
-def test_daily_target_asset_uses_timescale(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("daily_targets")
-
-    monkeypatch.setattr(daily_assets, "run_daily_target_pipeline", fake_pipeline)
-
-    result = daily_assets.daily_targets_v1(
-        dagster.build_op_context(),
-        daily_ohlcv=_result("upstox_daily_ohlcv"),
-    )
-
-    assert result.name == "daily_targets"
-    assert captured == {
-        "input_source": "timescale",
-        "ohlcv_source": "upstox",
-        "store_db": True,
-        "incremental": True,
-        "recompute_lookback_days": 90,
-        "export_db_snapshot": True,
-    }
-
-
-def test_opportunity_assets_use_exchange_provider_boundaries(monkeypatch) -> None:
-    calls: list[tuple[str, str]] = []
-
-    def fake_pipeline(*, exchange: str, ohlcv_source: str) -> object:
-        calls.append((exchange, ohlcv_source))
-        return _result(f"{exchange.lower()}_opportunity_targets")
-
-    monkeypatch.setattr(daily_assets, "run_opportunity_target_pipeline", fake_pipeline)
-    context = dagster.build_op_context()
-    upstream = _result("daily_ohlcv")
-
-    daily_assets.nse_opportunity_targets_v1(context, daily_ohlcv=upstream)
-    daily_assets.tsx_opportunity_targets_v1(context, daily_ohlcv=upstream)
-    daily_assets.us_opportunity_targets_v1(context, daily_ohlcv=upstream)
-
-    assert calls == [
-        ("NSE", "yfinance"),
-        ("TSX", "yfinance"),
-        ("US", "yfinance"),
-    ]
 
 
 def test_upstox_daily_asset_stores_to_timescale(monkeypatch) -> None:
@@ -302,6 +176,20 @@ def test_phase5_queue_assets_call_durable_pipelines(monkeypatch) -> None:
     ]
 
 
+def test_scheduled_worker_restricts_claims_to_configured_exchange(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        daily_assets, "get_settings",
+        lambda: SimpleNamespace(yfinance_daily_worker_exchange="NSE"),
+    )
+    monkeypatch.setattr(
+        daily_assets, "run_yfinance_daily_work_queue",
+        lambda **kwargs: calls.append(kwargs) or _result("worker"),
+    )
+    daily_assets.yfinance_daily_work_worker(dagster.build_op_context())
+    assert calls == [{"trigger": "dagster", "exchange": "NSE"}]
+
+
 def test_phase3_daily_canary_plans_and_claims_only_bounded_nse_work(
     monkeypatch,
 ) -> None:
@@ -376,61 +264,6 @@ def test_yfinance_worker_asset_fails_dagster_run_on_partial_business_outcome(
         daily_assets.yfinance_daily_work_worker(dagster.build_op_context())
 
 
-def test_daily_feature_asset_fails_on_degraded_materialization(monkeypatch) -> None:
-    monkeypatch.setattr(
-        daily_assets,
-        "run_daily_feature_pipeline",
-        lambda **_kwargs: daily_assets.PipelineRunResult(
-            name="daily_features",
-            status="warn",
-            warnings=["2 feature rows failed validation."],
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="2 feature rows failed validation"):
-        daily_assets.daily_features_v1(
-            dagster.build_op_context(),
-            daily_ohlcv=_result("daily_ohlcv"),
-        )
-
-
-def test_completed_session_gate_records_degraded_noop_without_failing(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        daily_assets,
-        "run_completed_session_opportunity_target_pipeline",
-        lambda **_kwargs: daily_assets.PipelineRunResult(
-            name="nse_opportunity_targets_refresh",
-            status="warn",
-            metrics={"ready": False, "reason": "source_coverage_partial"},
-            warnings=["Source coverage has not reached the materialization gate."],
-        ),
-    )
-
-    result = daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
-
-    assert result.business_outcome == "degraded"
-
-
-def test_completed_session_gate_fails_degraded_ready_materialization(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        daily_assets,
-        "run_completed_session_opportunity_target_pipeline",
-        lambda **_kwargs: daily_assets.PipelineRunResult(
-            name="nse_opportunity_targets_refresh",
-            status="warn",
-            metrics={"ready": True},
-            warnings=["1 target row failed validation."],
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="1 target row failed validation"):
-        daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
-
-
 def test_result_metadata_exposes_canonical_business_outcome() -> None:
     metadata = daily_assets._result_metadata(
         daily_assets.PipelineRunResult(name="pipeline", status="warn")
@@ -439,31 +272,7 @@ def test_result_metadata_exposes_canonical_business_outcome() -> None:
     assert metadata["business_outcome"] == "degraded"
 
 
-def test_processed_validation_asset_passes_dagster_run_id(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_pipeline(**kwargs):
-        captured.update(kwargs)
-        return _result("processed_dataset_validation")
-
-    monkeypatch.setattr(
-        daily_assets,
-        "run_processed_dataset_validation_pipeline",
-        fake_pipeline,
-    )
-    context = dagster.build_op_context()
-
-    daily_assets.processed_dataset_validation(
-        context,
-        daily_ohlcv=_result("daily_ohlcv"),
-        daily_features=_result("daily_features"),
-        daily_targets=_result("daily_targets"),
-    )
-
-    assert captured == {"coverage_run_id": context.run_id}
-
-
-def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
+def test_nse_completed_session_asset_uses_scoped_planner(
     monkeypatch,
 ) -> None:
     calls: list[tuple[str, object]] = []
@@ -472,19 +281,9 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
         calls.append(("planner", kwargs))
         return _result("yfinance_daily_work_planner")
 
-    def fake_targets(*, exchange, ohlcv_source):
-        calls.append(("targets", (exchange, ohlcv_source)))
-        return _result("nse_opportunity_targets")
-
     monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_planner", fake_planner)
-    monkeypatch.setattr(
-        daily_assets,
-        "run_completed_session_opportunity_target_pipeline",
-        fake_targets,
-    )
 
     daily_assets.yfinance_nse_completed_session_work_plan(dagster.build_op_context())
-    daily_assets.nse_completed_session_opportunity_targets(dagster.build_op_context())
 
     assert calls == [
         (
@@ -497,11 +296,10 @@ def test_nse_completed_session_assets_use_scoped_planner_and_readiness_gate(
                 "trigger": "dagster",
             },
         ),
-        ("targets", ("NSE", "yfinance")),
     ]
 
 
-def test_north_america_completed_session_assets_plan_then_use_coverage_gated_refresh(
+def test_north_america_completed_session_assets_use_scoped_planners(
     monkeypatch,
 ) -> None:
     calls: list[tuple[str, object]] = []
@@ -510,28 +308,15 @@ def test_north_america_completed_session_assets_plan_then_use_coverage_gated_ref
         calls.append(("planner", (exchanges, include_initial_backfill, trigger)))
         return _result("yfinance_daily_work_planner")
 
-    def fake_targets(*, exchange, ohlcv_source):
-        calls.append(("targets", (exchange, ohlcv_source)))
-        return _result(f"{exchange.lower()}_opportunity_targets")
-
     monkeypatch.setattr(daily_assets, "run_yfinance_daily_work_planner", fake_planner)
-    monkeypatch.setattr(
-        daily_assets,
-        "run_completed_session_opportunity_target_pipeline",
-        fake_targets,
-    )
     context = dagster.build_op_context()
 
     daily_assets.yfinance_tsx_completed_session_work_plan(context)
     daily_assets.yfinance_us_completed_session_work_plan(context)
-    daily_assets.tsx_completed_session_opportunity_targets(context)
-    daily_assets.us_completed_session_opportunity_targets(context)
 
     assert calls == [
         ("planner", (("TSX",), False, "dagster")),
         ("planner", (("US",), False, "dagster")),
-        ("targets", ("TSX", "yfinance")),
-        ("targets", ("US", "yfinance")),
     ]
 
 
@@ -559,249 +344,3 @@ def test_exchange_session_assets_raise_when_materialization_fails(
 
     with pytest.raises(RuntimeError, match=f"Pipeline failed: {exchange.lower()}"):
         getattr(daily_assets, asset_name)(dagster.build_op_context())
-
-
-def test_dukascopy_intraday_asset_stores_to_timescale(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("dukascopy_fx_crypto_5m_ohlcv")
-
-    monkeypatch.setattr(
-        daily_assets,
-        "run_dukascopy_intraday_ohlcv_pipeline",
-        fake_pipeline,
-    )
-
-    result = daily_assets.dukascopy_fx_intraday_ohlcv(dagster.build_op_context())
-
-    assert result.name == "dukascopy_fx_crypto_5m_ohlcv"
-    assert captured == {
-        "store_db": True,
-        "trigger": "dagster",
-    }
-
-
-def test_yfinance_intraday_asset_stores_to_timescale(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("yfinance_fx_crypto_5m_ohlcv")
-
-    monkeypatch.setattr(
-        daily_assets,
-        "run_yfinance_intraday_ohlcv_pipeline",
-        fake_pipeline,
-    )
-
-    result = daily_assets.yfinance_fx_crypto_intraday_ohlcv(dagster.build_op_context())
-
-    assert result.name == "yfinance_fx_crypto_5m_ohlcv"
-    assert captured == {
-        "store_db": True,
-        "trigger": "dagster",
-    }
-
-
-def test_fx_intraday_gap_validation_uses_fetch_artifact(monkeypatch, tmp_path) -> None:
-    captured: dict[str, object] = {}
-    artifact = tmp_path / "dukas.parquet"
-    artifact.write_text("placeholder", encoding="utf-8")
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("dukascopy_fx_crypto_5m_gap_validation")
-
-    monkeypatch.setattr(
-        daily_assets,
-        "run_dukascopy_intraday_gap_validation_pipeline",
-        fake_pipeline,
-    )
-
-    result = daily_assets.fx_intraday_gap_validation(
-        dagster.build_op_context(),
-        intraday_ohlcv=daily_assets.PipelineRunResult(
-            name="dukascopy_fx_crypto_5m_ohlcv",
-            status="pass",
-            artifacts={"ohlcv": artifact},
-        ),
-    )
-
-    assert result.name == "dukascopy_fx_crypto_5m_gap_validation"
-    assert captured == {"input_path": artifact}
-
-
-def test_yfinance_fx_intraday_gap_validation_uses_fetch_artifact(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    captured: dict[str, object] = {}
-    artifact = tmp_path / "yf.parquet"
-    artifact.write_text("placeholder", encoding="utf-8")
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("yfinance_fx_crypto_5m_gap_validation")
-
-    monkeypatch.setattr(
-        daily_assets,
-        "run_dukascopy_intraday_gap_validation_pipeline",
-        fake_pipeline,
-    )
-
-    result = daily_assets.yfinance_fx_intraday_gap_validation(
-        dagster.build_op_context(),
-        intraday_ohlcv=daily_assets.PipelineRunResult(
-            name="yfinance_fx_crypto_5m_ohlcv",
-            status="pass",
-            artifacts={"ohlcv": artifact},
-        ),
-    )
-
-    assert result.name == "yfinance_fx_crypto_5m_gap_validation"
-    assert captured == {
-        "input_path": artifact,
-        "input_name": "processed/intraday/yfinance_fx_crypto_5m_5m_ohlcv",
-        "dataset_name": "yfinance_fx_crypto_5m_gap_validation",
-        "provider_label": "yfinance",
-        "output_path": Path("data/processed/intraday/yfinance_fx_crypto_5m_gap_validation.csv"),
-        "summary_output": Path(
-            "data/processed/intraday/yfinance_fx_crypto_5m_gap_validation_summary.json"
-        ),
-    }
-
-
-def test_fx_intraday_gap_validation_fails_without_artifact() -> None:
-    with pytest.raises(RuntimeError, match="no OHLCV artifact"):
-        daily_assets.fx_intraday_gap_validation(
-            dagster.build_op_context(),
-            intraday_ohlcv=daily_assets.PipelineRunResult(
-                name="dukascopy_fx_crypto_5m_ohlcv",
-                status="pass",
-            ),
-        )
-
-
-def test_yfinance_fx_intraday_gap_validation_fails_without_artifact() -> None:
-    with pytest.raises(RuntimeError, match="no OHLCV artifact"):
-        daily_assets.yfinance_fx_intraday_gap_validation(
-            dagster.build_op_context(),
-            intraday_ohlcv=daily_assets.PipelineRunResult(
-                name="yfinance_fx_crypto_5m_ohlcv",
-                status="pass",
-            ),
-        )
-
-
-def test_daily_pipeline_health_skips_factor_research_rebuild(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("daily_pipeline_health", status="warn")
-
-    monkeypatch.setattr(daily_assets, "run_daily_pipeline_health_pipeline", fake_pipeline)
-
-    context = dagster.build_op_context()
-    result = daily_assets.daily_pipeline_health(
-        context,
-        processed_validation=_result("processed_dataset_validation"),
-        ml_dataset=_result("ml_dataset_v1"),
-        daily_features=_result("daily_features"),
-        daily_targets=_result("daily_targets"),
-        factor_research=_result("factor_research"),
-    )
-
-    assert result.status == "warn"
-    assert captured == {
-        "run_factor_research": False,
-        "rebuild_artifacts": False,
-        "coverage_run_id": context.run_id,
-        "store_coverage_db": True,
-        "coverage_windows_months": [6, 9, 12, 15, 18, 24],
-    }
-
-
-def test_ml_dataset_asset_depends_on_processed_validation(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    coverage_path = tmp_path / "stock-coverage.parquet"
-    coverage_path.touch()
-    captured: dict[str, object] = {}
-
-    def fake_pipeline(**kwargs) -> object:
-        captured.update(kwargs)
-        return _result("ml_dataset_v1")
-
-    monkeypatch.setattr(daily_assets, "run_ml_dataset_v1_pipeline", fake_pipeline)
-
-    result = daily_assets.ml_dataset_v1(
-        dagster.build_op_context(),
-        processed_validation=_result(
-            "processed_dataset_validation",
-            artifacts={"stock_coverage": coverage_path},
-        ),
-        daily_features=_result("daily_features"),
-        daily_targets=_result("daily_targets"),
-    )
-
-    assert captured == {"stock_coverage_path": coverage_path}
-    assert result.name == "ml_dataset_v1"
-
-
-def test_ml_dataset_asset_requires_published_stock_coverage(monkeypatch) -> None:
-    monkeypatch.setattr(
-        daily_assets,
-        "run_ml_dataset_v1_pipeline",
-        lambda **_kwargs: pytest.fail("ml dataset pipeline should not run"),
-    )
-
-    with pytest.raises(RuntimeError, match="did not publish required artifact"):
-        daily_assets.ml_dataset_v1(
-            dagster.build_op_context(),
-            processed_validation=_result("processed_dataset_validation"),
-            daily_features=_result("daily_features"),
-            daily_targets=_result("daily_targets"),
-        )
-
-
-def test_ml_dataset_asset_requires_existing_stock_coverage(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    missing_path = tmp_path / "missing-coverage.parquet"
-    monkeypatch.setattr(
-        daily_assets,
-        "run_ml_dataset_v1_pipeline",
-        lambda **_kwargs: pytest.fail("ml dataset pipeline should not run"),
-    )
-
-    with pytest.raises(RuntimeError, match="Required upstream artifact does not exist"):
-        daily_assets.ml_dataset_v1(
-            dagster.build_op_context(),
-            processed_validation=_result(
-                "processed_dataset_validation",
-                artifacts={"stock_coverage": missing_path},
-            ),
-            daily_features=_result("daily_features"),
-            daily_targets=_result("daily_targets"),
-        )
-
-
-def test_ml_dataset_asset_stops_on_failed_processed_validation(monkeypatch) -> None:
-    monkeypatch.setattr(
-        daily_assets,
-        "run_ml_dataset_v1_pipeline",
-        lambda **_kwargs: pytest.fail("ml dataset pipeline should not run"),
-    )
-
-    with pytest.raises(RuntimeError, match="Upstream pipeline failed"):
-        daily_assets.ml_dataset_v1(
-            dagster.build_op_context(),
-            processed_validation=_result("processed_dataset_validation", status="fail"),
-            daily_features=_result("daily_features"),
-            daily_targets=_result("daily_targets"),
-        )

@@ -8,13 +8,13 @@ from alembic.config import Config
 from pydantic import ValidationError
 from sqlalchemy import Column, DateTime, MetaData, String, Table, create_engine, inspect
 
-from trade_research.config import Settings
-from trade_research.exchanges import (
+from trade_data.config import Settings
+from trade_data.exchanges import (
     CANONICAL_EQUITY_EXCHANGES,
     canonical_equity_exchange,
     is_legacy_equity_exchange_alias,
 )
-from trade_research.storage.timescale import metadata
+from trade_data.storage.timescale import metadata
 
 FOUNDATION_TABLES = {
     "adaptive_rate_state",
@@ -125,7 +125,7 @@ def test_phase1_feature_flags_are_safe_by_default() -> None:
     assert settings.yfinance_full_tsx_enabled is False
     assert settings.yfinance_nse_enabled is False
     assert settings.legacy_upstox_nse_enabled is True
-    assert settings.forex_pipelines_enabled is False
+    assert "forex_pipelines_enabled" not in Settings.model_fields
 
 
 @pytest.mark.parametrize(

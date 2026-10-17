@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "environment": "production",
+  "schedules": [
+    {
+      "schedule_name": "yfinance_daily_work_planner_schedule",
+      "job_name": "yfinance_daily_work_planner_job",
+      "cron_schedule": "0 6 * * *",
+      "execution_timezone": "UTC",
+      "exchange": "MULTI",
+      "enabled_when": "any_yfinance_daily",
+      "freshness_sla_minutes": 1440,
+      "upstream_dependencies": [
+        "accepted_universe_snapshot",
+        "exchange_sessions"
+      ],
+      "alert_owner": "market-data",
+      "notes": "Plans bounded incremental work for enabled yfinance exchanges."
+    },
+    {
+      "schedule_name": "yfinance_nse_completed_session_work_planner_schedule",
+      "job_name": "yfinance_nse_completed_session_work_planner_job",
+      "cron_schedule": "15 12 * * 1-5",
+      "execution_timezone": "UTC",
+      "exchange": "NSE",
+      "enabled_when": "nse_yfinance",
+      "freshness_sla_minutes": 180,
+      "upstream_dependencies": [
+        "nse_universe_snapshot",
+        "nse_exchange_sessions"
+      ],
+      "alert_owner": "market-data",
+      "notes": "Plans NSE work after close and the provider grace period."
+    },
+    {
+      "schedule_name": "yfinance_tsx_completed_session_work_planner_schedule",
+      "job_name": "yfinance_tsx_completed_session_work_planner_job",
+      "cron_schedule": "0 18 * * 1-5",
+      "execution_timezone": "America/Toronto",
+      "exchange": "TSX",
+      "enabled_when": "tsx_yfinance",
+      "freshness_sla_minutes": 180,
+      "upstream_dependencies": [
+        "tsx_universe_snapshot",
+        "tsx_exchange_sessions"
+      ],
+      "alert_owner": "market-data",
+      "notes": "Plans TSX work after close and the provider grace period."
+    },
+    {
+      "schedule_name": "yfinance_us_completed_session_work_planner_schedule",
+      "job_name": "yfinance_us_completed_session_work_planner_job",
+      "cron_schedule": "0 18 * * 1-5",
+      "execution_timezone": "America/New_York",
+      "exchange": "US",
+      "enabled_when": "us_yfinance",
+      "freshness_sla_minutes": 180,
+      "upstream_dependencies": [
+        "us_universe_snapshot",
+        "us_exchange_sessions"
+      ],
+      "alert_owner": "market-data",
+      "notes": "Plans US work after close and the provider grace period."
+    },
+    {
+      "schedule_name": "yfinance_daily_work_worker_schedule",
+      "job_name": "yfinance_daily_work_worker_job",
+      "cron_schedule": "*/5 * * * *",
+      "execution_timezone": "UTC",
+      "exchange": "MULTI",
+      "enabled_when": "any_yfinance_daily",
+      "freshness_sla_minutes": 15,
+      "upstream_dependencies": [
+        "yfinance_daily_work_planner"
+      ],
+      "alert_owner": "market-data",
+      "notes": "Executes one bounded durable yfinance work batch."
+    },
+    {
+      "schedule_name": "nse_universe_refresh_schedule",
+      "job_name": "nse_universe_refresh_job",
+      "cron_schedule": "0 8 * * 1-5",
+      "execution_timezone": "Asia/Kolkata",
+      "exchange": "NSE",
+      "enabled_when": "nse_yfinance",
+      "freshness_sla_minutes": 2880,
+      "upstream_dependencies": [],
+      "alert_owner": "market-data",
+      "notes": "Refreshes the accepted NSE universe."
+    },
+    {
+      "schedule_name": "tsx_universe_refresh_schedule",
+      "job_name": "tsx_universe_refresh_job",
+      "cron_schedule": "0 8 * * 1-5",
+      "execution_timezone": "America/Toronto",
+      "exchange": "TSX",
+      "enabled_when": "tsx_yfinance",
+      "freshness_sla_minutes": 2880,
+      "upstream_dependencies": [],
+      "alert_owner": "market-data",
+      "notes": "Refreshes the accepted TSX universe."
+    },
+    {
+      "schedule_name": "us_universe_refresh_schedule",
+      "job_name": "us_universe_refresh_job",
+      "cron_schedule": "0 8 * * 1-5",
+      "execution_timezone": "America/New_York",
+      "exchange": "US",
+      "enabled_when": "us_yfinance",
+      "freshness_sla_minutes": 2880,
+      "upstream_dependencies": [],
+      "alert_owner": "market-data",
+      "notes": "Refreshes the accepted US universe."
+    },
+    {
+      "schedule_name": "nse_exchange_sessions_schedule",
+      "job_name": "nse_exchange_sessions_job",
+      "cron_schedule": "0 6 1 * *",
+      "execution_timezone": "Asia/Kolkata",
+      "exchange": "NSE",
+      "enabled_when": "nse_sessions",
+      "freshness_sla_minutes": 44640,
+      "upstream_dependencies": [],
+      "alert_owner": "market-data",
+      "notes": "Materializes NSE exchange sessions."
+    },
+    {
+      "schedule_name": "tsx_exchange_sessions_schedule",
+      "job_name": "tsx_exchange_sessions_job",
+      "cron_schedule": "0 6 1 * *",
+      "execution_timezone": "America/Toronto",
+      "exchange": "TSX",
+      "enabled_when": "tsx_sessions",
+      "freshness_sla_minutes": 44640,
+      "upstream_dependencies": [],
+      "alert_owner": "market-data",
+      "notes": "Materializes TSX exchange sessions."
+    },
+    {
+      "schedule_name": "us_exchange_sessions_schedule",
+      "job_name": "us_exchange_sessions_job",
+      "cron_schedule": "0 6 1 * *",
+      "execution_timezone": "America/New_York",
+      "exchange": "US",
+      "enabled_when": "us_sessions",
+      "freshness_sla_minutes": 44640,
+      "upstream_dependencies": [],
+      "alert_owner": "market-data",
+      "notes": "Materializes US exchange sessions."
+    },
+    {
+      "schedule_name": "north_america_daily_yfinance_schedule",
+      "job_name": "north_america_daily_yfinance_job",
+      "cron_schedule": "30 3 * * 2-6",
+      "execution_timezone": "Asia/Kolkata",
+      "exchange": "MULTI",
+      "enabled_when": "never",
+      "freshness_sla_minutes": 1440,
+      "upstream_dependencies": [],
+      "alert_owner": "market-data",
+      "notes": "Legacy direct path remains stopped; durable work owns daily candles."
+    }
+  ]
+}

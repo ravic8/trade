@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from trade_research.contracts import (
+from trade_data.contracts import (
     ColumnContract,
     ContractEvaluationContext,
     DataContract,
@@ -12,7 +12,7 @@ from trade_research.contracts import (
     evaluate_frame_contract,
     get_data_contract,
 )
-from trade_research.validation.results import ValidationContractError
+from trade_data.validation.results import ValidationContractError
 
 
 def _daily_ohlcv_frame() -> pd.DataFrame:

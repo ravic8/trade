@@ -1,0 +1,10 @@
+{
+  "provider": "yfinance",
+  "exchange": "NSE",
+  "instrument_key": "YF|RELIANCE.NS",
+  "start_date": "2026-10-15",
+  "end_date": "2026-10-16",
+  "rows": [
+    {"date":"2026-10-16","symbol":"RELIANCE","open":100.0,"high":105.0,"low":99.0,"close":104.0,"volume":1000,"quality_status":"ok"}
+  ]
+}

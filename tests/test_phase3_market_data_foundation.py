@@ -10,45 +10,38 @@ import pandas as pd
 import pytest
 from sqlalchemy import create_engine, select
 
-import trade_research.market_data.ingestion as market_data_ingestion
-from trade_research.config import Settings
-from trade_research.control_plane.tables import (
+import trade_data.market_data.ingestion as market_data_ingestion
+from trade_data.config import Settings
+from trade_data.control_plane.tables import (
     market_data_quality_outcomes_table,
     market_data_replication_checkpoints_table,
 )
-from trade_research.market_data.adapters import yfinance_frame_to_candles
-from trade_research.market_data.aggregation import (
-    IntradayAggregationRequest,
-    aggregate_nse_minute_candles,
-    nse_bucket_expected_minutes,
-    nse_bucket_start,
-)
-from trade_research.market_data.contracts import CandleInterval, MarketCandle, ProviderRequest
-from trade_research.market_data.ingestion import (
+from trade_data.market_data.adapters import yfinance_frame_to_candles
+from trade_data.market_data.contracts import CandleInterval, MarketCandle, ProviderRequest
+from trade_data.market_data.ingestion import (
     ValidatedMarketDataBatch,
     prepare_yfinance_batch,
     replicate_validated_batch,
 )
-from trade_research.market_data.quality import (
+from trade_data.market_data.quality import (
     DailyExpectedWindow,
     MarketDataQualityRepository,
     MarketDataQualityStatus,
     daily_missing_quality_outcomes,
-    nse_minute_missing_quality_outcomes,
     validation_quality_outcomes,
 )
-from trade_research.market_data.raw_snapshots import RawSnapshotWriter
-from trade_research.market_data.replication import (
+from trade_data.market_data.raw_snapshots import RawSnapshotWriter
+from trade_data.market_data.replication import (
     MarketDataReplicationError,
     assert_replication_matches,
     candle_batch_summary,
 )
-from trade_research.market_data.validation import (
+from trade_data.market_data.validation import (
     MarketDataValidationError,
     validate_candle_batch,
 )
-from trade_research.storage.clickhouse import ClickHouseMarketDataRepository
-from trade_research.storage.object_store import ArtifactNamespace, ObjectArtifactStore
+from trade_data.storage.clickhouse import ClickHouseMarketDataRepository
+from trade_data.storage.object_store import ArtifactNamespace, ObjectArtifactStore
 
 
 def _request(
@@ -135,35 +128,12 @@ def test_daily_validation_rejects_invalid_ohlc_and_ineligible_session() -> None:
     }
 
 
-def test_nse_minute_validation_enforces_timezone_and_regular_session() -> None:
-    request = _request(interval=CandleInterval.ONE_MINUTE)
-    valid = _candle(request, timestamp=datetime(2026, 9, 5, 3, 45, tzinfo=UTC))
-    outside = _candle(request, timestamp=datetime(2026, 9, 5, 10, 0, tzinfo=UTC))
-
-    valid_result = validate_candle_batch(
-        request,
-        [valid],
-        eligible_sessions={date(2026, 9, 5)},
-        observed_at=request.retrieved_at,
-    )
-    invalid_result = validate_candle_batch(
-        request,
-        [outside],
-        eligible_sessions={date(2026, 9, 5)},
-        observed_at=request.retrieved_at,
-    )
-
-    assert valid_result.valid is True
-    assert invalid_result.valid is False
-    assert [issue.code for issue in invalid_result.issues] == ["outside_exchange_session"]
-
-
 def test_yfinance_adapter_produces_provider_independent_candles() -> None:
-    request = _request(interval=CandleInterval.ONE_MINUTE)
+    request = _request()
     frame = pd.DataFrame(
         [
             {
-                "Timestamp": datetime(2026, 9, 5, 3, 45, tzinfo=UTC),
+                "Date": date(2026, 9, 5),
                 "InstrumentKey": "NSE_EQ|RELIANCE",
                 "TradingSymbol": "RELIANCE.NS",
                 "Symbol": "RELIANCE",
@@ -185,7 +155,7 @@ def test_yfinance_adapter_produces_provider_independent_candles() -> None:
     )
 
     assert len(candles) == 1
-    assert candles[0].interval is CandleInterval.ONE_MINUTE
+    assert candles[0].interval is CandleInterval.ONE_DAY
     assert candles[0].raw_artifact_id == "artifact-1"
     assert candles[0].currency == "INR"
 
@@ -268,38 +238,38 @@ class _ClickHouseClient:
         return None
 
 
-def test_clickhouse_market_data_repository_routes_daily_and_minute_rows() -> None:
+def test_clickhouse_market_data_repository_routes_daily_rows() -> None:
     client = _ClickHouseClient()
     repository = ClickHouseMarketDataRepository(client, write_enabled=True)
-    daily_request = _request()
-    minute_request = _request(interval=CandleInterval.ONE_MINUTE)
+    inserted = repository.insert_validated([_candle(_request())], source_run_id="run-1", version=1)
+    assert inserted == 1
+    assert [call[0] for call in client.inserts] == ["research.ohlcv_daily"]
+    assert repository.count_rows(exchange="NSE", interval="1d", source_run_id="run-1") == 2
+    with pytest.raises(ValueError, match="Only daily replicas"):
+        repository.count_rows(exchange="NSE", interval="1m", source_run_id="run-1")
+    with pytest.raises(ValueError, match="Only daily replicas"):
+        repository.batch_summary(exchange="NSE", interval="1m", source_run_id="run-1")
 
-    inserted = repository.insert_validated(
-        [
-            _candle(daily_request),
-            _candle(
-                minute_request,
-                timestamp=datetime(2026, 9, 5, 3, 45, tzinfo=UTC),
-            ),
-        ],
-        source_run_id="run-1",
-        version=1,
+
+def test_clickhouse_rounds_prices_before_decimal_storage() -> None:
+    client = _ClickHouseClient()
+    repository = ClickHouseMarketDataRepository(client, write_enabled=True)
+    candle = replace(
+        _candle(_request()),
+        open=Decimal("421.827392578125"),
+        high=Decimal("423.3360595703125"),
+        low=Decimal("417.4157409667969"),
+        close=Decimal("418.2157897949219"),
     )
-
-    assert inserted == 2
-    assert [call[0] for call in client.inserts] == [
-        "research.ohlcv_daily",
-        "research.ohlcv_intraday",
+    repository.insert_validated([candle], source_run_id="precision-replay", version=1)
+    _, rows, columns = client.inserts[0]
+    stored = dict(zip(columns, rows[0], strict=True))
+    assert [stored[key] for key in ("open", "high", "low", "close")] == [
+        Decimal("421.82739258"),
+        Decimal("423.33605957"),
+        Decimal("417.41574097"),
+        Decimal("418.21578979"),
     ]
-    assert client.inserts[1][2] == list(repository.INTRADAY_COLUMNS)
-    assert (
-        repository.count_rows(
-            exchange="NSE",
-            interval="1m",
-            source_run_id="run-1",
-        )
-        == 2
-    )
 
 
 def test_clickhouse_market_data_repository_bounds_partitions_per_insert() -> None:
@@ -480,33 +450,6 @@ def test_daily_missing_quality_uses_observed_provider_sessions() -> None:
     assert outcomes[0].reason_code == "provider_session_not_returned"
 
 
-def test_nse_minute_quality_records_each_missing_expected_candle() -> None:
-    request = ProviderRequest(
-        request_id="minute-request",
-        provider="yfinance",
-        exchange="NSE",
-        interval=CandleInterval.ONE_MINUTE,
-        window_start=datetime(2026, 9, 5, 3, 45, tzinfo=UTC),
-        window_end=datetime(2026, 9, 5, 3, 47, tzinfo=UTC),
-        provider_symbols=("RELIANCE.NS",),
-        retrieved_at=datetime(2026, 9, 5, 12, tzinfo=UTC),
-        adapter_version="yfinance-v1",
-    )
-    accepted = _candle(request, timestamp=request.window_start)
-
-    outcomes = nse_minute_missing_quality_outcomes(
-        request=request,
-        source_run_id="run-1",
-        canonical_instrument_ids={"RELIANCE.NS": accepted.instrument_id},
-        eligible_sessions={date(2026, 9, 5)},
-        accepted=(accepted,),
-    )
-
-    assert len(outcomes) == 1
-    assert outcomes[0].candle_timestamp == datetime(2026, 9, 5, 3, 46, tzinfo=UTC)
-    assert outcomes[0].status is MarketDataQualityStatus.MISSING
-
-
 def test_replication_summary_detects_count_digest_and_watermark_mismatch() -> None:
     request = _request()
     source = candle_batch_summary([_candle(request)])
@@ -650,211 +593,83 @@ def test_replication_mismatch_is_persisted_and_fails_closed(monkeypatch) -> None
     assert "row_count" in checkpoint["error_message"]
 
 
-def _minute_candles(count: int, *, start: datetime) -> list[MarketCandle]:
-    provider_request = ProviderRequest(
-        request_id="minute-source",
-        provider="yfinance",
+def test_daily_batch_quarantines_whole_invalid_instrument_only() -> None:
+    engine = create_engine("sqlite://")
+    market_data_quality_outcomes_table.create(engine)
+    rows = []
+    for symbol, day, high in [
+        ("BAD.NS", 4, 99.0),
+        ("BAD.NS", 5, 102.0),
+        ("GOOD.NS", 5, 102.0),
+    ]:
+        rows.append(
+            {
+                "Date": date(2026, 9, day),
+                "InstrumentKey": "YF|" + symbol,
+                "TradingSymbol": symbol,
+                "Symbol": symbol,
+                "Exchange": "NSE",
+                "Open": 100.0,
+                "High": high,
+                "Low": 98.0,
+                "Close": 100.5,
+                "Volume": 1000,
+            }
+        )
+    batch = prepare_yfinance_batch(
+        settings=Settings(_env_file=None),
+        database_engine=engine,
+        frame=pd.DataFrame(rows),
         exchange="NSE",
-        interval=CandleInterval.ONE_MINUTE,
-        window_start=start,
-        window_end=start + timedelta(minutes=count),
-        provider_symbols=("RELIANCE.NS",),
-        retrieved_at=start + timedelta(hours=8),
-        adapter_version="yfinance-v1",
+        interval=CandleInterval.ONE_DAY,
+        run_id="isolation-run",
+        window_start=date(2026, 9, 4),
+        window_end=date(2026, 9, 5),
+        provider_symbols=("BAD.NS", "GOOD.NS"),
+        canonical_instrument_ids={"BAD.NS": "bad", "GOOD.NS": "good"},
+        eligible_sessions={date(2026, 9, 4), date(2026, 9, 5)},
+        retrieved_at=datetime(2026, 9, 5, 12, tzinfo=UTC),
+        quarantine_invalid_instruments=True,
     )
-    base = _candle(provider_request, timestamp=start)
-    candles: list[MarketCandle] = []
-    for offset in range(count):
-        open_price = Decimal(100 + offset)
-        candles.append(
-            replace(
-                base,
-                timestamp=start + timedelta(minutes=offset),
-                open=open_price,
-                high=open_price + Decimal("2"),
-                low=open_price - Decimal("1"),
-                close=open_price + Decimal("1"),
-                volume=offset + 1,
-            )
-        )
-    return candles
+    assert set(batch.frame["TradingSymbol"]) == {"GOOD.NS"}
+    assert {c.instrument_id for c in batch.candles} == {"good"}
+    assert {c.instrument_id for c in batch.validation.rejected} == {"bad"}
+    with engine.connect() as connection:
+        quality = connection.execute(select(market_data_quality_outcomes_table)).mappings().all()
+    assert any(row["status"] == "invalid" and row["instrument_id"] == "bad" for row in quality)
 
 
-def test_python_golden_aggregation_uses_nse_session_anchor_and_ohlcv_rules() -> None:
-    start = datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
-    request = IntradayAggregationRequest(
-        instrument_id="NSE_EQ|RELIANCE",
-        interval=CandleInterval.FIVE_MINUTES,
-        window_start=start,
-        window_end=start + timedelta(minutes=5),
+@pytest.mark.parametrize("interval", ["1m", "5m", "15m", "30m", "1h"])
+def test_daily_contract_rejects_non_daily_requests_and_candles(interval):
+    request = _request()
+    with pytest.raises(ValueError, match="Only daily requests"):
+        replace(request, interval=interval)
+    with pytest.raises(ValueError, match="Only daily candles"):
+        replace(_candle(request), interval=interval)
+    with pytest.raises(ValueError, match="daily candles must not set timestamp"):
+        replace(_candle(request), timestamp=request.retrieved_at)
+
+
+def test_replica_verification_prefilters_immutable_keys_before_final():
+    class Client:
+        def query(self, query, parameters=None):
+            assert "PREWHERE session_date BETWEEN" in query
+            assert "instrument_id IN" in query
+            prewhere = query.split("PREWHERE", 1)[1].split("\n            WHERE", 1)[0]
+            assert "source_run_id" not in prewhere
+            assert "max_memory_usage=536870912" in query
+            assert parameters["instrument_ids"] == ["NSE:AAA"]
+            assert parameters["start_date"] == date(2026, 10, 15)
+            assert parameters["end_date"] == date(2026, 10, 16)
+            return SimpleNamespace(result_rows=[])
+
+    repository = ClickHouseMarketDataRepository(Client())
+    summary = repository.batch_summary(
+        exchange="NSE",
+        interval="1d",
+        source_run_id="run",
+        start_date=date(2026, 10, 15),
+        end_date=date(2026, 10, 16),
+        instrument_ids=["NSE:AAA"],
     )
-
-    result = aggregate_nse_minute_candles(request, _minute_candles(5, start=start))
-
-    assert len(result) == 1
-    candle = result[0]
-    assert candle.candle_timestamp == start
-    assert candle.open == Decimal("100")
-    assert candle.high == Decimal("106")
-    assert candle.low == Decimal("99")
-    assert candle.close == Decimal("105")
-    assert candle.volume == 15
-    assert candle.source_rows == candle.expected_source_rows == 5
-    assert candle.complete is True
-
-
-def test_python_aggregation_excludes_or_marks_a_bucket_with_a_missing_minute() -> None:
-    start = datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
-    candles = _minute_candles(5, start=start)
-    complete_only = IntradayAggregationRequest(
-        instrument_id="NSE_EQ|RELIANCE",
-        interval=CandleInterval.FIVE_MINUTES,
-        window_start=start,
-        window_end=start + timedelta(minutes=5),
-    )
-    include_partial = replace(complete_only, complete_only=False)
-
-    assert aggregate_nse_minute_candles(complete_only, candles[:-1]) == ()
-    partial = aggregate_nse_minute_candles(include_partial, candles[:-1])
-
-    assert len(partial) == 1
-    assert partial[0].complete is False
-    assert partial[0].source_rows == 4
-    assert partial[0].expected_source_rows == 5
-
-
-def test_final_nse_hour_bucket_expects_only_fifteen_minutes() -> None:
-    final_bucket = datetime(2026, 9, 5, 9, 45, tzinfo=UTC)
-
-    assert nse_bucket_start(final_bucket, CandleInterval.ONE_HOUR) == final_bucket
-    assert nse_bucket_expected_minutes(final_bucket, CandleInterval.ONE_HOUR) == 15
-
-    request = IntradayAggregationRequest(
-        instrument_id="NSE_EQ|RELIANCE",
-        interval=CandleInterval.ONE_HOUR,
-        window_start=final_bucket,
-        window_end=final_bucket + timedelta(minutes=15),
-    )
-    result = aggregate_nse_minute_candles(
-        request,
-        _minute_candles(15, start=final_bucket),
-    )
-    assert len(result) == 1
-    assert result[0].complete is True
-    assert result[0].expected_source_rows == 15
-
-
-@pytest.mark.parametrize(
-    ("interval", "expected"),
-    [
-        (CandleInterval.FIVE_MINUTES, datetime(2026, 9, 5, 4, 10, tzinfo=UTC)),
-        (CandleInterval.FIFTEEN_MINUTES, datetime(2026, 9, 5, 4, 0, tzinfo=UTC)),
-        (CandleInterval.THIRTY_MINUTES, datetime(2026, 9, 5, 3, 45, tzinfo=UTC)),
-        (CandleInterval.ONE_HOUR, datetime(2026, 9, 5, 3, 45, tzinfo=UTC)),
-    ],
-)
-def test_all_supported_intervals_anchor_to_nse_open(
-    interval: CandleInterval,
-    expected: datetime,
-) -> None:
-    assert (
-        nse_bucket_start(
-            datetime(2026, 9, 5, 4, 14, tzinfo=UTC),
-            interval,
-        )
-        == expected
-    )
-
-
-class _AggregateClickHouseClient:
-    def __init__(self) -> None:
-        self.query_text = ""
-        self.parameters: dict = {}
-
-    def query(self, query: str, parameters=None) -> SimpleNamespace:
-        self.query_text = query
-        self.parameters = parameters
-        return SimpleNamespace(
-            column_names=[
-                "workspace_id",
-                "instrument_id",
-                "exchange",
-                "symbol",
-                "provider_symbol",
-                "currency",
-                "candle_timestamp",
-                "session_date",
-                "interval",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "provider",
-                "provider_timestamp",
-                "source_rows",
-                "expected_source_rows",
-                "complete",
-                "source_content_digests",
-                "source_run_ids",
-                "raw_artifact_ids",
-            ],
-            result_rows=[
-                (
-                    "default",
-                    "NSE_EQ|RELIANCE",
-                    "NSE",
-                    "RELIANCE",
-                    "RELIANCE.NS",
-                    "INR",
-                    datetime(2026, 9, 5, 3, 45),
-                    date(2026, 9, 5),
-                    "15m",
-                    Decimal("100"),
-                    Decimal("105"),
-                    Decimal("99"),
-                    Decimal("104"),
-                    1000,
-                    "yfinance",
-                    datetime(2026, 9, 5, 12),
-                    15,
-                    15,
-                    1,
-                    ["a" * 64],
-                    ["run-1"],
-                    ["artifact-1"],
-                )
-            ],
-        )
-
-    def insert(self, _table: str, _data, _column_names) -> None:
-        return None
-
-    def command(self, _command: str, parameters=None) -> None:
-        return None
-
-
-def test_clickhouse_aggregation_is_on_demand_from_validated_one_minute_rows() -> None:
-    client = _AggregateClickHouseClient()
-    repository = ClickHouseMarketDataRepository(client)
-    start = datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
-    request = IntradayAggregationRequest(
-        instrument_id="NSE_EQ|RELIANCE",
-        interval=CandleInterval.FIFTEEN_MINUTES,
-        window_start=start,
-        window_end=start + timedelta(hours=1),
-    )
-
-    rows = repository.aggregate_nse_intraday(request)
-
-    assert len(rows) == 1
-    assert rows[0].interval is CandleInterval.FIFTEEN_MINUTES
-    assert rows[0].candle_timestamp == datetime(2026, 9, 5, 3, 45, tzinfo=UTC)
-    assert rows[0].provider_timestamp == datetime(2026, 9, 5, 12, tzinfo=UTC)
-    assert rows[0].complete is True
-    assert rows[0].source_run_ids == ("run-1",)
-    assert "FROM research.ohlcv_intraday FINAL" in client.query_text
-    assert "interval = '1m'" in client.query_text
-    assert "09:15:00" in client.query_text
-    assert client.parameters["bucket_minutes"] == 15
-    assert client.parameters["complete_only"] == 1
+    assert summary["row_count"] == 0

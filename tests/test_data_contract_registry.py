@@ -1,22 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from trade_research.contracts import (
+from trade_data.contracts import (
     DATA_CONTRACT_REGISTRY,
-    ML_INPUTS_CONTRACT_ID,
     ColumnContract,
     DataContract,
     DataContractRegistry,
     FreshnessContract,
-    get_data_contract,
 )
-from trade_research.features import FEATURE_VERSION_V1_0
-from trade_research.modeling.ml_dataset_v1 import ML_DATASET_VERSION_V1
-from trade_research.storage.timescale import metadata
-from trade_research.targets import (
-    DAILY_FORWARD_TARGET_VERSION_V1_0,
-    DAILY_OPPORTUNITY_TARGET_VERSION_V1_0,
-)
+from trade_data.storage.timescale import metadata
 
 EXPECTED_CONTRACT_IDS = {
     "calendar.exchange_sessions.v1",
@@ -24,13 +16,6 @@ EXPECTED_CONTRACT_IDS = {
     "universe.snapshot_members.v1",
     "instrument.canonical_identity.v1",
     "market_data.ohlcv_daily.v1",
-    "target.opportunity_daily.v1",
-    "feature.daily_technical.v1",
-    "target.daily_forward_returns.v1",
-    ML_INPUTS_CONTRACT_ID,
-    "dataset.ml_daily.v1",
-    "prediction.daily_rankings.v1",
-    "backtest.daily_returns.v1",
 }
 
 
@@ -70,12 +55,7 @@ def test_default_registry_covers_phase1_required_domains() -> None:
         "universe",
         "instrument",
         "market_data",
-        "feature",
-        "target",
-        "dataset",
-        "prediction",
-        "backtest",
-    }
+                        }
 
 
 def test_postgresql_contract_keys_and_columns_match_physical_tables() -> None:
@@ -88,17 +68,6 @@ def test_postgresql_contract_keys_and_columns_match_physical_tables() -> None:
 
         assert contract.primary_key == physical_key
         assert {column.name for column in contract.columns} <= physical_columns
-
-
-def test_catalog_versions_follow_frozen_implementation_versions() -> None:
-    assert get_data_contract("feature.daily_technical.v1").dataset_version == (FEATURE_VERSION_V1_0)
-    assert get_data_contract("target.daily_forward_returns.v1").dataset_version == (
-        DAILY_FORWARD_TARGET_VERSION_V1_0
-    )
-    assert get_data_contract("target.opportunity_daily.v1").dataset_version == (
-        DAILY_OPPORTUNITY_TARGET_VERSION_V1_0
-    )
-    assert get_data_contract("dataset.ml_daily.v1").dataset_version == (ML_DATASET_VERSION_V1)
 
 
 def test_contracts_are_strict_json_serializable_and_keys_are_non_nullable() -> None:

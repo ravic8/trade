@@ -1,3 +1,5 @@
+> Historical document. Current scope: [daily repository status](current_state.md).
+
 # Phase 3 NSE Data Platform
 
 ## Status

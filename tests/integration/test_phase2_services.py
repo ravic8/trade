@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
 
-from trade_research.market_data.aggregation import IntradayAggregationRequest
-from trade_research.market_data.contracts import CandleInterval, MarketCandle
-from trade_research.storage.clickhouse import ClickHouseMarketDataRepository
-from trade_research.storage.object_store import ArtifactNamespace, ObjectArtifactStore
+from trade_data.market_data.contracts import CandleInterval, MarketCandle
+from trade_data.storage.clickhouse import ClickHouseMarketDataRepository
+from trade_data.storage.object_store import ArtifactNamespace, ObjectArtifactStore
 
 clickhouse_connect = pytest.importorskip("clickhouse_connect")
-DatabaseError = pytest.importorskip(
-    "clickhouse_connect.driver.exceptions"
-).DatabaseError
+DatabaseError = pytest.importorskip("clickhouse_connect.driver.exceptions").DatabaseError
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("PHASE2_SERVICE_TESTS") != "1",
@@ -70,104 +67,59 @@ def test_clickhouse_roles_migrations_and_retry_reconciliation() -> None:
     writer = _clickhouse("CLICKHOUSE_DAGSTER_USER", "CLICKHOUSE_DAGSTER_PASSWORD")
     columns = [
         "workspace_id",
-        "feature_key",
-        "feature_version",
         "instrument_id",
+        "exchange",
+        "symbol",
+        "provider_symbol",
+        "currency",
         "session_date",
-        "value",
-        "dataset_snapshot_id",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "source",
+        "provider_timestamp",
+        "request_id",
+        "adapter_version",
         "source_run_id",
         "content_sha256",
         "version",
     ]
     row = [
         "phase2-ci",
-        "momentum_20d",
-        "v1",
         "NSE:INFY",
+        "NSE",
+        "INFY",
+        "INFY.NS",
+        "INR",
         date(2026, 9, 4),
-        1.25,
-        "snapshot-ci",
-        "run-ci",
+        100,
+        102,
+        99,
+        101,
+        1000,
+        "yfinance",
+        datetime(2026, 9, 4, 13, tzinfo=UTC),
+        "daily-ci-request",
+        "daily-ci",
+        "daily-ci-run",
         "a" * 64,
         1,
     ]
-    writer.insert("feature_observations_daily", [row, row], column_names=columns)
-
+    writer.insert("ohlcv_daily", [row, row], column_names=columns)
     reader = _clickhouse("CLICKHOUSE_API_USER", "CLICKHOUSE_API_PASSWORD")
     reconciled = reader.query(
-        """
-        SELECT count(), any(value)
-        FROM feature_observations_daily FINAL
-        WHERE workspace_id = 'phase2-ci' AND feature_key = 'momentum_20d'
-        """
+        "SELECT count(), any(close) FROM ohlcv_daily FINAL "
+        "WHERE workspace_id = 'phase2-ci' AND instrument_id = 'NSE:INFY'"
     ).first_row
-    assert reconciled == (1, 1.25)
+    assert reconciled == (1, 101)
     with pytest.raises(DatabaseError):
-        reader.command(
-            "INSERT INTO feature_observations_daily "
-            "(workspace_id, feature_key, feature_version, instrument_id, session_date, "
-            "value, dataset_snapshot_id, source_run_id, content_sha256, version) "
-            "VALUES ('denied', 'x', 'v1', 'NSE:X', '2026-09-04', 0, 's', 'r', "
-            f"'{'b' * 64}', 1)"
-        )
-
+        reader.insert("ohlcv_daily", [row], column_names=columns)
     analyst = _clickhouse("CLICKHOUSE_ANALYST_USER", "CLICKHOUSE_ANALYST_PASSWORD")
-    assert analyst.query("SELECT count() FROM feature_observations_daily").first_row[0] >= 1
+    assert analyst.query("SELECT count() FROM ohlcv_daily").first_row[0] >= 1
     with pytest.raises(DatabaseError):
-        analyst.command("TRUNCATE TABLE feature_observations_daily")
-
-
-def test_clickhouse_nse_session_aggregation_query() -> None:
-    writer = ClickHouseMarketDataRepository(
-        _clickhouse("CLICKHOUSE_DAGSTER_USER", "CLICKHOUSE_DAGSTER_PASSWORD"),
-        write_enabled=True,
-    )
-    reader = ClickHouseMarketDataRepository(
-        _clickhouse("CLICKHOUSE_API_USER", "CLICKHOUSE_API_PASSWORD")
-    )
-    start = datetime(2026, 9, 7, 3, 45, tzinfo=UTC)
-    candles = [
-        MarketCandle(
-            instrument_id="phase3-ci-reliance",
-            provider_symbol="RELIANCE.NS",
-            symbol="RELIANCE",
-            exchange="NSE",
-            session_date=date(2026, 9, 7),
-            open=Decimal(100 + offset),
-            high=Decimal(102 + offset),
-            low=Decimal(99 + offset),
-            close=Decimal(101 + offset),
-            volume=offset + 1,
-            currency="INR",
-            provider="yfinance",
-            provider_timestamp=datetime(2026, 9, 7, 12, tzinfo=UTC),
-            request_id="phase3-ci-request",
-            adapter_version="phase3-ci",
-            interval=CandleInterval.ONE_MINUTE,
-            timestamp=start + timedelta(minutes=offset),
-        )
-        for offset in range(5)
-    ]
-    writer.insert_validated(candles, source_run_id="phase3-ci-run", version=1)
-
-    rows = reader.aggregate_nse_intraday(
-        IntradayAggregationRequest(
-            instrument_id="phase3-ci-reliance",
-            interval=CandleInterval.FIVE_MINUTES,
-            window_start=start,
-            window_end=start + timedelta(minutes=5),
-        )
-    )
-
-    assert len(rows) == 1
-    assert rows[0].open == Decimal("100")
-    assert rows[0].high == Decimal("106")
-    assert rows[0].low == Decimal("99")
-    assert rows[0].close == Decimal("105")
-    assert rows[0].volume == 15
-    assert rows[0].source_rows == rows[0].expected_source_rows == 5
-    assert rows[0].complete is True
+        analyst.command("TRUNCATE TABLE ohlcv_daily")
 
 
 def test_clickhouse_daily_partition_read_uses_final_replica_state() -> None:

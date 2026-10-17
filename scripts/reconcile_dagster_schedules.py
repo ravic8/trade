@@ -14,8 +14,8 @@ from dagster._cli.workspace.cli_target import (
 )
 from dagster_shared.cli import WorkspaceOpts
 
-from trade_research.config import get_settings
-from trade_research.dagster.reconcile import (
+from trade_data.config import get_settings
+from trade_data.dagster.reconcile import (
     apply_schedule_reconciliation_plan,
     build_schedule_reconciliation_plan,
     default_origin_marker_path,
@@ -23,7 +23,7 @@ from trade_research.dagster.reconcile import (
 )
 
 CONFIRMATION = "APPLY_SCHEDULE_RECONCILIATION"
-DEFINITIONS_MODULE = "trade_research.dagster.definitions"
+DEFINITIONS_MODULE = "trade_data.dagster.definitions"
 
 
 def main() -> int:

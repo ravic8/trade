@@ -61,7 +61,7 @@ echo "[alembic head]"
 echo
 echo "[dagster schedules for current repository selector]"
 "${compose[@]}" exec -T dagster-daemon \
-  dagster schedule list -m trade_research.dagster.definitions
+  dagster schedule list -m trade_data.dagster.definitions
 
 echo
 echo "[dagster schedule storage debug]"

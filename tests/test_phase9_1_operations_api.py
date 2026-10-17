@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime
 
 from fastapi.testclient import TestClient
 
-from trade_research.api.app import app
+from trade_data.api.app import app
 
 NOW = datetime(2026, 7, 19, 6, 30, tzinfo=UTC)
 
@@ -239,7 +239,7 @@ def _rate_row() -> dict:
 
 
 def test_operations_overview_assembles_console_state(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeOperationsStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeOperationsStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -260,7 +260,7 @@ def test_operations_overview_assembles_console_state(monkeypatch) -> None:
 
 
 def test_operations_work_items_support_filters_and_pagination(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeOperationsStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeOperationsStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -279,7 +279,7 @@ def test_operations_work_items_support_filters_and_pagination(monkeypatch) -> No
 
 
 def test_operations_lifecycle_events_and_rate_limits(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeOperationsStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeOperationsStore())
 
     with TestClient(app) as client:
         events = client.get(
@@ -300,22 +300,3 @@ def test_operations_endpoints_reject_unsupported_exchange() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "exchange must be NSE, TSX, or US"
-
-
-def test_bigquery_sync_observability_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeOperationsStore())
-
-    with TestClient(app) as client:
-        response = client.get(
-            "/api/data/operations/bigquery-sync?run_limit=5&partition_limit=10"
-        )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["enabled"] is False
-    assert payload["canary_enabled"] is False
-    assert payload["production_sync_enabled"] is False
-    assert payload["core_dataset"] == "trade_chain8_analytics"
-    assert payload["reporting_dataset"] == "trade_chain8_reporting"
-    assert payload["runs"][0]["bigquery_job_id"] == "bq-job-1"
-    assert payload["partitions"][0]["count_difference"] == 0

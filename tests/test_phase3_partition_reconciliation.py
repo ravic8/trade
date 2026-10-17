@@ -7,16 +7,16 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine, select
 
-from trade_research.control_plane.tables import market_data_replication_checkpoints_table
-from trade_research.market_data.partition_reconciliation import (
+from trade_data.control_plane.tables import market_data_replication_checkpoints_table
+from trade_data.market_data.partition_reconciliation import (
     DailyPartitionReconciler,
     DailyReplicaRow,
     compare_daily_partitions,
     month_window,
     run_nse_daily_partition_reconciliation,
 )
-from trade_research.storage.clickhouse import ClickHouseMarketDataRepository
-from trade_research.storage.timescale import ohlcv_daily_table, symbols_table
+from trade_data.storage.clickhouse import ClickHouseMarketDataRepository
+from trade_data.storage.timescale import ohlcv_daily_table, symbols_table
 
 NOW = datetime(2026, 8, 31, 13, 0, tzinfo=UTC)
 
