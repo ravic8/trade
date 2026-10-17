@@ -532,7 +532,9 @@ log "reconciling retained schedules under the new code location"
 "${compose[@]}" run --rm --no-deps --entrypoint python dagster-daemon   /app/scripts/reconcile_dagster_schedules.py   --apply --confirm APPLY_SCHEDULE_RECONCILIATION
 
 log "starting production stack"
-"${compose[@]}" up -d --no-deps api dagster-daemon
+# Apply CloudBeaver's configured loopback binding before its direct health check.
+# Restart alone preserves a legacy container's obsolete port configuration.
+"${compose[@]}" up -d --no-deps api dagster-daemon cloudbeaver
 if [[ "$cloudbeaver_policy_changed" == true \
   && "$cloudbeaver_was_running" == true ]]; then
   log "restarting CloudBeaver to apply updated connection policy"
