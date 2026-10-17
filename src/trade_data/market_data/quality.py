@@ -105,7 +105,12 @@ class MarketDataQualityRepository:
 
     def record(self, outcomes: Iterable[MarketDataQualityOutcome]) -> int:
         observed_at = datetime.now(UTC)
-        rows = [outcome.row(observed_at) for outcome in outcomes]
+        # Overlapping work windows can explain the same candle more than once.
+        # PostgreSQL cannot update one conflict key twice in a single INSERT.
+        # Match sequential upsert behavior: the last observation for an ID wins.
+        rows = list(
+            {outcome.quality_outcome_id: outcome.row(observed_at) for outcome in outcomes}.values()
+        )
         if not rows:
             return 0
         dialect = self._engine.dialect.name
