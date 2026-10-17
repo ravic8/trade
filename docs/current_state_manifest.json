@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "baseline_commit": "312680b274bb895f9307bc42929ace49a39fb29c",
+  "baseline_commit": "d7ba0b3c7f6b022f90bd87fc133ddfa660016fb8",
   "verified_date": "2026-10-17",
   "documents": {
     "docs/current_state.md": "current",

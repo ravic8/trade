@@ -1,6 +1,6 @@
 ---
 document_status: current
-last_verified_commit: 312680b274bb895f9307bc42929ace49a39fb29c
+last_verified_commit: d7ba0b3c7f6b022f90bd87fc133ddfa660016fb8
 last_verified_date: 2026-10-17
 owner: trade-data
 replaced_by: null
@@ -52,7 +52,8 @@ history remains stored as the acquisition window rolls forward.
 
 The live release passed bounded latest-session ingestion, an idempotent planner
 rerun, historical replay, gateway/admin authorization and desktop/mobile browser
-checks. PostgreSQL restoration and isolated encrypted MinIO/KES and ClickHouse
+checks, followed by an automatic worker tick with 100 successful tasks and zero
+failures. PostgreSQL restoration and isolated encrypted MinIO/KES and ClickHouse
 restoration passed. Recovery of 75,349 verified infrastructure-failed queue tasks
 preserved their attempts and errors; provider exceptions remain explicit. Read
 [the implementation journal](repository_split_progress.md) for final replica,
