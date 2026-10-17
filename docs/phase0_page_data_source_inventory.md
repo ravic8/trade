@@ -1,9 +1,9 @@
 ---
-document_status: current
+document_status: historical
 last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
 last_verified_date: 2026-07-24
 owner: trade-research-platform
-replaced_by: null
+replaced_by: docs/current_state.md
 ---
 
 # Phase 0 UI Page and Data-Source Inventory

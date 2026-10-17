@@ -7,16 +7,16 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
-from trade_research.config import Settings
-from trade_research.data.daily_work import DailyInstrument, DailyWorkPlanner
-from trade_research.data.provider_history import (
+from trade_data.config import Settings
+from trade_data.data.daily_work import DailyInstrument, DailyWorkPlanner
+from trade_data.data.provider_history import (
     build_provider_daily_history_evidence,
     provider_history_is_quarantined,
     verified_provider_coverage_windows,
     verified_provider_history_start,
 )
-from trade_research.pipelines import provider_history as provider_history_pipeline
-from trade_research.pipelines import yfinance_work_queue
+from trade_data.pipelines import provider_history as provider_history_pipeline
+from trade_data.pipelines import yfinance_work_queue
 
 NOW = datetime(2026, 7, 18, 12, tzinfo=UTC)
 

@@ -4,22 +4,15 @@ from datetime import UTC, date, datetime
 import pandas as pd
 import pytest
 
-import trade_research.pipelines.daily_features as daily_features_module
-import trade_research.pipelines.daily_targets as daily_targets_module
-from trade_research.config import Settings
-from trade_research.contracts import get_data_contract
-from trade_research.pipelines.contract_gate import (
+from trade_data.contracts import get_data_contract
+from trade_data.pipelines.contract_gate import (
     daily_ohlcv_invariant_result,
     enforce_publication_contract,
     expected_publication_sessions,
-    failed_quality_rows_result,
-    feature_target_leakage_result,
     normalize_daily_ohlcv_publication_frame,
 )
-from trade_research.pipelines.daily_features import run_daily_feature_pipeline
-from trade_research.pipelines.daily_targets import run_daily_target_pipeline
-from trade_research.storage import ParquetStore, TimescaleStore
-from trade_research.validation import ValidationContractError
+from trade_data.storage import TimescaleStore
+from trade_data.validation import ValidationContractError
 
 
 def _provider_frame() -> pd.DataFrame:
@@ -128,56 +121,6 @@ def test_publication_gate_preserves_duplicates_and_writes_failure_before_raise(
         statuses["market_data.ohlcv_daily.v1.invariants.ohlc_ordering"]
         == "failed"
     )
-
-
-def test_feature_specific_checks_reject_target_columns_and_failed_rows() -> None:
-    frame = pd.DataFrame(
-        {
-            "quality_status": ["passed", "failed"],
-            "forward_ret_1d": [0.01, 0.02],
-        }
-    )
-
-    leakage = feature_target_leakage_result(frame, run_id="feature-run")
-    quality = failed_quality_rows_result(
-        frame,
-        contract_id="feature.daily_technical.v1",
-        run_id="feature-run",
-    )
-
-    assert leakage.status == "failed"
-    assert leakage.observed_value == {"target_columns": ["forward_ret_1d"]}
-    assert quality.status == "failed"
-    assert quality.observed_value == {"failed_row_count": 1}
-
-
-def test_feature_and_target_pipelines_publish_contract_evidence(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    settings = Settings(data_dir=tmp_path)
-    monkeypatch.setattr(daily_features_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(daily_targets_module, "get_settings", lambda: settings)
-    source = _daily_source_frame()
-    ParquetStore(tmp_path).write_frame("processed/equities/input", source)
-
-    features = run_daily_feature_pipeline(
-        input_name="processed/equities/input",
-        audit_output=tmp_path / "feature-audit.csv",
-        summary_output=tmp_path / "feature-summary.json",
-    )
-    targets = run_daily_target_pipeline(
-        input_name="processed/equities/input",
-        audit_output=tmp_path / "target-audit.csv",
-        summary_output=tmp_path / "target-summary.json",
-    )
-
-    assert features.metrics["contract_validation_status"] == "passed"
-    assert features.metrics["contract_validation_checks"] == 10
-    assert features.artifacts["contract_validation"].exists()
-    assert targets.metrics["contract_validation_status"] == "passed"
-    assert targets.metrics["contract_validation_checks"] == 9
-    assert targets.artifacts["contract_validation"].exists()
 
 
 def _daily_source_frame() -> pd.DataFrame:

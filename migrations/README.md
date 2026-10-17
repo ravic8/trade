@@ -13,10 +13,10 @@ alembic upgrade head
 alembic current
 ```
 
-`DATABASE_URL` is loaded through `trade_research.config.Settings`, so the same
+`DATABASE_URL` is loaded through `trade_data.config.Settings`, so the same
 database configuration is used by the application and migrations.
 
-For a new local database, `trade-research init-db` remains the compatibility
+For a new local database, `trade-data init-db` remains the compatibility
 bootstrap during Phase 1; then stamp/apply the Alembic head as appropriate. A
 later cleanup phase can move the full legacy schema into Alembic once every
 supported environment has crossed the transition revision.

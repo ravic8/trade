@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from trade_research.validation.results import (
+from trade_data.validation.results import (
     ValidationContractError,
     ValidationReport,
     ValidationResult,

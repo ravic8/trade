@@ -9,17 +9,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from trade_research.config import Settings
-from trade_research.control_plane.tables import (
+from trade_data.config import Settings
+from trade_data.control_plane.tables import (
     audit_events_table,
     nse_provider_comparison_evidence_table,
     nse_provider_cutover_decisions_table,
 )
-from trade_research.market_data.cutover import NseProviderCutoverRepository
-from trade_research.pipelines import nse_cutover
-from trade_research.pipelines.base import PipelineRunResult
+from trade_data.market_data.cutover import NseProviderCutoverRepository
+from trade_data.pipelines import nse_cutover
+from trade_data.pipelines.base import PipelineRunResult
 
-api_module = import_module("trade_research.api.app")
+api_module = import_module("trade_data.api.app")
 
 
 def _repository() -> NseProviderCutoverRepository:

@@ -2,8 +2,8 @@ import time
 
 import pytest
 
-from trade_research.config import Settings
-from trade_research.data.rate_limits import (
+from trade_data.config import Settings
+from trade_data.data.rate_limits import (
     InMemoryProviderRateLimiter,
     RateLimitWindow,
     _limit_key,
@@ -37,7 +37,7 @@ def test_in_memory_provider_rate_limiter_ignores_unknown_endpoint() -> None:
     assert decision.rate_limited is False
 
 
-def test_provider_rate_windows_include_yfinance_intraday_download() -> None:
+def test_provider_rate_windows_include_only_retained_daily_providers() -> None:
     windows = provider_rate_limit_windows(
         Settings(
             provider_rate_limit_backend="none",
@@ -45,18 +45,13 @@ def test_provider_rate_windows_include_yfinance_intraday_download() -> None:
         )
     )
 
-    assert ("yfinance", "intraday_download") in windows
+    assert set(windows) == {("yfinance", "download"), ("upstox", "historical")}
     assert windows[("yfinance", "download")][0].limit == 321
-    assert windows[("yfinance", "intraday_download")][0].limit == 321
 
 
 def test_yfinance_daily_and_intraday_share_one_global_budget_key() -> None:
-    assert _limit_key("yfinance", "download", "1m") == (
-        "provider-rate-limit:yfinance:all"
-    )
-    assert _limit_key("yfinance", "intraday_download", "1m") == (
-        "provider-rate-limit:yfinance:all"
-    )
+    assert _limit_key("yfinance", "download", "1m") == ("provider-rate-limit:yfinance:all")
+    assert _limit_key("yfinance", "intraday_download", "1m") == ("provider-rate-limit:yfinance:all")
 
 
 def test_in_memory_limiter_reserves_weighted_ticker_tokens() -> None:

@@ -70,83 +70,6 @@ set +a
 
 require_file "$APP_DIR/docker-compose.prod.yml"
 
-if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
-  require_secure_value "PROD_MINIO_ROOT_USER" "${PROD_MINIO_ROOT_USER:-}"
-  require_secure_value "PROD_MINIO_ROOT_PASSWORD" "${PROD_MINIO_ROOT_PASSWORD:-}"
-  require_secure_value \
-    "PROD_FILING_S3_ACCESS_KEY_ID" \
-    "${PROD_FILING_S3_ACCESS_KEY_ID:-}"
-  require_secure_value \
-    "PROD_FILING_S3_SECRET_ACCESS_KEY" \
-    "${PROD_FILING_S3_SECRET_ACCESS_KEY:-}"
-  if [[ "${#PROD_MINIO_ROOT_PASSWORD}" -lt 16 \
-    || "${#PROD_FILING_S3_SECRET_ACCESS_KEY}" -lt 16 ]]; then
-    printf '[trade-deploy] MinIO root and application secrets must be at least 16 characters\n' >&2
-    exit 1
-  fi
-  if [[ "$PROD_MINIO_ROOT_USER" == "$PROD_FILING_S3_ACCESS_KEY_ID" ]]; then
-    printf '[trade-deploy] filing storage must not use the MinIO root identity\n' >&2
-    exit 1
-  fi
-  if [[ "${PROD_FILING_REQUIRE_WORKSPACE_HEADER:-true}" != "true" ]]; then
-    printf '[trade-deploy] production filing workspace enforcement must remain enabled\n' >&2
-    exit 1
-  fi
-  require_command openssl
-  alertmanager_data_dir="${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}"
-  alert_token_file="${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/alertmanager-secrets/alertmanager-webhook-token}"
-  alert_token_dir="$(dirname "$alert_token_file")"
-  previous_umask="$(umask)"
-  umask 077
-  if ! mkdir -p "$alert_token_dir"; then
-    printf '[trade-deploy] alert webhook token directory is not writable: %s\n' \
-      "$alert_token_dir" >&2
-    exit 1
-  fi
-  if [[ -L "$alert_token_file" ]]; then
-    printf '[trade-deploy] alert webhook token file must not be a symbolic link\n' >&2
-    exit 1
-  fi
-  if [[ ! -e "$alert_token_file" ]]; then
-    if ! alert_token_temporary="$(
-      mktemp "$alert_token_dir/.alertmanager-token.XXXXXX"
-    )"; then
-      printf '[trade-deploy] alert webhook token directory is not writable: %s\n' \
-        "$alert_token_dir" >&2
-      exit 1
-    fi
-    chmod 0600 "$alert_token_temporary"
-    if ! openssl rand -hex 32 | tr -d '\r\n' > "$alert_token_temporary"; then
-      rm -f "$alert_token_temporary"
-      printf '[trade-deploy] unable to generate alert webhook token\n' >&2
-      exit 1
-    fi
-    mv "$alert_token_temporary" "$alert_token_file"
-    log "generated private Alertmanager webhook credential"
-  fi
-  if [[ ! -f "$alert_token_file" || ! -s "$alert_token_file" ]]; then
-    printf '[trade-deploy] alert webhook token file is missing or empty\n' >&2
-    exit 1
-  fi
-  alert_token_mode="$(stat -c '%a' "$alert_token_file")"
-  if [[ "$alert_token_mode" != "600" ]]; then
-    if [[ -O "$alert_token_file" ]]; then
-      chmod 0600 "$alert_token_file"
-    else
-      printf '[trade-deploy] alert webhook token file must use mode 600: %s\n' \
-        "$alert_token_file" >&2
-      exit 1
-    fi
-  fi
-  alert_token_value="$(tr -d '\r\n' < "$alert_token_file")"
-  if [[ "${#alert_token_value}" -lt 32 ]]; then
-    printf '[trade-deploy] alert webhook token must contain at least 32 characters\n' >&2
-    exit 1
-  fi
-  unset alert_token_value
-  umask "$previous_umask"
-  export PROD_ALERT_WEBHOOK_TOKEN_FILE="$alert_token_file"
-fi
 
 if [[ "${PROD_RESEARCH_STORAGE_ENABLED:-false}" == "true" \
   && "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" != "true" ]]; then
@@ -216,35 +139,12 @@ if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   fi
 fi
 
-if [[ "${PROD_LANGFUSE_ENABLED:-false}" == "true" ]]; then
-  require_secure_value "PROD_LANGFUSE_PUBLIC_KEY" "${PROD_LANGFUSE_PUBLIC_KEY:-}"
-  require_secure_value "PROD_LANGFUSE_SECRET_KEY" "${PROD_LANGFUSE_SECRET_KEY:-}"
-fi
 
-if [[ "${PROD_BIGQUERY_ENABLED:-false}" == "true" ]]; then
-  bigquery_credential_file="${PROD_BIGQUERY_CREDENTIALS_FILE:-}"
-  if [[ -z "$bigquery_credential_file" || ! -f "$bigquery_credential_file" \
-    || ! -s "$bigquery_credential_file" || ! -r "$bigquery_credential_file" ]]; then
-    printf '[trade-deploy] BigQuery credential file is missing or unreadable\n' >&2
-    exit 1
-  fi
-  credential_mode="$(stat -c '%a' "$bigquery_credential_file")"
-  credential_owner="$(stat -c '%U:%G' "$bigquery_credential_file")"
-  expected_owner="${PROD_BIGQUERY_CREDENTIALS_OWNER:-inglorious:inglorious}"
-  if [[ "$credential_mode" != "600" || "$credential_owner" != "$expected_owner" ]]; then
-    printf '[trade-deploy] BigQuery credential ownership or permissions are unsafe\n' >&2
-    exit 1
-  fi
-fi
 
 mkdir_from_var "${PROD_TRADE_DATA_DIR:-/opt/trade/data}"
 mkdir_from_var "${PROD_TRADE_ARTIFACTS_DIR:-/opt/trade/artifacts}"
 mkdir_from_var "${PROD_POSTGRES_DATA_DIR:-/opt/trade/postgres}"
 mkdir_from_var "${PROD_REDIS_DATA_DIR:-/opt/trade/redis}"
-mkdir_from_var "${PROD_QDRANT_DATA_DIR:-/opt/trade/qdrant}"
-if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
-  mkdir_from_var "${PROD_MINIO_DATA_DIR:-/opt/trade/minio}"
-fi
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   mkdir_from_var "${PROD_CLICKHOUSE_DATA_DIR:-/opt/trade/clickhouse}"
 fi
@@ -280,6 +180,7 @@ if [[ "$DEPLOY_REEXECUTED" != true \
   exec env TRADE_DEPLOY_REEXECUTED=true "$APP_DIR/deploy/deploy.sh"
 fi
 
+export PROD_API_IMAGE="${PROD_API_IMAGE:-trade-data-api:$synchronized_revision}"
 compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.yml")
 if [[ "${PROD_MINIO_KMS_ENABLED:-false}" == "true" ]]; then
   if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
@@ -294,11 +195,8 @@ fi
 
 diagnostic_services=(
   api
-  web
   cloudbeaver
-  filing-worker
   minio
-  minio-init
   otel-collector
   prometheus
   alertmanager
@@ -460,7 +358,7 @@ start_and_validate_minio() {
   reject_minio_downgrade
 
   log "pulling the requested MinIO server and client images"
-  "${compose[@]}" pull minio minio-init
+  "${compose[@]}" pull minio
   if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
     "${compose[@]}" pull kes
   fi
@@ -474,18 +372,7 @@ start_and_validate_minio() {
     return 1
   fi
 
-  log "reconciling filing object storage before application replacement"
-  if ! "${compose[@]}" up \
-    --no-deps \
-    --force-recreate \
-    --abort-on-container-exit \
-    --exit-code-from minio-init \
-    minio-init; then
-    log "MinIO initialization failed"
-    "${compose[@]}" logs --tail=120 minio minio-init >&2 || true
-    restore_minio_rollback_image || true
-    return 1
-  fi
+
 }
 
 record_current_minio_image() {
@@ -548,15 +435,30 @@ log "validating compose config"
 "${compose[@]}" config >/dev/null
 
 log "building production images"
-# API, filing worker, Dagster daemon, and the optional Dagster webserver
+# API, Dagster daemon, and the optional Dagster webserver
 # intentionally share one image tag. Building api once refreshes every Python
 # service.
 build_started_seconds=$SECONDS
-"${compose[@]}" build api web
+"${compose[@]}" build api
 log "production image build completed in $((SECONDS - build_started_seconds))s"
 
+# The module rename changes Dagster origins. Do not interrupt running jobs or
+# mutate scheduler state while another daemon can still write it.
+log "checking Dagster is idle before replacing its code location"
+if [[ -n "$("${compose[@]}" ps --status running -q dagster-daemon)" ]]; then
+  "${compose[@]}" exec -T dagster-daemon python -c '
+from dagster import DagsterInstance, DagsterRunStatus
+with DagsterInstance.get() as instance:
+    active = instance.get_runs(filters=__import__("dagster").RunsFilter(statuses=[
+        DagsterRunStatus.QUEUED, DagsterRunStatus.STARTING, DagsterRunStatus.STARTED, DagsterRunStatus.CANCELING]))
+    if active:
+        raise SystemExit("Active Dagster runs must finish before deployment")
+'
+  "${compose[@]}" stop dagster-daemon
+fi
+
 log "starting PostgreSQL for schema migration"
-"${compose[@]}" up -d postgres
+"${compose[@]}" up -d --no-recreate postgres
 
 database_ready=false
 for attempt in {1..30}; do
@@ -584,11 +486,14 @@ migration_started_seconds=$SECONDS
   alembic -c /app/alembic.ini upgrade head
 log "database migrations completed in $((SECONDS - migration_started_seconds))s"
 
-start_and_validate_minio
+if [[ "${PROD_UPGRADE_INFRASTRUCTURE:-false}" == "true" ]]; then
+  start_and_validate_minio
+fi
 
-if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
-  log "starting private Phase 2 storage services"
-  "${compose[@]}" up -d clickhouse minio
+if [[ "${PROD_UPGRADE_INFRASTRUCTURE:-false}" == "true" \
+  && "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
+  log "starting private daily storage services"
+  "${compose[@]}" up -d --no-recreate clickhouse minio
   log "reconciling ClickHouse identities"
   "${compose[@]}" run --rm clickhouse-init
   log "applying ClickHouse migrations"
@@ -597,13 +502,31 @@ if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == "true" ]]; then
   "${compose[@]}" run --rm minio-research-init
 fi
 
-if [[ "${PROD_PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}" == "true" ]]; then
-  log "verifying durable Phase 3 production-readiness evidence"
-  "${compose[@]}" run --rm --no-deps api trade-research phase3-readiness
+
+log "installing the current Dagster workspace without replacing scheduler storage"
+workspace_target="${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}/workspace.yaml"
+if [[ -f "$workspace_target" ]] && ! cmp -s "$APP_DIR/dagster_home/workspace.yaml" "$workspace_target"; then
+  cp -p "$workspace_target" "$deploy_state_dir/workspace-before-$synchronized_revision.yaml"
 fi
+install -m 0644 "$APP_DIR/dagster_home/workspace.yaml" "$workspace_target"
+
+log "waiting for old daemon heartbeats to expire"
+"${compose[@]}" run --rm --no-deps --entrypoint python dagster-daemon -c '
+import time
+from dagster import DagsterInstance
+from trade_data.dagster.reconcile import recent_daemon_heartbeats
+with DagsterInstance.get() as instance:
+    deadline = time.monotonic() + 120
+    while recent_daemon_heartbeats(instance):
+        if time.monotonic() >= deadline:
+            raise SystemExit("Recent daemon heartbeats remain; scheduler not changed")
+        time.sleep(5)
+'
+log "reconciling retained schedules under the new code location"
+"${compose[@]}" run --rm --no-deps --entrypoint python dagster-daemon   /app/scripts/reconcile_dagster_schedules.py   --apply --confirm APPLY_SCHEDULE_RECONCILIATION
 
 log "starting production stack"
-"${compose[@]}" up -d --remove-orphans
+"${compose[@]}" up -d --no-deps api dagster-daemon
 if [[ "$cloudbeaver_policy_changed" == true \
   && "$cloudbeaver_was_running" == true ]]; then
   log "restarting CloudBeaver to apply updated connection policy"
@@ -617,15 +540,10 @@ if [[ "$dagster_webserver_was_running" == true ]]; then
     dagster-webserver
 fi
 
-health_url="${TRADE_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/api/health}"
-filing_health_url="${TRADE_FILING_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/api/filings/health}"
-cloudbeaver_health_url="${TRADE_CLOUDBEAVER_HEALTH_URL:-http://localhost:${PROD_WEB_PORT:-8080}/}"
-cloudbeaver_host="${PROD_CLOUDBEAVER_HOST:-sql.example.com}"
+health_url="${TRADE_HEALTH_URL:-http://localhost:${PROD_API_PORT:-8000}/api/health}"
+cloudbeaver_health_url="${TRADE_CLOUDBEAVER_HEALTH_URL:-http://localhost:${PROD_CLOUDBEAVER_PORT:-8978}/}"
 log "checking health at $health_url"
-if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
-  log "checking filing runtime at $filing_health_url"
-fi
-log "checking CloudBeaver through Caddy at $cloudbeaver_health_url"
+log "checking CloudBeaver directly at $cloudbeaver_health_url"
 if [[ "$dagster_webserver_was_running" == true ]]; then
   dagster_health_url="${TRADE_DAGSTER_HEALTH_URL:-http://127.0.0.1:${PROD_DAGSTER_WEB_PORT:-3000}}"
   log "checking Dagster admin health at $dagster_health_url"
@@ -633,7 +551,6 @@ fi
 
 for attempt in {1..30}; do
   api_health_ok=false
-  filing_health_ok=true
   cloudbeaver_health_ok=false
   dagster_health_ok=true
   research_storage_health_ok=true
@@ -641,23 +558,7 @@ for attempt in {1..30}; do
   if curl -fsS "$health_url" >/dev/null; then
     api_health_ok=true
   fi
-  if [[ "${PROD_FILING_ENABLED:-true}" == "true" ]]; then
-    filing_health_ok=false
-    filing_health_payload="$(curl -fsS "$filing_health_url" || true)"
-    if [[ "$filing_health_payload" == *'"status":"ok"'* \
-      && "$filing_health_payload" == *'"queue_mode":"celery"'* \
-      && "$filing_health_payload" == *'"checkpoint_backend":"postgresql"'* \
-      && "$filing_health_payload" == *'"artifact_backend":"s3"'* \
-      && "$filing_health_payload" == *'"workspace_header_required":true'* \
-      && -n "$("${compose[@]}" ps --status running -q filing-worker)" \
-      && -n "$("${compose[@]}" ps --status running -q minio)" \
-      && -n "$("${compose[@]}" ps --status running -q otel-collector)" \
-      && -n "$("${compose[@]}" ps --status running -q prometheus)" \
-      && -n "$("${compose[@]}" ps --status running -q alertmanager)" ]]; then
-      filing_health_ok=true
-    fi
-  fi
-  if curl -fsS -H "Host: $cloudbeaver_host" "$cloudbeaver_health_url" >/dev/null; then
+  if curl -fsS "$cloudbeaver_health_url" >/dev/null; then
     cloudbeaver_health_ok=true
   fi
   if [[ "$dagster_webserver_was_running" == true ]]; then
@@ -678,7 +579,6 @@ for attempt in {1..30}; do
   fi
 
   if [[ "$api_health_ok" == true \
-    && "$filing_health_ok" == true \
     && "$cloudbeaver_health_ok" == true \
     && "$dagster_health_ok" == true \
     && "$research_storage_health_ok" == true ]]; then

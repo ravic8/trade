@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
-from trade_research.schemas import Symbol
-from trade_research.universe.yfinance_full import (
+from trade_data.schemas import Symbol
+from trade_data.universe.yfinance_full import (
     YFinanceCanadaUniverseProvider,
     YFinanceUSUniverseProvider,
     yfinance_exchange_for_universe,
@@ -30,7 +30,7 @@ def test_yfinance_us_universe_parses_nasdaq_symbol_directory(monkeypatch) -> Non
     }
 
     monkeypatch.setattr(
-        "trade_research.universe.yfinance_full._fetch_text",
+        "trade_data.universe.yfinance_full._fetch_text",
         lambda url: payloads[url],
     )
 
@@ -66,7 +66,7 @@ def test_us_universe_enriches_stable_identity_and_unresolved_halts(monkeypatch) 
         ),
     }
     monkeypatch.setattr(
-        "trade_research.universe.yfinance_full._fetch_text",
+        "trade_data.universe.yfinance_full._fetch_text",
         lambda url: payloads[url],
     )
 

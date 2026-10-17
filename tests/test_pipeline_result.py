@@ -1,6 +1,6 @@
 import pytest
 
-from trade_research.pipelines.base import PipelineRunResult
+from trade_data.pipelines.base import PipelineRunResult
 
 
 @pytest.mark.parametrize(

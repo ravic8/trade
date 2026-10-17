@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from trade_research.api.app import app
-from trade_research.config import Settings
+from trade_data.api.app import app
+from trade_data.config import Settings
 
 
 class FakeCoverageStore:
@@ -750,7 +750,7 @@ def test_upstox_provider_capabilities_endpoint() -> None:
 
 
 def test_tsx_reconciliation_observability_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/universe-reconciliation?exchange=CA")
@@ -764,7 +764,7 @@ def test_tsx_reconciliation_observability_endpoint(monkeypatch) -> None:
 
 
 def test_provider_history_observability_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/provider-history?exchange=CA")
@@ -778,7 +778,7 @@ def test_provider_history_observability_endpoint(monkeypatch) -> None:
 
 def test_admin_provider_credential_status_requires_admin(monkeypatch) -> None:
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: SimpleNamespace(
             admin_emails="admin@example.com",
             admin_email_headers="cf-access-authenticated-user-email",
@@ -793,9 +793,9 @@ def test_admin_provider_credential_status_requires_admin(monkeypatch) -> None:
 
 
 def test_admin_provider_credential_status_reports_env_fallback(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: SimpleNamespace(
             admin_emails="admin@example.com",
             admin_email_headers="cf-access-authenticated-user-email",
@@ -818,9 +818,9 @@ def test_admin_provider_credential_status_reports_env_fallback(monkeypatch) -> N
 
 def test_admin_upstox_token_save_encrypts_and_masks_secret(monkeypatch) -> None:
     store = FakeCoverageStore()
-    monkeypatch.setattr("trade_research.api.app._store", lambda: store)
+    monkeypatch.setattr("trade_data.api.app._store", lambda: store)
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: SimpleNamespace(
             admin_emails="admin@example.com",
             admin_email_headers="cf-access-authenticated-user-email",
@@ -829,7 +829,7 @@ def test_admin_upstox_token_save_encrypts_and_masks_secret(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "trade_research.api.app.validate_upstox_access_token",
+        "trade_data.api.app.validate_upstox_access_token",
         lambda token: (True, "ok"),
     )
 
@@ -852,7 +852,7 @@ def test_admin_upstox_token_save_encrypts_and_masks_secret(monkeypatch) -> None:
 
 def test_admin_upstox_token_test_uses_supplied_token(monkeypatch) -> None:
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: SimpleNamespace(
             admin_emails="admin@example.com",
             admin_email_headers="cf-access-authenticated-user-email",
@@ -866,7 +866,7 @@ def test_admin_upstox_token_test_uses_supplied_token(monkeypatch) -> None:
         seen["token"] = token
         return True, "ok"
 
-    monkeypatch.setattr("trade_research.api.app.validate_upstox_access_token", fake_validate)
+    monkeypatch.setattr("trade_data.api.app.validate_upstox_access_token", fake_validate)
 
     with TestClient(app) as client:
         response = client.post(
@@ -881,7 +881,7 @@ def test_admin_upstox_token_test_uses_supplied_token(monkeypatch) -> None:
 
 
 def test_data_coverage_preview_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.post(
@@ -915,7 +915,7 @@ def test_data_coverage_preview_endpoint(monkeypatch) -> None:
 
 
 def test_yfinance_data_coverage_preview_reports_exact_us_gaps(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.post(
@@ -945,9 +945,9 @@ def test_yfinance_data_coverage_preview_reports_exact_us_gaps(monkeypatch) -> No
 def test_data_coverage_preview_rejects_year_one_before_holiday_fetch(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
     monkeypatch.setattr(
-        "trade_research.api.app.fetch_exchange_holidays",
+        "trade_data.api.app.fetch_exchange_holidays",
         lambda exchange, year: pytest.fail("holiday fetch must not run"),
     )
 
@@ -971,9 +971,9 @@ def test_data_coverage_preview_rejects_year_one_before_holiday_fetch(
 
 def test_data_coverage_preview_fetches_missing_holiday_calendar(monkeypatch) -> None:
     store = ColdHolidayStore()
-    monkeypatch.setattr("trade_research.api.app._store", lambda: store)
+    monkeypatch.setattr("trade_data.api.app._store", lambda: store)
     monkeypatch.setattr(
-        "trade_research.api.app.fetch_exchange_holidays",
+        "trade_data.api.app.fetch_exchange_holidays",
         lambda exchange, year: SimpleNamespace(
             closed_dates=frozenset({date(2026, 1, 5)}),
             early_close_dates=frozenset(),
@@ -1003,7 +1003,7 @@ def test_data_coverage_preview_fetches_missing_holiday_calendar(monkeypatch) -> 
 
 
 def test_data_coverage_get_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1018,7 +1018,7 @@ def test_data_coverage_get_endpoint(monkeypatch) -> None:
 
 
 def test_data_coverage_get_requires_dates(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/coverage?symbols=AAA")
@@ -1028,7 +1028,7 @@ def test_data_coverage_get_requires_dates(monkeypatch) -> None:
 
 
 def test_data_availability_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1050,9 +1050,9 @@ def test_data_availability_endpoint(monkeypatch) -> None:
 
 
 def test_data_availability_rejects_year_one_before_holiday_fetch(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
     monkeypatch.setattr(
-        "trade_research.api.app.fetch_exchange_holidays",
+        "trade_data.api.app.fetch_exchange_holidays",
         lambda exchange, year: pytest.fail("holiday fetch must not run"),
     )
 
@@ -1068,7 +1068,7 @@ def test_data_availability_rejects_year_one_before_holiday_fetch(monkeypatch) ->
 
 
 def test_data_availability_supports_yfinance_seeded_universe(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1115,7 +1115,7 @@ def test_data_availability_prefers_persisted_us_yfinance_universe(
         ]
 
     monkeypatch.setattr(store, "persisted_universe_instruments", persisted_universe)
-    monkeypatch.setattr("trade_research.api.app._store", lambda: store)
+    monkeypatch.setattr("trade_data.api.app._store", lambda: store)
 
     with TestClient(app) as client:
         response = client.get(
@@ -1134,7 +1134,7 @@ def test_data_availability_prefers_persisted_us_yfinance_universe(
 def test_data_availability_supports_persisted_nse_yfinance_universe(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1153,31 +1153,6 @@ def test_data_availability_supports_persisted_nse_yfinance_universe(
     assert payload["rows"][0]["calendar_matched_rows"] == 2
     assert payload["rows"][0]["provider_unavailable_rows"] == 1
     assert payload["rows"][0]["actionable_missing_rows"] == 0
-
-
-def test_data_availability_supports_yfinance_intraday(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
-
-    with TestClient(app) as client:
-        response = client.get(
-            "/api/data/availability"
-            "?provider=yfinance&exchange=GLOBAL&interval=5m"
-            "&start_date=2026-07-01&end_date=2026-07-01"
-            "&query=EUR&coverage_status=partial&limit=10&sort=-latest_stored_ts"
-        )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["provider"] == "yfinance"
-    assert payload["exchange"] == "GLOBAL"
-    assert payload["interval"] == "5m"
-    assert payload["summary"]["expected_rows"] == 288
-    assert payload["summary"]["stored_rows"] == 12
-    assert payload["rows"][0]["symbol"] == "EUR/USD"
-    assert payload["rows"][0]["asset_class"] == "fx"
-    assert payload["rows"][0]["first_stored_ts"] == "2026-07-01T00:00:00Z"
-    assert payload["rows"][0]["latest_stored_ts"] == "2026-07-01T01:00:00Z"
-    assert payload["rows"][0]["missing_windows"] == 1
 
 
 def test_data_availability_rejects_yfinance_exchange_mismatch() -> None:
@@ -1211,7 +1186,7 @@ def test_data_availability_normalizes_legacy_ca_alias(monkeypatch) -> None:
                 },
             }
 
-    monkeypatch.setattr("trade_research.api.app._store", lambda: TSXCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: TSXCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1223,7 +1198,7 @@ def test_data_availability_normalizes_legacy_ca_alias(monkeypatch) -> None:
 
 
 def test_data_bulk_fetch_preview_supports_yfinance_filters(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1251,7 +1226,7 @@ def test_data_bulk_fetch_preview_supports_yfinance_filters(monkeypatch) -> None:
 
 
 def test_data_bulk_fetch_preview_filters_liquidity_and_coverage(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1301,7 +1276,7 @@ def test_data_availability_requires_date_pair() -> None:
 
 
 def test_data_instruments_search_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/instruments/search?query=rel&limit=5")
@@ -1325,7 +1300,7 @@ def test_data_instruments_search_endpoint(monkeypatch) -> None:
 
 
 def test_data_instruments_search_supports_yfinance_equity_universes(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1341,7 +1316,7 @@ def test_data_instruments_search_supports_yfinance_equity_universes(monkeypatch)
 
 
 def test_data_universes_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/universes")
@@ -1354,7 +1329,7 @@ def test_data_universes_endpoint(monkeypatch) -> None:
 
 
 def test_data_universe_members_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/universes/nse_liquid_adt_100cr/members?limit=100")
@@ -1367,9 +1342,9 @@ def test_data_universe_members_endpoint(monkeypatch) -> None:
 
 
 def test_data_pipeline_health_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: SimpleNamespace(
             upstox_access_token="token",
             data_pipeline_max_concurrent_fetches=4,
@@ -1389,7 +1364,7 @@ def test_data_pipeline_health_endpoint(monkeypatch) -> None:
 
 
 def test_data_pipeline_runs_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/pipeline-runs")
@@ -1405,7 +1380,7 @@ def test_data_pipeline_runs_endpoint(monkeypatch) -> None:
 
 
 def test_provider_runs_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1423,7 +1398,7 @@ def test_provider_runs_endpoint(monkeypatch) -> None:
 
 
 def test_provider_request_summary_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1441,7 +1416,7 @@ def test_provider_request_summary_endpoint(monkeypatch) -> None:
 
 
 def test_provider_request_logs_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get(
@@ -1464,18 +1439,12 @@ def test_data_schedule_status_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     schedules = {row["schedule_name"]: row for row in payload}
-    assert schedules["fx_intraday_dukascopy_schedule"]["intended_status"] == "stopped"
-    assert schedules["yfinance_fx_intraday_schedule"]["intended_status"] == "stopped"
-    assert schedules["daily_research_schedule"]["desired_status"] == "running"
-    assert schedules["daily_research_schedule"]["actual_status"] == "unknown"
+    assert len(schedules) == 12
     assert "yfinance_daily_work_planner_schedule" in schedules
     assert "yfinance_nse_completed_session_work_planner_schedule" in schedules
     assert "yfinance_tsx_completed_session_work_planner_schedule" in schedules
     assert "yfinance_us_completed_session_work_planner_schedule" in schedules
     assert "yfinance_daily_work_worker_schedule" in schedules
-    assert "nse_completed_session_opportunity_targets_schedule" in schedules
-    assert "tsx_completed_session_opportunity_targets_schedule" in schedules
-    assert "us_completed_session_opportunity_targets_schedule" in schedules
     assert "nse_universe_refresh_schedule" in schedules
     assert "tsx_universe_refresh_schedule" in schedules
     assert "us_universe_refresh_schedule" in schedules
@@ -1484,7 +1453,7 @@ def test_data_schedule_status_endpoint() -> None:
 
 def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) -> None:
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: Settings(
             _env_file=None,
             yfinance_daily_enabled=True,
@@ -1503,15 +1472,11 @@ def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) ->
     assert response.status_code == 200
     schedules = {row["schedule_name"]: row for row in response.json()}
     for schedule_name in (
-        "daily_research_schedule",
         "yfinance_daily_work_planner_schedule",
         "yfinance_nse_completed_session_work_planner_schedule",
         "yfinance_tsx_completed_session_work_planner_schedule",
         "yfinance_us_completed_session_work_planner_schedule",
         "yfinance_daily_work_worker_schedule",
-        "nse_completed_session_opportunity_targets_schedule",
-        "tsx_completed_session_opportunity_targets_schedule",
-        "us_completed_session_opportunity_targets_schedule",
         "nse_universe_refresh_schedule",
         "tsx_universe_refresh_schedule",
         "us_universe_refresh_schedule",
@@ -1525,10 +1490,10 @@ def test_data_schedule_status_reflects_enabled_equity_automation(monkeypatch) ->
 def test_data_schedule_status_exposes_actual_state_and_origin_drift(
     monkeypatch,
 ) -> None:
-    from trade_research.dagster.status import DagsterScheduleStatus
+    from trade_data.dagster.status import DagsterScheduleStatus
 
     monkeypatch.setattr(
-        "trade_research.api.app.get_settings",
+        "trade_data.api.app.get_settings",
         lambda: Settings(
             _env_file=None,
             yfinance_daily_enabled=True,
@@ -1536,7 +1501,7 @@ def test_data_schedule_status_exposes_actual_state_and_origin_drift(
         ),
     )
     monkeypatch.setattr(
-        "trade_research.api.app.read_dagster_schedule_statuses",
+        "trade_data.api.app.read_dagster_schedule_statuses",
         lambda *_args, **_kwargs: {
             "yfinance_daily_work_worker_schedule": DagsterScheduleStatus(
                 actual_status="running",
@@ -1574,7 +1539,7 @@ def test_data_schedule_status_exposes_actual_state_and_origin_drift(
 
 
 def test_data_pipeline_run_detail_endpoint(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/pipeline-runs/run-1")
@@ -1673,7 +1638,7 @@ def test_data_pipeline_run_detail_exposes_exchange_errors(monkeypatch) -> None:
         def daily_ohlcv_fetch_coverage_for_run(self, *args, **kwargs) -> list[dict]:
             return []
 
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FailedRunStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FailedRunStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/pipeline-runs/failed-run?exchange=NSE")
@@ -1687,7 +1652,7 @@ def test_data_pipeline_run_detail_exposes_exchange_errors(monkeypatch) -> None:
 
 
 def test_data_pipeline_run_detail_returns_404(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.get("/api/data/pipeline-runs/missing")
@@ -1710,7 +1675,7 @@ def test_create_data_pipeline_request_endpoint(monkeypatch) -> None:
             ), True
 
     monkeypatch.setattr(
-        "trade_research.api.app._workflow_store", lambda: FakeWorkflowStore()
+        "trade_data.api.app._workflow_store", lambda: FakeWorkflowStore()
     )
 
     with TestClient(app) as client:
@@ -1744,7 +1709,7 @@ def test_create_data_pipeline_request_endpoint(monkeypatch) -> None:
 
 
 def test_create_data_pipeline_request_rejects_partial_steps(monkeypatch) -> None:
-    monkeypatch.setattr("trade_research.api.app._store", lambda: FakeCoverageStore())
+    monkeypatch.setattr("trade_data.api.app._store", lambda: FakeCoverageStore())
 
     with TestClient(app) as client:
         response = client.post(
@@ -1787,7 +1752,7 @@ def test_data_pipeline_workflow_status_endpoint(monkeypatch) -> None:
             )
 
     monkeypatch.setattr(
-        "trade_research.api.app._workflow_store", lambda: FakeWorkflowStore()
+        "trade_data.api.app._workflow_store", lambda: FakeWorkflowStore()
     )
     with TestClient(app) as client:
         response = client.get("/api/data/workflow-requests/workflow-1")
@@ -1796,52 +1761,15 @@ def test_data_pipeline_workflow_status_endpoint(monkeypatch) -> None:
     assert response.json()["dagster_run_id"] == "dagster-1"
 
 
-def test_research_progress_endpoint() -> None:
+@pytest.mark.parametrize("interval", ["5m", "1m"])
+def test_daily_availability_rejects_intraday_before_database_access(monkeypatch, interval):
+    def forbidden_store():
+        pytest.fail("Unsupported interval must fail before database access")
+
+    monkeypatch.setattr("trade_data.api.app._store", forbidden_store)
     with TestClient(app) as client:
-        response = client.get("/api/research/progress")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "steps" in payload
-    assert payload["step_count"] >= 7
-
-
-def test_research_factor_ic_rejects_bad_direction() -> None:
-    with TestClient(app) as client:
-        response = client.get("/api/research/factors/ic?direction=sideways")
-
+        response = client.get("/api/data/availability", params={
+            "provider": "yfinance", "exchange": "NSE", "interval": interval,
+        })
     assert response.status_code == 400
-
-
-def test_research_ml_summary_endpoint() -> None:
-    with TestClient(app) as client:
-        response = client.get("/api/research/ml/summary")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "assumptions" in payload
-    assert "model_runs" in payload
-
-
-def test_research_ml_model_metrics_rejects_bad_run() -> None:
-    with TestClient(app) as client:
-        response = client.get("/api/research/ml/model-metrics?run=xgboost")
-
-    assert response.status_code == 400
-
-
-def test_research_ml_latest_candidates_endpoint() -> None:
-    with TestClient(app) as client:
-        response = client.get("/api/research/ml/latest-candidates?run=baselines&top_n=5")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "models" in payload
-    assert payload["run"] == "baselines"
-
-
-def test_research_ml_robustness_rejects_bad_group() -> None:
-    with TestClient(app) as client:
-        response = client.get("/api/research/ml/robustness?group=xgboost")
-
-    assert response.status_code == 400
+    assert response.json()["detail"] == "Only interval=1d is supported."

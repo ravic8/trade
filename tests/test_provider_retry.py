@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from trade_research.data.provider_retry import classify_provider_failure
+from trade_data.data.provider_retry import classify_provider_failure
 
 
 class _Response:

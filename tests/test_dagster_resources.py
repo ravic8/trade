@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 dagster = pytest.importorskip("dagster")
-resources = import_module("trade_research.dagster.resources")
+resources = import_module("trade_data.dagster.resources")
 
 
 class FakeTimescaleStore:

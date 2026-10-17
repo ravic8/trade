@@ -3,9 +3,9 @@ from datetime import date
 
 import pandas as pd
 
-import trade_research.pipelines.daily_ohlcv as daily_ohlcv_module
-from trade_research.data.rate_limits import RateLimitDecision
-from trade_research.pipelines.daily_ohlcv import (
+import trade_data.pipelines.daily_ohlcv as daily_ohlcv_module
+from trade_data.data.rate_limits import RateLimitDecision
+from trade_data.pipelines.daily_ohlcv import (
     _fetch_upstox_daily_batch_with_controls,
     _fetch_upstox_daily_with_controls,
     _load_upstox_mapping,

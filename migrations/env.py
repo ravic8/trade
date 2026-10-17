@@ -6,17 +6,19 @@ from typing import Any
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from trade_research.config import get_settings
-from trade_research.control_plane import tables as control_plane_tables
-from trade_research.operations.tables import workflow_requests_table as workflow_requests_table
-from trade_research.storage.timescale import metadata
+from trade_data.config import get_settings
+from trade_data.control_plane import tables as control_plane_tables
+from trade_data.operations.tables import workflow_requests_table as workflow_requests_table
+from trade_data.storage.timescale import metadata
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# ConfigParser treats percent signs as interpolation syntax; endpoint passwords
+# and TLS query parameters may legitimately contain URL-encoded percent escapes.
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 target_metadata = metadata
 
 # Import registration is intentional: the tables share the operational

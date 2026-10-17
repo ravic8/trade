@@ -6,17 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from trade_research.config import Settings
-from trade_research.storage.clickhouse import (
-    ClickHouseFeatureRepository,
-    ResearchStorageReadOnlyError,
+from trade_data.config import Settings
+from trade_data.storage.clickhouse import (
+    ClickHouseQualityRepository,
+    StorageReadOnlyError,
 )
-from trade_research.storage.clickhouse_migrations import (
+from trade_data.storage.clickhouse_migrations import (
     ClickHouseMigrationError,
     ClickHouseMigrator,
     discover_migrations,
 )
-from trade_research.storage.object_store import (
+from trade_data.storage.object_store import (
     ArtifactNamespace,
     ObjectArtifactStore,
     ObjectStoreIntegrityError,
@@ -140,9 +140,9 @@ def test_clickhouse_migration_accepts_fixed_string_bytes_on_retry() -> None:
 
 def test_clickhouse_repository_denies_writes_by_default() -> None:
     client = FakeClickHouse()
-    repository = ClickHouseFeatureRepository(client)
-    with pytest.raises(ResearchStorageReadOnlyError):
-        repository.insert_observations([{"feature_key": "momentum"}])
+    repository = ClickHouseQualityRepository(client)
+    with pytest.raises(StorageReadOnlyError):
+        repository.insert_results([{"validation_run_id": "daily-validation"}])
     assert client.inserts == []
 
 

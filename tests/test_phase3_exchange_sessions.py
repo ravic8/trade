@@ -5,8 +5,8 @@ from datetime import UTC, date, datetime
 import pandas as pd
 import pytest
 
-from trade_research.config import Settings
-from trade_research.exchange_sessions import (
+from trade_data.config import Settings
+from trade_data.exchange_sessions import (
     ExchangeSessionError,
     build_materialized_exchange_sessions,
     classify_exchange_session,
@@ -15,13 +15,13 @@ from trade_research.exchange_sessions import (
     shadow_compare_exchange_sessions,
     validate_materialized_exchange_sessions,
 )
-from trade_research.market_calendar import ExchangeHolidays
-from trade_research.pipelines import exchange_sessions as exchange_sessions_pipeline
-from trade_research.pipelines.exchange_sessions import (
+from trade_data.market_calendar import ExchangeHolidays
+from trade_data.pipelines import exchange_sessions as exchange_sessions_pipeline
+from trade_data.pipelines.exchange_sessions import (
     _stored_holiday_records,
     run_exchange_session_materialization_pipeline,
 )
-from trade_research.pipelines.yfinance_daily import _build_yfinance_missing_fetch_plan
+from trade_data.pipelines.yfinance_daily import _build_yfinance_missing_fetch_plan
 
 
 class MemorySessionStore:

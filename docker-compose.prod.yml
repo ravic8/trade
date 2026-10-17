@@ -1,46 +1,6 @@
 name: trade-prod
 
-x-filing-environment: &filing-environment
-  FILING_ENABLED: ${PROD_FILING_ENABLED:-true}
-  FILING_DEFAULT_WORKSPACE_ID: ${PROD_FILING_DEFAULT_WORKSPACE_ID:-default}
-  FILING_MANIFEST_PATH: ${PROD_FILING_MANIFEST_PATH:-/app/data/filings/nse/INFY/manifest.json}
-  FILING_QUEUE_MODE: celery
-  FILING_QUEUE_NAME: ${PROD_FILING_QUEUE_NAME:-filing_intelligence}
-  FILING_ARTIFACT_BACKEND: s3
-  FILING_ARTIFACT_DIR: /app/data/filings/artifacts
-  FILING_S3_ENDPOINT_URL: http://minio:9000
-  FILING_S3_BUCKET: ${PROD_FILING_S3_BUCKET:-lens-filings}
-  FILING_S3_PREFIX: ${PROD_FILING_S3_PREFIX:-parsed}
-  FILING_S3_REGION: ${PROD_FILING_S3_REGION:-us-east-1}
-  FILING_S3_ACCESS_KEY_ID: ${PROD_FILING_S3_ACCESS_KEY_ID:?set PROD_FILING_S3_ACCESS_KEY_ID}
-  FILING_S3_SECRET_ACCESS_KEY: ${PROD_FILING_S3_SECRET_ACCESS_KEY:?set PROD_FILING_S3_SECRET_ACCESS_KEY}
-  FILING_WORKER_CONCURRENCY: ${PROD_FILING_WORKER_CONCURRENCY:-2}
-  FILING_WORKER_LEASE_SECONDS: ${PROD_FILING_WORKER_LEASE_SECONDS:-300}
-  FILING_WORKER_HEARTBEAT_SECONDS: ${PROD_FILING_WORKER_HEARTBEAT_SECONDS:-30}
-  FILING_CHECKPOINT_SCHEMA: ${PROD_FILING_CHECKPOINT_SCHEMA:-filing_checkpoints}
-  FILING_REQUIRE_WORKSPACE_HEADER: ${PROD_FILING_REQUIRE_WORKSPACE_HEADER:-true}
-  FILING_AUTO_APPROVE_XBRL: ${PROD_FILING_AUTO_APPROVE_XBRL:-true}
-  FILING_FORCE_HUMAN_REVIEW: ${PROD_FILING_FORCE_HUMAN_REVIEW:-false}
-  FILING_MIN_AUTO_APPROVE_CONFIDENCE: ${PROD_FILING_MIN_AUTO_APPROVE_CONFIDENCE:-0.98}
-  FILING_PARSE_MIN_QUALITY: ${PROD_FILING_PARSE_MIN_QUALITY:-0.60}
-  FILING_GOLDEN_DATASET_PATH: /app/evaluations/filings/infy_m1_golden.json
-  FILING_INTENT_EVALUATION_DATASET_PATH: /app/evaluations/filings/nifty50_intent_routing_v1.json
-  FILING_INDEX_ENABLED: ${PROD_FILING_INDEX_ENABLED:-false}
-  FILING_INDEX_VERSION: ${PROD_FILING_INDEX_VERSION:-filing-index-v1}
-  FILING_QDRANT_COLLECTION: ${PROD_FILING_QDRANT_COLLECTION:-filing_evidence_v1}
-  FILING_AGENT_LLM_ENABLED: ${PROD_FILING_AGENT_LLM_ENABLED:-false}
-  FILING_AGENT_LLM_PROVIDER: ${PROD_FILING_AGENT_LLM_PROVIDER:-openai}
-  FILING_AGENT_LLM_MODEL: ${PROD_FILING_AGENT_LLM_MODEL:-gpt-4o-mini}
-  FILING_AGENT_PROMPT_VERSION: ${PROD_FILING_AGENT_PROMPT_VERSION:-nifty50-investigation-v3}
-  FILING_AGENT_MAX_OUTPUT_TOKENS: ${PROD_FILING_AGENT_MAX_OUTPUT_TOKENS:-1200}
-  FILING_AGENT_TIMEOUT_SECONDS: ${PROD_FILING_AGENT_TIMEOUT_SECONDS:-20}
-  FILING_AGENT_RETRY_ATTEMPTS: ${PROD_FILING_AGENT_RETRY_ATTEMPTS:-2}
-  FILING_AGENT_MAX_REVISIONS: ${PROD_FILING_AGENT_MAX_REVISIONS:-1}
-  LANGFUSE_ENABLED: ${PROD_LANGFUSE_ENABLED:-false}
-  LANGFUSE_PUBLIC_KEY: ${PROD_LANGFUSE_PUBLIC_KEY:-}
-  LANGFUSE_SECRET_KEY: ${PROD_LANGFUSE_SECRET_KEY:-}
-  LANGFUSE_BASE_URL: ${PROD_LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
-  LANGFUSE_SAMPLE_RATE: ${PROD_LANGFUSE_SAMPLE_RATE:-1.0}
+x-observability-environment: &observability-environment
   OTEL_ENABLED: ${PROD_OTEL_ENABLED:-true}
   OTEL_SERVICE_NAME: ${PROD_OTEL_SERVICE_NAME:-trade-research}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -63,8 +23,6 @@ x-research-read-environment: &research-read-environment
   OBJECT_STORE_SERVER_SIDE_ENCRYPTION: ${PROD_OBJECT_STORE_SERVER_SIDE_ENCRYPTION:-AES256}
   OBJECT_STORE_RAW_BUCKET: ${PROD_OBJECT_STORE_RAW_BUCKET:-trade-raw}
   OBJECT_STORE_DATASETS_BUCKET: ${PROD_OBJECT_STORE_DATASETS_BUCKET:-trade-datasets}
-  OBJECT_STORE_MODELS_BUCKET: ${PROD_OBJECT_STORE_MODELS_BUCKET:-trade-models}
-  OBJECT_STORE_EXPERIMENTS_BUCKET: ${PROD_OBJECT_STORE_EXPERIMENTS_BUCKET:-trade-experiments}
   OBJECT_STORE_EXPORTS_BUCKET: ${PROD_OBJECT_STORE_EXPORTS_BUCKET:-trade-exports}
 
 x-research-write-environment: &research-write-environment
@@ -84,37 +42,11 @@ x-research-write-environment: &research-write-environment
   OBJECT_STORE_SERVER_SIDE_ENCRYPTION: ${PROD_OBJECT_STORE_SERVER_SIDE_ENCRYPTION:-AES256}
   OBJECT_STORE_RAW_BUCKET: ${PROD_OBJECT_STORE_RAW_BUCKET:-trade-raw}
   OBJECT_STORE_DATASETS_BUCKET: ${PROD_OBJECT_STORE_DATASETS_BUCKET:-trade-datasets}
-  OBJECT_STORE_MODELS_BUCKET: ${PROD_OBJECT_STORE_MODELS_BUCKET:-trade-models}
-  OBJECT_STORE_EXPERIMENTS_BUCKET: ${PROD_OBJECT_STORE_EXPERIMENTS_BUCKET:-trade-experiments}
   OBJECT_STORE_EXPORTS_BUCKET: ${PROD_OBJECT_STORE_EXPORTS_BUCKET:-trade-exports}
   PHASE3_MARKET_DATA_ENABLED: ${PROD_PHASE3_MARKET_DATA_ENABLED:-false}
-  PHASE3_PRODUCTION_ACTIVATION_ENABLED: ${PROD_PHASE3_PRODUCTION_ACTIVATION_ENABLED:-false}
   PHASE3_YFINANCE_ADAPTER_VERSION: ${PROD_PHASE3_YFINANCE_ADAPTER_VERSION:-yfinance-v1}
-  YFINANCE_NSE_MINUTE_ENABLED: ${PROD_YFINANCE_NSE_MINUTE_ENABLED:-false}
-  YFINANCE_NSE_MINUTE_LOOKBACK_DAYS: ${PROD_YFINANCE_NSE_MINUTE_LOOKBACK_DAYS:-7}
-  YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN: ${PROD_YFINANCE_NSE_MINUTE_MAX_SYMBOLS_PER_RUN:-100}
-  PHASE3_CANARY_MAX_INSTRUMENTS: ${PROD_PHASE3_CANARY_MAX_INSTRUMENTS:-25}
-  PHASE3_MINIMUM_COMPLETENESS: ${PROD_PHASE3_MINIMUM_COMPLETENESS:-0.995}
-  PHASE3_REQUIRED_OBSERVED_SESSIONS: ${PROD_PHASE3_REQUIRED_OBSERVED_SESSIONS:-5}
 
 services:
-  web:
-    image: ${PROD_WEB_IMAGE:-trade-research-web:local}
-    build:
-      context: .
-      dockerfile: Dockerfile.web
-    ports:
-      - "127.0.0.1:${PROD_WEB_PORT:-8080}:80"
-    environment:
-      CLOUDBEAVER_HOST: ${PROD_CLOUDBEAVER_HOST:-sql.example.com}
-    depends_on:
-      api:
-        condition: service_healthy
-    networks:
-      - default
-      - analytics_access
-    restart: unless-stopped
-
   cloudbeaver:
     image: ${PROD_CLOUDBEAVER_IMAGE:-dbeaver/cloudbeaver:26.1.2}
     environment:
@@ -127,6 +59,8 @@ services:
       CLOUDBEAVER_APP_READ_ONLY_CONNECTION_INFO: "true"
       CLOUDBEAVER_DEVEL_MODE: "false"
       CLOUDBEAVER_EXPIRE_SESSION_AFTER_PERIOD: ${PROD_CLOUDBEAVER_SESSION_IDLE_MS:-1800000}
+    ports:
+      - "127.0.0.1:${PROD_CLOUDBEAVER_PORT:-8978}:8978"
     expose:
       - "8978"
     volumes:
@@ -145,29 +79,19 @@ services:
     restart: unless-stopped
 
   api:
-    image: ${PROD_API_IMAGE:-trade-research-api:local}
+    image: ${PROD_API_IMAGE:-trade-data-api:local}
     build:
       context: .
       dockerfile: Dockerfile.api
+    ports:
+      - "127.0.0.1:${PROD_API_PORT:-8000}:8000"
     environment:
-      <<: [*filing-environment, *research-read-environment]
+      <<: [*observability-environment, *research-read-environment]
       APP_ENV: production
       DATA_DIR: /app/data
       DAGSTER_READONLY_HOME: /app/dagster_readonly
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
-      BIGQUERY_ENABLED: ${PROD_BIGQUERY_ENABLED:-false}
-      BIGQUERY_CANARY_ENABLED: ${PROD_BIGQUERY_CANARY_ENABLED:-false}
-      BIGQUERY_PRODUCTION_SYNC_ENABLED: ${PROD_BIGQUERY_PRODUCTION_SYNC_ENABLED:-false}
-      BIGQUERY_PROJECT_ID: ${PROD_BIGQUERY_PROJECT_ID:-}
-      BIGQUERY_CORE_DATASET: ${PROD_BIGQUERY_CORE_DATASET:-trade_chain8_analytics}
-      BIGQUERY_REPORTING_DATASET: ${PROD_BIGQUERY_REPORTING_DATASET:-trade_chain8_reporting}
-      BIGQUERY_LOCATION: ${PROD_BIGQUERY_LOCATION:-US}
-      BIGQUERY_AUTH_METHOD: ${PROD_BIGQUERY_AUTH_METHOD:-adc}
-      BIGQUERY_CREDENTIALS_PATH: ${PROD_BIGQUERY_CREDENTIALS_PATH:-}
-      BIGQUERY_EXPECTED_SERVICE_ACCOUNT_EMAIL: ${PROD_BIGQUERY_EXPECTED_SERVICE_ACCOUNT_EMAIL:-}
-      BIGQUERY_BACKFILL_CHUNK_SIZE: ${PROD_BIGQUERY_BACKFILL_CHUNK_SIZE:-10000}
-      BIGQUERY_RETRY_ATTEMPTS: ${PROD_BIGQUERY_RETRY_ATTEMPTS:-3}
       INGESTION_PROFILE: prod
       PROVIDER_RATE_LIMIT_BACKEND: redis
       PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
@@ -175,32 +99,15 @@ services:
       UPSTOX_RATE_PER_SECOND: ${PROD_UPSTOX_RATE_PER_SECOND:-40}
       UPSTOX_RATE_PER_MINUTE: ${PROD_UPSTOX_RATE_PER_MINUTE:-400}
       UPSTOX_RATE_PER_30_MINUTES: ${PROD_UPSTOX_RATE_PER_30_MINUTES:-1600}
-      QDRANT_URL: http://qdrant:6333
       API_CORS_ORIGINS: ${PROD_API_CORS_ORIGINS:-http://localhost:8080}
-      CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR: ${PROD_CHAT_RATE_LIMIT_TRUST_FORWARDED_FOR:-true}
       UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
-      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${PROD_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      GEMINI_API_KEY: ${PROD_GEMINI_API_KEY:-}
-      GEMINI_BASE_URL: ${PROD_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
-      QDRANT_API_KEY: ${PROD_QDRANT_API_KEY:-}
-      QDRANT_COLLECTION: ${PROD_QDRANT_COLLECTION:-market_research_documents}
       APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
       ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
       ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
-      FILING_ALERTMANAGER_URL: http://alertmanager:9093
-      FILING_ALERT_WEBHOOK_TOKEN_FILE: /run/secrets/alertmanager_webhook_token
-      CHAT_ENABLED: ${PROD_CHAT_ENABLED:-true}
-      CHAT_STRICT_CITATION_REQUIRED: ${PROD_CHAT_STRICT_CITATION_REQUIRED:-true}
-      CHAT_USE_LLM_ANSWER: ${PROD_CHAT_USE_LLM_ANSWER:-true}
-      CHAT_ANSWER_MODEL: ${PROD_CHAT_ANSWER_MODEL:-gemini-2.5-flash}
-      CHAT_PLANNER_MODEL: ${PROD_CHAT_PLANNER_MODEL:-gemini-2.5-flash}
-      CHAT_RATE_LIMIT_ENABLED: ${PROD_CHAT_RATE_LIMIT_ENABLED:-true}
-      CHAT_RATE_LIMIT_REQUESTS: ${PROD_CHAT_RATE_LIMIT_REQUESTS:-12}
-      CHAT_RATE_LIMIT_WINDOW_SECONDS: ${PROD_CHAT_RATE_LIMIT_WINDOW_SECONDS:-60}
       DATA_PIPELINE_MAX_CONCURRENT_FETCHES: ${PROD_DATA_PIPELINE_MAX_CONCURRENT_FETCHES:-1}
       DATA_PIPELINE_THROTTLE_SECONDS: ${PROD_DATA_PIPELINE_THROTTLE_SECONDS:-0}
       YFINANCE_DAILY_ENABLED: ${PROD_YFINANCE_DAILY_ENABLED:-false}
+      YFINANCE_DAILY_WORKER_EXCHANGE: ${PROD_YFINANCE_DAILY_WORKER_EXCHANGE:-NSE}
       YFINANCE_FULL_US_ENABLED: ${PROD_YFINANCE_FULL_US_ENABLED:-false}
       YFINANCE_FULL_TSX_ENABLED: ${PROD_YFINANCE_FULL_TSX_ENABLED:-false}
       YFINANCE_TSX_CANARY_ENABLED: ${PROD_YFINANCE_TSX_CANARY_ENABLED:-false}
@@ -215,14 +122,14 @@ services:
       TSX_OFFICIAL_TIMEOUT_SECONDS: ${PROD_TSX_OFFICIAL_TIMEOUT_SECONDS:-30}
       TSX_OFFICIAL_RETRY_ATTEMPTS: ${PROD_TSX_OFFICIAL_RETRY_ATTEMPTS:-3}
       YFINANCE_NSE_ENABLED: ${PROD_YFINANCE_NSE_ENABLED:-false}
-      NSE_DAILY_PRIMARY_SOURCE: ${PROD_NSE_DAILY_PRIMARY_SOURCE:-upstox}
+      NSE_DAILY_PRIMARY_SOURCE: ${PROD_NSE_DAILY_PRIMARY_SOURCE:-yfinance}
       NSE_PROVIDER_COMPARISON_SESSIONS: ${PROD_NSE_PROVIDER_COMPARISON_SESSIONS:-20}
       NSE_PROVIDER_COMPARISON_MINIMUM_SYMBOLS: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_SYMBOLS:-100}
       NSE_PROVIDER_COMPARISON_MINIMUM_ROW_OVERLAP: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_ROW_OVERLAP:-0.95}
       NSE_PROVIDER_COMPARISON_CLOSE_TOLERANCE: ${PROD_NSE_PROVIDER_COMPARISON_CLOSE_TOLERANCE:-0.01}
       NSE_PROVIDER_COMPARISON_MINIMUM_CLOSE_MATCH: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_CLOSE_MATCH:-0.98}
       NSE_PROVIDER_COMPARISON_MAXIMUM_SESSION_LAG: ${PROD_NSE_PROVIDER_COMPARISON_MAXIMUM_SESSION_LAG:-1}
-      LEGACY_UPSTOX_NSE_ENABLED: ${PROD_LEGACY_UPSTOX_NSE_ENABLED:-true}
+      LEGACY_UPSTOX_NSE_ENABLED: ${PROD_LEGACY_UPSTOX_NSE_ENABLED:-false}
       YFINANCE_ADAPTIVE_RATE_MODE: ${PROD_YFINANCE_ADAPTIVE_RATE_MODE:-observe}
       YFINANCE_INITIAL_RPM: ${PROD_YFINANCE_INITIAL_RPM:-300}
       YFINANCE_MINIMUM_RPM: ${PROD_YFINANCE_MINIMUM_RPM:-30}
@@ -235,7 +142,6 @@ services:
       YFINANCE_NEW_LISTING_GRACE_HOURS: ${PROD_YFINANCE_NEW_LISTING_GRACE_HOURS:-72}
       YFINANCE_NEW_LISTING_RETRY_HOURS: ${PROD_YFINANCE_NEW_LISTING_RETRY_HOURS:-6}
       YFINANCE_PROVIDER_GRACE_MINUTES: ${PROD_YFINANCE_PROVIDER_GRACE_MINUTES:-120}
-      OPPORTUNITY_MINIMUM_SESSION_COVERAGE: ${PROD_OPPORTUNITY_MINIMUM_SESSION_COVERAGE:-0.95}
       YFINANCE_ADAPTIVE_EVALUATION_WINDOW_SECONDS: ${PROD_YFINANCE_ADAPTIVE_EVALUATION_WINDOW_SECONDS:-60}
       YFINANCE_ADAPTIVE_HEALTHY_WINDOWS_BEFORE_INCREASE: ${PROD_YFINANCE_ADAPTIVE_HEALTHY_WINDOWS_BEFORE_INCREASE:-2}
       YFINANCE_ADAPTIVE_INCREASE_RPM: ${PROD_YFINANCE_ADAPTIVE_INCREASE_RPM:-30}
@@ -258,16 +164,11 @@ services:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
       - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_readonly:ro
-      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/alertmanager-secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
-      qdrant:
-        condition: service_started
-      minio-init:
-        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     healthcheck:
@@ -278,60 +179,8 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  filing-worker:
-    image: ${PROD_API_IMAGE:-trade-research-api:local}
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    command:
-      [
-        "celery",
-        "-A",
-        "trade_research.filings.tasks:celery_app",
-        "worker",
-        "--loglevel=${PROD_FILING_WORKER_LOG_LEVEL:-INFO}",
-        "--queues=${PROD_FILING_QUEUE_NAME:-filing_intelligence}",
-        "--concurrency=${PROD_FILING_WORKER_CONCURRENCY:-2}",
-      ]
-    environment:
-      <<: *filing-environment
-      APP_ENV: production
-      DATA_DIR: /app/data
-      DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
-      REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
-      QDRANT_URL: http://qdrant:6333
-      QDRANT_API_KEY: ${PROD_QDRANT_API_KEY:-}
-      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${PROD_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      GEMINI_API_KEY: ${PROD_GEMINI_API_KEY:-}
-      GEMINI_BASE_URL: ${PROD_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
-    volumes:
-      - ${PROD_TRADE_DATA_DIR:-./data}:/app/data:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
-      minio-init:
-        condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "celery -A trade_research.filings.tasks:celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5 | grep -q pong",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
   dagster-daemon:
-    image: ${PROD_API_IMAGE:-trade-research-api:local}
+    image: ${PROD_API_IMAGE:-trade-data-api:local}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -343,19 +192,7 @@ services:
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
-      BIGQUERY_ENABLED: ${PROD_BIGQUERY_ENABLED:-false}
-      BIGQUERY_CANARY_ENABLED: ${PROD_BIGQUERY_CANARY_ENABLED:-false}
-      BIGQUERY_PRODUCTION_SYNC_ENABLED: ${PROD_BIGQUERY_PRODUCTION_SYNC_ENABLED:-false}
-      BIGQUERY_PROJECT_ID: ${PROD_BIGQUERY_PROJECT_ID:-}
-      BIGQUERY_CORE_DATASET: ${PROD_BIGQUERY_CORE_DATASET:-trade_chain8_analytics}
-      BIGQUERY_REPORTING_DATASET: ${PROD_BIGQUERY_REPORTING_DATASET:-trade_chain8_reporting}
-      BIGQUERY_LOCATION: ${PROD_BIGQUERY_LOCATION:-US}
-      BIGQUERY_AUTH_METHOD: ${PROD_BIGQUERY_AUTH_METHOD:-adc}
-      BIGQUERY_CREDENTIALS_PATH: ${PROD_BIGQUERY_CREDENTIALS_PATH:-}
-      BIGQUERY_EXPECTED_SERVICE_ACCOUNT_EMAIL: ${PROD_BIGQUERY_EXPECTED_SERVICE_ACCOUNT_EMAIL:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${PROD_BIGQUERY_CREDENTIALS_PATH:-/run/secrets/gcp/service-account.json}
-      BIGQUERY_BACKFILL_CHUNK_SIZE: ${PROD_BIGQUERY_BACKFILL_CHUNK_SIZE:-10000}
-      BIGQUERY_RETRY_ATTEMPTS: ${PROD_BIGQUERY_RETRY_ATTEMPTS:-3}
       INGESTION_PROFILE: prod
       PROVIDER_RATE_LIMIT_BACKEND: redis
       PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
@@ -363,16 +200,14 @@ services:
       UPSTOX_RATE_PER_SECOND: ${PROD_UPSTOX_RATE_PER_SECOND:-40}
       UPSTOX_RATE_PER_MINUTE: ${PROD_UPSTOX_RATE_PER_MINUTE:-400}
       UPSTOX_RATE_PER_30_MINUTES: ${PROD_UPSTOX_RATE_PER_30_MINUTES:-1600}
-      QDRANT_URL: http://qdrant:6333
       UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
-      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${PROD_GEMINI_API_KEY:-}
       APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
       ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
       ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
       DATA_PIPELINE_MAX_CONCURRENT_FETCHES: ${PROD_DATA_PIPELINE_MAX_CONCURRENT_FETCHES:-1}
       DATA_PIPELINE_THROTTLE_SECONDS: ${PROD_DATA_PIPELINE_THROTTLE_SECONDS:-0}
       YFINANCE_DAILY_ENABLED: ${PROD_YFINANCE_DAILY_ENABLED:-false}
+      YFINANCE_DAILY_WORKER_EXCHANGE: ${PROD_YFINANCE_DAILY_WORKER_EXCHANGE:-NSE}
       YFINANCE_FULL_US_ENABLED: ${PROD_YFINANCE_FULL_US_ENABLED:-false}
       YFINANCE_FULL_TSX_ENABLED: ${PROD_YFINANCE_FULL_TSX_ENABLED:-false}
       YFINANCE_TSX_CANARY_ENABLED: ${PROD_YFINANCE_TSX_CANARY_ENABLED:-false}
@@ -387,14 +222,14 @@ services:
       TSX_OFFICIAL_TIMEOUT_SECONDS: ${PROD_TSX_OFFICIAL_TIMEOUT_SECONDS:-30}
       TSX_OFFICIAL_RETRY_ATTEMPTS: ${PROD_TSX_OFFICIAL_RETRY_ATTEMPTS:-3}
       YFINANCE_NSE_ENABLED: ${PROD_YFINANCE_NSE_ENABLED:-false}
-      NSE_DAILY_PRIMARY_SOURCE: ${PROD_NSE_DAILY_PRIMARY_SOURCE:-upstox}
+      NSE_DAILY_PRIMARY_SOURCE: ${PROD_NSE_DAILY_PRIMARY_SOURCE:-yfinance}
       NSE_PROVIDER_COMPARISON_SESSIONS: ${PROD_NSE_PROVIDER_COMPARISON_SESSIONS:-20}
       NSE_PROVIDER_COMPARISON_MINIMUM_SYMBOLS: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_SYMBOLS:-100}
       NSE_PROVIDER_COMPARISON_MINIMUM_ROW_OVERLAP: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_ROW_OVERLAP:-0.95}
       NSE_PROVIDER_COMPARISON_CLOSE_TOLERANCE: ${PROD_NSE_PROVIDER_COMPARISON_CLOSE_TOLERANCE:-0.01}
       NSE_PROVIDER_COMPARISON_MINIMUM_CLOSE_MATCH: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_CLOSE_MATCH:-0.98}
       NSE_PROVIDER_COMPARISON_MAXIMUM_SESSION_LAG: ${PROD_NSE_PROVIDER_COMPARISON_MAXIMUM_SESSION_LAG:-1}
-      LEGACY_UPSTOX_NSE_ENABLED: ${PROD_LEGACY_UPSTOX_NSE_ENABLED:-true}
+      LEGACY_UPSTOX_NSE_ENABLED: ${PROD_LEGACY_UPSTOX_NSE_ENABLED:-false}
       YFINANCE_ADAPTIVE_RATE_MODE: ${PROD_YFINANCE_ADAPTIVE_RATE_MODE:-observe}
       YFINANCE_INITIAL_RPM: ${PROD_YFINANCE_INITIAL_RPM:-300}
       YFINANCE_MINIMUM_RPM: ${PROD_YFINANCE_MINIMUM_RPM:-30}
@@ -407,7 +242,6 @@ services:
       YFINANCE_NEW_LISTING_GRACE_HOURS: ${PROD_YFINANCE_NEW_LISTING_GRACE_HOURS:-72}
       YFINANCE_NEW_LISTING_RETRY_HOURS: ${PROD_YFINANCE_NEW_LISTING_RETRY_HOURS:-6}
       YFINANCE_PROVIDER_GRACE_MINUTES: ${PROD_YFINANCE_PROVIDER_GRACE_MINUTES:-120}
-      OPPORTUNITY_MINIMUM_SESSION_COVERAGE: ${PROD_OPPORTUNITY_MINIMUM_SESSION_COVERAGE:-0.95}
       YFINANCE_ADAPTIVE_EVALUATION_WINDOW_SECONDS: ${PROD_YFINANCE_ADAPTIVE_EVALUATION_WINDOW_SECONDS:-60}
       YFINANCE_ADAPTIVE_HEALTHY_WINDOWS_BEFORE_INCREASE: ${PROD_YFINANCE_ADAPTIVE_HEALTHY_WINDOWS_BEFORE_INCREASE:-2}
       YFINANCE_ADAPTIVE_INCREASE_RPM: ${PROD_YFINANCE_ADAPTIVE_INCREASE_RPM:-30}
@@ -430,18 +264,15 @@ services:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
       - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_home
-      - ${PROD_BIGQUERY_CREDENTIALS_FILE:-/dev/null}:/run/secrets/gcp/service-account.json:ro
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
-      qdrant:
-        condition: service_started
     restart: unless-stopped
 
   dagster-webserver:
-    image: ${PROD_API_IMAGE:-trade-research-api:local}
+    image: ${PROD_API_IMAGE:-trade-data-api:local}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -464,19 +295,7 @@ services:
       DAGSTER_HOME: /app/dagster_home
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
-      BIGQUERY_ENABLED: ${PROD_BIGQUERY_ENABLED:-false}
-      BIGQUERY_CANARY_ENABLED: ${PROD_BIGQUERY_CANARY_ENABLED:-false}
-      BIGQUERY_PRODUCTION_SYNC_ENABLED: ${PROD_BIGQUERY_PRODUCTION_SYNC_ENABLED:-false}
-      BIGQUERY_PROJECT_ID: ${PROD_BIGQUERY_PROJECT_ID:-}
-      BIGQUERY_CORE_DATASET: ${PROD_BIGQUERY_CORE_DATASET:-trade_chain8_analytics}
-      BIGQUERY_REPORTING_DATASET: ${PROD_BIGQUERY_REPORTING_DATASET:-trade_chain8_reporting}
-      BIGQUERY_LOCATION: ${PROD_BIGQUERY_LOCATION:-US}
-      BIGQUERY_AUTH_METHOD: ${PROD_BIGQUERY_AUTH_METHOD:-adc}
-      BIGQUERY_CREDENTIALS_PATH: ${PROD_BIGQUERY_CREDENTIALS_PATH:-}
-      BIGQUERY_EXPECTED_SERVICE_ACCOUNT_EMAIL: ${PROD_BIGQUERY_EXPECTED_SERVICE_ACCOUNT_EMAIL:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${PROD_BIGQUERY_CREDENTIALS_PATH:-/run/secrets/gcp/service-account.json}
-      BIGQUERY_BACKFILL_CHUNK_SIZE: ${PROD_BIGQUERY_BACKFILL_CHUNK_SIZE:-10000}
-      BIGQUERY_RETRY_ATTEMPTS: ${PROD_BIGQUERY_RETRY_ATTEMPTS:-3}
       INGESTION_PROFILE: prod
       PROVIDER_RATE_LIMIT_BACKEND: redis
       PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
@@ -484,14 +303,12 @@ services:
       UPSTOX_RATE_PER_SECOND: ${PROD_UPSTOX_RATE_PER_SECOND:-40}
       UPSTOX_RATE_PER_MINUTE: ${PROD_UPSTOX_RATE_PER_MINUTE:-400}
       UPSTOX_RATE_PER_30_MINUTES: ${PROD_UPSTOX_RATE_PER_30_MINUTES:-1600}
-      QDRANT_URL: http://qdrant:6333
       UPSTOX_ACCESS_TOKEN: ${PROD_UPSTOX_ACCESS_TOKEN:-}
-      OPENAI_API_KEY: ${PROD_OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${PROD_GEMINI_API_KEY:-}
       APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
       ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
       ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
       YFINANCE_DAILY_ENABLED: ${PROD_YFINANCE_DAILY_ENABLED:-false}
+      YFINANCE_DAILY_WORKER_EXCHANGE: ${PROD_YFINANCE_DAILY_WORKER_EXCHANGE:-NSE}
       YFINANCE_FULL_US_ENABLED: ${PROD_YFINANCE_FULL_US_ENABLED:-false}
       YFINANCE_FULL_TSX_ENABLED: ${PROD_YFINANCE_FULL_TSX_ENABLED:-false}
       YFINANCE_TSX_CANARY_ENABLED: ${PROD_YFINANCE_TSX_CANARY_ENABLED:-false}
@@ -506,14 +323,14 @@ services:
       TSX_OFFICIAL_TIMEOUT_SECONDS: ${PROD_TSX_OFFICIAL_TIMEOUT_SECONDS:-30}
       TSX_OFFICIAL_RETRY_ATTEMPTS: ${PROD_TSX_OFFICIAL_RETRY_ATTEMPTS:-3}
       YFINANCE_NSE_ENABLED: ${PROD_YFINANCE_NSE_ENABLED:-false}
-      NSE_DAILY_PRIMARY_SOURCE: ${PROD_NSE_DAILY_PRIMARY_SOURCE:-upstox}
+      NSE_DAILY_PRIMARY_SOURCE: ${PROD_NSE_DAILY_PRIMARY_SOURCE:-yfinance}
       NSE_PROVIDER_COMPARISON_SESSIONS: ${PROD_NSE_PROVIDER_COMPARISON_SESSIONS:-20}
       NSE_PROVIDER_COMPARISON_MINIMUM_SYMBOLS: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_SYMBOLS:-100}
       NSE_PROVIDER_COMPARISON_MINIMUM_ROW_OVERLAP: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_ROW_OVERLAP:-0.95}
       NSE_PROVIDER_COMPARISON_CLOSE_TOLERANCE: ${PROD_NSE_PROVIDER_COMPARISON_CLOSE_TOLERANCE:-0.01}
       NSE_PROVIDER_COMPARISON_MINIMUM_CLOSE_MATCH: ${PROD_NSE_PROVIDER_COMPARISON_MINIMUM_CLOSE_MATCH:-0.98}
       NSE_PROVIDER_COMPARISON_MAXIMUM_SESSION_LAG: ${PROD_NSE_PROVIDER_COMPARISON_MAXIMUM_SESSION_LAG:-1}
-      LEGACY_UPSTOX_NSE_ENABLED: ${PROD_LEGACY_UPSTOX_NSE_ENABLED:-true}
+      LEGACY_UPSTOX_NSE_ENABLED: ${PROD_LEGACY_UPSTOX_NSE_ENABLED:-false}
       YFINANCE_ADAPTIVE_RATE_MODE: ${PROD_YFINANCE_ADAPTIVE_RATE_MODE:-observe}
       YFINANCE_INITIAL_RPM: ${PROD_YFINANCE_INITIAL_RPM:-300}
       YFINANCE_MINIMUM_RPM: ${PROD_YFINANCE_MINIMUM_RPM:-30}
@@ -526,7 +343,6 @@ services:
       YFINANCE_NEW_LISTING_GRACE_HOURS: ${PROD_YFINANCE_NEW_LISTING_GRACE_HOURS:-72}
       YFINANCE_NEW_LISTING_RETRY_HOURS: ${PROD_YFINANCE_NEW_LISTING_RETRY_HOURS:-6}
       YFINANCE_PROVIDER_GRACE_MINUTES: ${PROD_YFINANCE_PROVIDER_GRACE_MINUTES:-120}
-      OPPORTUNITY_MINIMUM_SESSION_COVERAGE: ${PROD_OPPORTUNITY_MINIMUM_SESSION_COVERAGE:-0.95}
       YFINANCE_ADAPTIVE_EVALUATION_WINDOW_SECONDS: ${PROD_YFINANCE_ADAPTIVE_EVALUATION_WINDOW_SECONDS:-60}
       YFINANCE_ADAPTIVE_HEALTHY_WINDOWS_BEFORE_INCREASE: ${PROD_YFINANCE_ADAPTIVE_HEALTHY_WINDOWS_BEFORE_INCREASE:-2}
       YFINANCE_ADAPTIVE_INCREASE_RPM: ${PROD_YFINANCE_ADAPTIVE_INCREASE_RPM:-30}
@@ -551,13 +367,10 @@ services:
       - ${PROD_TRADE_DATA_DIR:-./data}:/app/data
       - ${PROD_TRADE_ARTIFACTS_DIR:-./artifacts}:/app/artifacts
       - ${PROD_DAGSTER_HOME_DIR:-./dagster_home}:/app/dagster_home
-      - ${PROD_BIGQUERY_CREDENTIALS_FILE:-/dev/null}:/run/secrets/gcp/service-account.json:ro
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-      qdrant:
         condition: service_started
     restart: unless-stopped
 
@@ -595,6 +408,7 @@ services:
       - "9000"
     volumes:
       - ${PROD_CLICKHOUSE_DATA_DIR:-/opt/trade/clickhouse}:/var/lib/clickhouse
+      - ./clickhouse/config.d/observability.xml:/etc/clickhouse-server/config.d/observability.xml:ro
     healthcheck:
       test:
         [
@@ -605,7 +419,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
-    mem_limit: ${PROD_CLICKHOUSE_MEMORY_LIMIT:-2g}
+    mem_limit: ${PROD_CLICKHOUSE_MEMORY_LIMIT:-4g}
     cpus: ${PROD_CLICKHOUSE_CPU_LIMIT:-2.0}
     logging:
       driver: json-file
@@ -637,7 +451,7 @@ services:
     restart: "no"
 
   clickhouse-migrate:
-    image: ${PROD_API_IMAGE:-trade-research-api:local}
+    image: ${PROD_API_IMAGE:-trade-data-api:local}
     profiles: ["research-setup"]
     command: ["python", "/app/scripts/run_clickhouse_migrations.py"]
     environment:
@@ -661,12 +475,6 @@ services:
       - ${PROD_REDIS_DATA_DIR:-./data/redis}:/data
     restart: unless-stopped
 
-  qdrant:
-    image: qdrant/qdrant:latest
-    volumes:
-      - ${PROD_QDRANT_DATA_DIR:-./data/qdrant}:/qdrant/storage
-    restart: unless-stopped
-
   minio:
     # Keep the recovery default on the upgrade path used before Phase 2. The
     # deploy script snapshots the running image and rejects explicit release
@@ -686,56 +494,6 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  minio-init:
-    image: ${PROD_MINIO_CLIENT_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${PROD_MINIO_ROOT_USER:?set PROD_MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${PROD_MINIO_ROOT_PASSWORD:?set PROD_MINIO_ROOT_PASSWORD}
-      FILING_S3_BUCKET: ${PROD_FILING_S3_BUCKET:-lens-filings}
-      FILING_S3_ACCESS_KEY_ID: ${PROD_FILING_S3_ACCESS_KEY_ID:?set PROD_FILING_S3_ACCESS_KEY_ID}
-      FILING_S3_SECRET_ACCESS_KEY: ${PROD_FILING_S3_SECRET_ACCESS_KEY:?set PROD_FILING_S3_SECRET_ACCESS_KEY}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -eu
-        mc alias set lens http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc mb --ignore-existing "lens/$$FILING_S3_BUCKET"
-        mc version enable "lens/$$FILING_S3_BUCKET"
-        cat > /tmp/filing-artifacts-policy.json <<EOF
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Effect": "Allow",
-              "Action": [
-                "s3:GetBucketLocation",
-                "s3:GetBucketVersioning",
-                "s3:ListBucket"
-              ],
-              "Resource": ["arn:aws:s3:::$$FILING_S3_BUCKET"]
-            },
-            {
-              "Effect": "Allow",
-              "Action": [
-                "s3:GetObject",
-                "s3:GetObjectVersion",
-                "s3:PutObject"
-              ],
-              "Resource": ["arn:aws:s3:::$$FILING_S3_BUCKET/*"]
-            }
-          ]
-        }
-        EOF
-        mc admin policy create lens filing-artifacts /tmp/filing-artifacts-policy.json
-        if ! mc admin user info lens "$$FILING_S3_ACCESS_KEY_ID" >/dev/null 2>&1; then
-          mc admin user add lens "$$FILING_S3_ACCESS_KEY_ID" "$$FILING_S3_SECRET_ACCESS_KEY"
-        fi
-        mc admin policy attach lens filing-artifacts --user "$$FILING_S3_ACCESS_KEY_ID"
-    restart: "no"
-
   minio-research-init:
     image: ${PROD_MINIO_CLIENT_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
     profiles: ["research-setup"]
@@ -747,8 +505,6 @@ services:
       MINIO_ROOT_PASSWORD: ${PROD_MINIO_ROOT_PASSWORD:-phase2-disabled}
       RAW_BUCKET: ${PROD_OBJECT_STORE_RAW_BUCKET:-trade-raw}
       DATASETS_BUCKET: ${PROD_OBJECT_STORE_DATASETS_BUCKET:-trade-datasets}
-      MODELS_BUCKET: ${PROD_OBJECT_STORE_MODELS_BUCKET:-trade-models}
-      EXPERIMENTS_BUCKET: ${PROD_OBJECT_STORE_EXPERIMENTS_BUCKET:-trade-experiments}
       EXPORTS_BUCKET: ${PROD_OBJECT_STORE_EXPORTS_BUCKET:-trade-exports}
       DAGSTER_ACCESS_KEY: ${PROD_OBJECT_STORE_DAGSTER_ACCESS_KEY_ID:-phase2-disabled}
       DAGSTER_SECRET_KEY: ${PROD_OBJECT_STORE_DAGSTER_SECRET_ACCESS_KEY:-phase2-disabled}
@@ -781,7 +537,6 @@ services:
       ]
     volumes:
       - ./ops/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
-      - ./ops/observability/filing-alerts.yaml:/etc/prometheus/rules/filing-alerts.yaml:ro
       - ${PROD_PROMETHEUS_DATA_DIR:-/opt/trade/prometheus}:/prometheus
     depends_on:
       otel-collector:
@@ -802,7 +557,6 @@ services:
       ]
     volumes:
       - ./ops/observability/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro
-      - ${PROD_ALERT_WEBHOOK_TOKEN_FILE:-/opt/trade/alertmanager-secrets/alertmanager-webhook-token}:/run/secrets/alertmanager_webhook_token:ro
       - ${PROD_ALERTMANAGER_DATA_DIR:-/opt/trade/alertmanager}:/alertmanager
     expose:
       - "9093"

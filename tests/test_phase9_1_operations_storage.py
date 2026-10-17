@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 
-from trade_research.storage.timescale import (
+from trade_data.storage.timescale import (
     TimescaleStore,
     adaptive_rate_state_table,
     ingestion_runs_table,

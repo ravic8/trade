@@ -136,7 +136,7 @@ def check() -> list[str]:
             )
 
     schedules = _dagster_schedule_statuses(
-        ROOT / "src/trade_research/dagster/definitions.py"
+        ROOT / "src/trade_data/dagster/definitions.py"
     )
     expected_schedules = set(manifest["dagster_schedules"])
     actual_schedules = set(schedules)

@@ -4,7 +4,7 @@ import pytest
 import redis
 from sqlalchemy import create_engine, inspect, text
 
-from trade_research.data.rate_limits import RateLimitWindow, RedisProviderRateLimiter
+from trade_data.data.rate_limits import RateLimitWindow, RedisProviderRateLimiter
 
 pytestmark = pytest.mark.skipif(
     os.getenv("PHASE1_SERVICE_TESTS") != "1",

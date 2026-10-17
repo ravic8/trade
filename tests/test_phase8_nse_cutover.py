@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 
 import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from trade_research.config import Settings
-from trade_research.pipelines import daily_pipeline_health, nse_cutover, yfinance_work_queue
-from trade_research.pipelines.base import PipelineRunResult
+from trade_data.config import Settings
+from trade_data.pipelines import nse_cutover, yfinance_work_queue
+from trade_data.pipelines.base import PipelineRunResult
 
 
 def _candles(
@@ -158,6 +157,8 @@ def test_nse_canary_is_independent_from_full_nse_flag(monkeypatch) -> None:
     )
 
     assert captured["exchanges"] == ("NSE",)
+    assert captured["include_initial_backfill"] is False
+    assert captured["include_bounded_canary"] is True
     assert captured["allow_disabled_exchanges"] is True
     assert captured["instrument_limit_per_exchange"] == 10
     assert captured["provider_symbols"] == ("RELIANCE",)
@@ -291,49 +292,3 @@ def test_cutover_readiness_reports_stale_provider_independently(monkeypatch) -> 
     assert result.metrics["upstox_session_lag"] == 2
     assert result.metrics["yfinance_session_lag"] == 0
     assert result.metrics["stale_providers"] == ["upstox"]
-
-
-def test_yfinance_daily_health_uses_provider_neutral_validation(monkeypatch) -> None:
-    settings = Settings(
-        _env_file=None,
-        yfinance_daily_enabled=True,
-        yfinance_nse_enabled=True,
-        nse_daily_primary_source="yfinance",
-    )
-    readiness = PipelineRunResult(
-        name="readiness",
-        status="pass",
-        metrics={"ready": True},
-    )
-    processed = PipelineRunResult(
-        name="processed",
-        status="pass",
-        rows=42,
-        artifacts={
-            "summary_md": Path("summary.md"),
-            "summary_json": Path("summary.json"),
-        },
-        metrics={"overall_status": "pass"},
-    )
-    monkeypatch.setattr(daily_pipeline_health, "get_settings", lambda: settings)
-    monkeypatch.setattr(
-        daily_pipeline_health,
-        "run_nse_yfinance_cutover_readiness",
-        lambda **_kwargs: readiness,
-    )
-    monkeypatch.setattr(
-        daily_pipeline_health,
-        "run_processed_dataset_validation_pipeline",
-        lambda **_kwargs: processed,
-    )
-    monkeypatch.setattr(
-        daily_pipeline_health,
-        "validate_daily_pipeline_health",
-        lambda **_kwargs: pytest.fail("legacy Upstox health path must not run"),
-    )
-
-    result = daily_pipeline_health.run_daily_pipeline_health_pipeline()
-
-    assert result.status == "pass"
-    assert result.rows == 42
-    assert result.metrics["primary_source"] == "yfinance"

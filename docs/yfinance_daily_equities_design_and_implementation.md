@@ -79,17 +79,17 @@ second ingestion system.
 
 ### Components to Keep
 
-- `src/trade_research/storage/timescale.py`: OHLCV, ingestion runs, request
+- `src/trade_data/storage/timescale.py`: OHLCV, ingestion runs, request
   logs, coverage, holidays, symbols, instruments, and feed health.
-- `src/trade_research/data/rate_limits.py`: in-memory and Redis distributed
+- `src/trade_data/data/rate_limits.py`: in-memory and Redis distributed
   provider limiting.
-- `src/trade_research/data/yfinance_provider.py`: yfinance download and
+- `src/trade_data/data/yfinance_provider.py`: yfinance download and
   normalization boundary.
-- `src/trade_research/pipelines/yfinance_daily.py`: incremental/missing window
+- `src/trade_data/pipelines/yfinance_daily.py`: incremental/missing window
   planning, audit, upsert, and coverage foundations.
-- `src/trade_research/market_calendar.py`: NSE, TSX/CA, and US calendar logic.
-- `src/trade_research/universe/`: NSE, TSX, US, and Canada symbol providers.
-- `src/trade_research/dagster/`: asset, job, and schedule orchestration.
+- `src/trade_data/market_calendar.py`: NSE, TSX/CA, and US calendar logic.
+- `src/trade_data/universe/`: NSE, TSX, US, and Canada symbol providers.
+- `src/trade_data/dagster/`: asset, job, and schedule orchestration.
 - `apps/web/src/pages/DataPipelinePage.tsx`: availability, runs, request health,
   and schedule views.
 
@@ -300,7 +300,7 @@ Yahoo availability grace period expires.
 Extract existing incremental and missing-window logic into a shared planner:
 
 ```text
-src/trade_research/data/daily_work.py
+src/trade_data/data/daily_work.py
 ```
 
 ```python
@@ -404,9 +404,9 @@ current provider protocol for test doubles.
 Proposed modules:
 
 ```text
-src/trade_research/data/yahoo_executor.py
-src/trade_research/data/provider_retry.py
-src/trade_research/data/adaptive_rate.py
+src/trade_data/data/yahoo_executor.py
+src/trade_data/data/provider_retry.py
+src/trade_data/data/adaptive_rate.py
 ```
 
 Responsibilities:
@@ -825,8 +825,8 @@ item, persists candles, adjustments, and provider request logs before
 acknowledgement, and retries only failed ticker items. CLI commands are:
 
 ```bash
-trade-research plan-yfinance-daily-work
-trade-research run-yfinance-daily-worker
+trade-data plan-yfinance-daily-work
+trade-data run-yfinance-daily-worker
 ```
 
 Dagster registers `yfinance_daily_work_planner_schedule` and
@@ -1135,8 +1135,8 @@ It does not add TSX to the scheduled planner and it does not allow a universe
 refresh to enqueue new-symbol work. The planner defaults to dry-run:
 
 ```bash
-trade-research plan-yfinance-tsx-canary --symbol-limit 1 --dry-run
-trade-research plan-yfinance-tsx-canary --symbol-limit 1 --enqueue
+trade-data plan-yfinance-tsx-canary --symbol-limit 1 --dry-run
+trade-data plan-yfinance-tsx-canary --symbol-limit 1 --enqueue
 ```
 
 The configured maximum is enforced even from the CLI. Only records from the
@@ -1308,9 +1308,9 @@ their existing schedules and shared Yahoo budget. Enqueueing is rejected unless
 the bounded canary flag (or the final full-NSE flag) is enabled.
 
 ```bash
-trade-research plan-yfinance-nse-canary --symbol-limit 1 --dry-run
-trade-research plan-yfinance-nse-canary --symbol-limit 1 --enqueue
-trade-research run-yfinance-daily-worker --claim-size 1 --worker-id phase8-nse-1
+trade-data plan-yfinance-nse-canary --symbols REVIEWED_SYMBOL.NS --symbol-limit 1 --session-count 5 --dry-run
+trade-data plan-yfinance-nse-canary --symbols REVIEWED_SYMBOL.NS --symbol-limit 1 --session-count 5 --enqueue
+trade-data run-yfinance-daily-worker --claim-size 1 --worker-id phase8-nse-1
 ```
 
 After each stage, inspect the work queue, provider request log, adaptive-rate

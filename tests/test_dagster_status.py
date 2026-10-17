@@ -3,7 +3,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from trade_research.dagster.status import (
+from trade_data.dagster.status import (
     _instigator_name,
     _readonly_sqlite,
     read_dagster_schedule_statuses,

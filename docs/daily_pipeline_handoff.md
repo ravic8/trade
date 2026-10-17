@@ -216,14 +216,14 @@ minimum-history rule.
 ## Key Code Paths
 
 ```text
-src/trade_research/dagster/daily_assets.py
-src/trade_research/dagster/definitions.py
-src/trade_research/pipelines/
-src/trade_research/pipelines/daily_ohlcv.py
-src/trade_research/pipelines/daily_pipeline_health.py
-src/trade_research/validation/daily_pipeline.py
-src/trade_research/validation/processed_datasets.py
-src/trade_research/storage/timescale.py
+src/trade_data/dagster/daily_assets.py
+src/trade_data/dagster/definitions.py
+src/trade_data/pipelines/
+src/trade_data/pipelines/daily_ohlcv.py
+src/trade_data/pipelines/daily_pipeline_health.py
+src/trade_data/validation/daily_pipeline.py
+src/trade_data/validation/processed_datasets.py
+src/trade_data/storage/timescale.py
 scripts/validate_upstox_raw_to_processed.py
 ```
 
@@ -262,7 +262,7 @@ Focused checks used after the latest implementation:
 
 ```bash
 .venv/bin/python -m pytest tests/test_daily_ohlcv_pipeline.py tests/test_dagster_daily_assets.py tests/test_dagster_resources.py tests/test_daily_pipeline_health.py tests/test_timescale_feature_storage.py tests/test_timescale_target_storage.py
-.venv/bin/python -m ruff check src/trade_research/pipelines src/trade_research/dagster/daily_assets.py src/trade_research/dagster/definitions.py src/trade_research/cli.py src/trade_research/validation/daily_pipeline.py src/trade_research/storage/timescale.py tests/test_daily_ohlcv_pipeline.py tests/test_dagster_daily_assets.py tests/test_daily_pipeline_health.py tests/test_timescale_feature_storage.py
+.venv/bin/python -m ruff check src/trade_data/pipelines src/trade_data/dagster/daily_assets.py src/trade_data/dagster/definitions.py src/trade_data/cli.py src/trade_data/validation/daily_pipeline.py src/trade_data/storage/timescale.py tests/test_daily_ohlcv_pipeline.py tests/test_dagster_daily_assets.py tests/test_daily_pipeline_health.py tests/test_timescale_feature_storage.py
 git diff --check
 ```
 

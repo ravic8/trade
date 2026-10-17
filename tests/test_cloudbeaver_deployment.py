@@ -15,11 +15,11 @@ def test_cloudbeaver_is_internal_pinned_and_hardened() -> None:
     service = compose["services"]["cloudbeaver"]
 
     assert service["image"] == "${PROD_CLOUDBEAVER_IMAGE:-dbeaver/cloudbeaver:26.1.2}"
-    assert "ports" not in service
+    assert service["ports"] == ["127.0.0.1:${PROD_CLOUDBEAVER_PORT:-8978}:8978"]
     assert service["expose"] == ["8978"]
     assert service["networks"] == ["analytics_access"]
     assert compose["networks"]["analytics_access"]["internal"] is True
-    assert "analytics_access" in compose["services"]["web"]["networks"]
+    assert "web" not in compose["services"]
     assert "analytics_access" in compose["services"]["postgres"]["networks"]
     assert service["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert service["environment"] == {
@@ -58,15 +58,13 @@ def test_cloudbeaver_connection_is_shared_without_credentials() -> None:
     assert permissions == {"trade-analytics-postgres": ["user"]}
 
 
-def test_caddy_routes_only_the_cloudbeaver_hostname_and_drops_identity_headers() -> None:
-    caddyfile = (REPOSITORY_ROOT / "deploy/caddy/Caddyfile").read_text(encoding="utf-8")
-
-    host_match = caddyfile.index("@cloudbeaver host {$CLOUDBEAVER_HOST:sql.example.com}")
-    proxy = caddyfile.index("reverse_proxy cloudbeaver:8978")
-    app_api = caddyfile.index("handle /api/*")
-    assert host_match < proxy < app_api
-    assert "header_up -Cf-Access-Authenticated-User-Email" in caddyfile
-    assert "header_up -Cf-Access-Jwt-Assertion" in caddyfile
+def test_backend_api_is_loopback_only_and_independent_from_frontend_proxy() -> None:
+    compose = yaml.safe_load((REPOSITORY_ROOT / "docker-compose.prod.yml").read_text())
+    assert compose["services"]["api"]["ports"] == [
+        "127.0.0.1:${PROD_API_PORT:-8000}:8000"
+    ]
+    assert "web" not in compose["services"]
+    assert not (REPOSITORY_ROOT / "deploy/caddy/Caddyfile").exists()
 
 
 def test_deploy_installs_connection_policy_into_persistent_workspace() -> None:
@@ -79,7 +77,7 @@ def test_deploy_installs_connection_policy_into_persistent_workspace() -> None:
     assert '"$cloudbeaver_connections_dir/data-sources-permissions.json"' in script
     assert "cloudbeaver_policy_changed" in script
     assert '"${compose[@]}" restart cloudbeaver' in script
-    assert 'curl -fsS -H "Host: $cloudbeaver_host"' in script
+    assert 'curl -fsS "$cloudbeaver_health_url"' in script
 
 
 def test_backup_stops_cloudbeaver_before_archiving_workspace() -> None:

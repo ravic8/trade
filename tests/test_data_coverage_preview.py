@@ -2,9 +2,9 @@ from datetime import date
 
 import pytest
 
-import trade_research.data.coverage as coverage_module
-from trade_research.config import Settings
-from trade_research.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
+import trade_data.data.coverage as coverage_module
+from trade_data.config import Settings
+from trade_data.data.coverage import CoveragePreviewInput, build_daily_coverage_preview
 
 
 class FakeCoverageStore:

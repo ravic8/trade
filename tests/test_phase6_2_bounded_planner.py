@@ -6,9 +6,9 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
-from trade_research import cli
-from trade_research.config import Settings
-from trade_research.pipelines import yfinance_work_queue
+from trade_data import cli
+from trade_data.config import Settings
+from trade_data.pipelines import yfinance_work_queue
 
 
 def test_scheduled_planner_fails_closed_when_no_exchange_is_enabled(monkeypatch) -> None:

@@ -1,0 +1,15 @@
+# Merge with docker-compose.yml. Requires Compose 2.24.4+ for !override.
+# The application project consumes infrastructure; it does not provision it.
+services:
+  api:
+    env_file: !override
+      - path: .env.external
+        required: true
+    depends_on: !reset {}
+    environment:
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL for external PostgreSQL}
+      REDIS_URL: ${COMPOSE_REDIS_URL:?Set COMPOSE_REDIS_URL for external Redis}
+  postgres:
+    profiles: [local-infrastructure]
+  redis:
+    profiles: [local-infrastructure]

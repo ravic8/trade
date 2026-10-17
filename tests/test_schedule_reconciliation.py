@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from trade_research.config import Settings
-from trade_research.dagster.reconcile import (
+from trade_data.config import Settings
+from trade_data.dagster.reconcile import (
     apply_schedule_reconciliation_plan,
     build_schedule_reconciliation_plan,
     recent_daemon_heartbeats,

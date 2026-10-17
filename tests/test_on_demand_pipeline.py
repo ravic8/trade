@@ -4,8 +4,8 @@ from uuid import UUID
 import pandas as pd
 import pytest
 
-from trade_research.data.coverage import CoveragePreviewInput
-from trade_research.data.on_demand import run_daily_ohlcv_request
+from trade_data.data.coverage import CoveragePreviewInput
+from trade_data.data.on_demand import run_daily_ohlcv_request
 
 
 class FakeExecutionStore:

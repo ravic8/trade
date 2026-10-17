@@ -1,9 +1,9 @@
 ---
-document_status: superseded
+document_status: historical
 last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
 last_verified_date: 2026-07-24
 owner: trade-research-platform
-replaced_by: docs/research_platform_milestone_execution_plan.md
+replaced_by: docs/current_state.md
 ---
 
 # On-Demand Data Pipeline MVP
@@ -108,10 +108,10 @@ workflow should stay daily OHLCV-focused.
 Existing pieces to reuse:
 
 ```text
-src/trade_research/data/upstox.py
+src/trade_data/data/upstox.py
   UpstoxHistoricalDataProvider.fetch_daily_candles()
 
-src/trade_research/storage/timescale.py
+src/trade_data/storage/timescale.py
   ohlcv_daily
   provider_instruments
   ingestion_runs
@@ -119,7 +119,7 @@ src/trade_research/storage/timescale.py
   data_quality_audits
   TimescaleStore.upsert_daily_ohlcv()
 
-src/trade_research/pipelines/daily_ohlcv.py
+src/trade_data/pipelines/daily_ohlcv.py
   existing batch daily OHLCV fetch planning, auditing, and retry concepts
 
 apps/web
@@ -152,7 +152,7 @@ This audit maps the current repo to the MVP contract before adding feature code.
 #### Upstox daily fetch
 
 ```text
-src/trade_research/data/upstox.py
+src/trade_data/data/upstox.py
 ```
 
 Reusable:
@@ -181,7 +181,7 @@ Add async/bounded parallel provider later only if Phase 5 requires it.
 #### Daily OHLCV batch pipeline
 
 ```text
-src/trade_research/pipelines/daily_ohlcv.py
+src/trade_data/pipelines/daily_ohlcv.py
 ```
 
 Reusable:
@@ -223,7 +223,7 @@ symbol-level status, and low-latency interaction need a smaller command path.
 #### CLI commands
 
 ```text
-src/trade_research/cli.py
+src/trade_data/cli.py
 ```
 
 Reusable:
@@ -261,7 +261,7 @@ Call package functions or new package-level services directly.
 #### Timescale/Postgres storage
 
 ```text
-src/trade_research/storage/timescale.py
+src/trade_data/storage/timescale.py
 ```
 
 Reusable tables:
@@ -329,7 +329,7 @@ and retry visibility after the first vertical slice.
 #### Market calendar
 
 ```text
-src/trade_research/market_calendar.py
+src/trade_data/market_calendar.py
 ```
 
 Reusable:
@@ -366,7 +366,7 @@ path unless explicitly requested later.
 #### FastAPI app
 
 ```text
-src/trade_research/api/app.py
+src/trade_data/api/app.py
 ```
 
 Reusable patterns:
@@ -400,7 +400,7 @@ MVP decision:
 Add /api/data endpoints in the existing app or a small router module imported by
 the app if app.py becomes too large.
 Use package services, not CLI subprocesses.
-Use response_model schemas in src/trade_research/schemas.py unless the schema
+Use response_model schemas in src/trade_data/schemas.py unless the schema
 file becomes too broad, in which case introduce a focused API schema module.
 ```
 

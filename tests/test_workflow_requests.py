@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import create_engine
 
-from trade_research.operations import WorkflowRequestStore
-from trade_research.storage.timescale import metadata
+from trade_data.operations import WorkflowRequestStore
+from trade_data.storage.timescale import metadata
 
 
 def _store(tmp_path) -> WorkflowRequestStore:

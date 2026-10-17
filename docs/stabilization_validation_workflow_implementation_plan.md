@@ -1,9 +1,9 @@
 ---
-document_status: proposed
+document_status: historical
 last_verified_commit: afbc5dc1f78803752d013a6db99a76293d01d61e
 last_verified_date: 2026-07-24
 owner: trade-research-platform
-replaced_by: null
+replaced_by: docs/current_state.md
 ---
 
 # Trade Research Platform Stabilization, Validation, and Workflow Implementation Plan
@@ -90,7 +90,7 @@ a replacement for PostgreSQL or object storage.
 
 The implementation starts from these verified repository facts:
 
-- All Dagster schedules in `src/trade_research/dagster/definitions.py` default
+- All Dagster schedules in `src/trade_data/dagster/definitions.py` default
   to `STOPPED`. Repository configuration does not prove that the production
   Ubuntu schedules are enabled or healthy.
 - The daily yfinance planner and worker exist and use durable PostgreSQL work,
@@ -374,7 +374,7 @@ Add a dedicated migration path:
 clickhouse/
   migrations/
   README.md
-src/trade_research/storage/clickhouse/
+src/trade_data/storage/clickhouse/
   client.py
   repositories/
   health.py
@@ -759,7 +759,7 @@ Research-candidate status is not authorization for paper or live trading.
 New work must not expand the existing `api/app.py` monolith. Introduce:
 
 ```text
-src/trade_research/api/
+src/trade_data/api/
   routers/
     workflows.py
     features.py
@@ -777,7 +777,7 @@ src/trade_research/api/
 Storage work is split by domain behind transitional facades:
 
 ```text
-src/trade_research/storage/
+src/trade_data/storage/
   postgres/
     workflows.py
     market_data.py

@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from trade_research.validation.coverage import (
+from trade_data.validation.coverage import (
     DateWindow,
     evaluate_eligible_session_coverage,
 )

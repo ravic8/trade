@@ -8,9 +8,11 @@ import pytest
 
 
 @pytest.mark.parametrize("dagster_running", [False, True])
+@pytest.mark.parametrize("daemon_state", ["absent", "idle", "busy"])
 def test_deploy_refreshes_only_an_already_running_dagster_webserver(
     tmp_path: Path,
     dagster_running: bool,
+    daemon_state: str,
 ) -> None:
     repository_root = Path(__file__).resolve().parents[1]
     fake_bin = tmp_path / "bin"
@@ -26,6 +28,13 @@ def test_deploy_refreshes_only_an_already_running_dagster_webserver(
         fake_bin / "docker",
         """#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$*" == *"ps --status running -q dagster-daemon"* && "$FAKE_DAEMON_STATE" != "absent" ]]; then
+  printf '%s\n' 'fake-daemon-container-id'
+fi
+if [[ "$*" == *"exec -T dagster-daemon python -c"* && "$FAKE_DAEMON_STATE" == "busy" ]]; then
+  printf '%s\n' 'Active Dagster runs must finish before deployment' >&2
+  exit 45
+fi
 if [[ "$*" == *"ps --status running -q dagster-webserver"* ]] && \
    [[ "$FAKE_DAGSTER_RUNNING" == "true" ]]; then
   printf '%s\n' 'fake-dagster-container-id'
@@ -69,7 +78,8 @@ exit 0
                 f"PROD_QDRANT_DATA_DIR={tmp_path / 'qdrant'}",
                 f"PROD_DAGSTER_HOME_DIR={tmp_path / 'dagster-home'}",
                 f"PROD_CLOUDBEAVER_WORKSPACE_DIR={tmp_path / 'cloudbeaver'}",
-                "PROD_WEB_PORT=8081",
+                "PROD_API_PORT=8081",
+                "PROD_CLOUDBEAVER_PORT=8979",
                 "PROD_DAGSTER_WEB_PORT=3300",
             ]
         )
@@ -87,34 +97,42 @@ exit 0
             "FAKE_DOCKER_LOG": str(docker_log),
             "FAKE_CURL_LOG": str(curl_log),
             "FAKE_DAGSTER_RUNNING": str(dagster_running).lower(),
+            "FAKE_DAEMON_STATE": daemon_state,
         }
     )
 
-    subprocess.run(
+    completed = subprocess.run(
         ["bash", str(repository_root / "deploy/deploy.sh")],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         env=env,
     )
 
     docker_calls = docker_log.read_text(encoding="utf-8")
+    if daemon_state == "busy":
+        assert completed.returncode == 45
+        assert "Active Dagster runs" in completed.stderr
+        assert "stop dagster-daemon" not in docker_calls
+        assert "alembic" not in docker_calls
+        assert "up -d --no-deps api dagster-daemon" not in docker_calls
+        return
+    assert completed.returncode == 0, completed.stderr
+    assert ("stop dagster-daemon" in docker_calls) is (daemon_state == "idle")
     curl_calls = curl_log.read_text(encoding="utf-8")
     admin_build = "--profile admin build dagster-webserver"
-    admin_recreate = (
-        "--profile admin up -d --no-deps --force-recreate dagster-webserver"
-    )
+    admin_recreate = "--profile admin up -d --no-deps --force-recreate dagster-webserver"
 
     assert admin_build not in docker_calls
     assert (admin_recreate in docker_calls) is dagster_running
     assert "restart cloudbeaver" in docker_calls
     assert ("http://127.0.0.1:3300" in curl_calls) is dagster_running
     assert "http://localhost:8081/api/health" in curl_calls
-    assert "-H Host: sql.example.com http://localhost:8081/" in curl_calls
+    assert "http://localhost:8979/" in curl_calls
 
     docker_call_lines = docker_calls.splitlines()
-    build_index = _call_index(docker_call_lines, "build api web")
-    postgres_start_index = _call_index(docker_call_lines, "up -d postgres")
+    build_index = _call_index(docker_call_lines, "build api")
+    postgres_start_index = _call_index(docker_call_lines, "up -d --no-recreate postgres")
     postgres_ready_index = _call_index(
         docker_call_lines,
         "exec -T postgres pg_isready",
@@ -123,27 +141,21 @@ exit 0
         docker_call_lines,
         "run --rm --no-deps api alembic -c /app/alembic.ini upgrade head",
     )
-    minio_start_index = _call_index(
-        docker_call_lines,
-        "up -d --no-deps minio",
-    )
-    minio_init_index = _call_index(
-        docker_call_lines,
-        "--exit-code-from minio-init minio-init",
-    )
-    application_start_index = _call_index(
-        docker_call_lines,
-        "up -d --remove-orphans",
-    )
+    reconciliation_index = _call_index(docker_call_lines, "reconcile_dagster_schedules.py")
+    application_start_index = _call_index(docker_call_lines, "up -d --no-deps api dagster-daemon")
     assert (
         build_index
         < postgres_start_index
         < postgres_ready_index
         < migration_index
-        < minio_start_index
-        < minio_init_index
+        < reconciliation_index
         < application_start_index
     )
+    assert "pull minio" not in docker_calls
+    assert "--remove-orphans" not in docker_calls
+    assert (tmp_path / "dagster-home" / "workspace.yaml").read_text() == (
+        repository_root / "dagster_home/workspace.yaml"
+    ).read_text()
 
 
 def test_deploy_aborts_before_application_replacement_when_migration_fails(
@@ -207,7 +219,7 @@ exit 0
     assert completed.returncode == 42
     docker_calls = docker_log.read_text(encoding="utf-8")
     assert "run --rm --no-deps api alembic" in docker_calls
-    assert "up -d --remove-orphans" not in docker_calls
+    assert "up -d --no-deps api dagster-daemon" not in docker_calls
 
 
 def test_deploy_reexecutes_synchronized_script_after_revision_change(
@@ -293,19 +305,18 @@ exit 0
         env=env,
     )
 
-    assert completed.stdout.count(
-        "restarting deployment with synchronized script at new-revision"
-    ) == 1
+    assert (
+        completed.stdout.count("restarting deployment with synchronized script at new-revision")
+        == 1
+    )
     docker_calls = docker_log.read_text(encoding="utf-8")
-    assert docker_calls.count("build api web\n") == 1
-    assert docker_calls.count("up -d --remove-orphans") == 1
+    assert docker_calls.count("build api\n") == 1
+    assert docker_calls.count("up -d --no-deps api dagster-daemon") == 1
 
 
 def test_deploy_workflow_syncs_main_before_invoking_deploy_script() -> None:
     repository_root = Path(__file__).resolve().parents[1]
-    workflow = (repository_root / ".github/workflows/deploy.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (repository_root / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
     fetch = workflow.index("git fetch origin main")
     pull = workflow.index("git pull --ff-only origin main")
@@ -344,6 +355,7 @@ exit 0
             [
                 "PROD_FILING_ENABLED=false",
                 "PROD_OTEL_ENABLED=false",
+                "PROD_UPGRADE_INFRASTRUCTURE=true",
                 "PROD_MINIO_IMAGE=minio/minio:RELEASE.2025-08-01T00-00-00Z",
                 f"PROD_DEPLOY_STATE_DIR={tmp_path / 'deploy-state'}",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
@@ -381,7 +393,7 @@ exit 0
     docker_calls = docker_log.read_text(encoding="utf-8")
     assert "image tag sha256:fake-minio-image trade-production-minio:rollback" in docker_calls
     assert "pull minio minio-init" not in docker_calls
-    assert "up -d --remove-orphans" not in docker_calls
+    assert "up -d --no-deps api dagster-daemon" not in docker_calls
 
 
 def test_deploy_restores_previous_minio_when_candidate_is_unhealthy(
@@ -424,6 +436,7 @@ exit 0
             [
                 "PROD_FILING_ENABLED=false",
                 "PROD_OTEL_ENABLED=false",
+                "PROD_UPGRADE_INFRASTRUCTURE=true",
                 "PROD_MINIO_IMAGE=minio/minio:RELEASE.2025-09-01T00-00-00Z",
                 f"PROD_DEPLOY_STATE_DIR={tmp_path / 'deploy-state'}",
                 f"PROD_TRADE_DATA_DIR={tmp_path / 'data'}",
@@ -462,14 +475,16 @@ exit 0
     assert "MinIO rollback succeeded" in completed.stdout
     docker_calls = docker_log.read_text(encoding="utf-8")
     assert "up -d --no-deps --force-recreate minio" in docker_calls
-    assert "up -d --remove-orphans" not in docker_calls
+    assert "up -d --no-deps api dagster-daemon" not in docker_calls
 
 
 def test_api_image_contains_alembic_runtime_files() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     dockerfile = (repository_root / "Dockerfile.api").read_text(encoding="utf-8")
 
-    install = dockerfile.index("python -m pip install .")
+    install = dockerfile.index("uv sync --frozen --no-dev --no-editable")
+    assert dockerfile.index("COPY pyproject.toml uv.lock README.md ./") < install
+    assert "/uv.lock" not in (repository_root / ".dockerignore").read_text()
     source_copy = dockerfile.index("COPY src ./src")
     config_copy = dockerfile.index("COPY alembic.ini ./")
     migrations_copy = dockerfile.index("COPY migrations ./migrations")
@@ -480,14 +495,13 @@ def test_api_image_contains_alembic_runtime_files() -> None:
     assert "FROM python:3.11-slim AS dependencies" in dockerfile
 
 
-def test_web_image_uses_an_npm_build_cache() -> None:
+def test_backend_image_has_no_frontend_checkout_or_node_build_dependency() -> None:
     repository_root = Path(__file__).resolve().parents[1]
-    dockerfile = (repository_root / "Dockerfile.web").read_text(encoding="utf-8")
-
-    assert "--mount=type=cache,target=/root/.npm" in dockerfile
-    assert dockerfile.index("COPY apps/web/package*.json ./") < dockerfile.index(
-        "COPY apps/web/ ./"
-    )
+    dockerfile = (repository_root / "Dockerfile.api").read_text()
+    assert "apps/web" not in dockerfile
+    assert "npm" not in dockerfile
+    assert not (repository_root / "apps/web").exists()
+    assert not (repository_root / "Dockerfile.web").exists()
 
 
 def test_deploy_reports_build_migration_and_total_timings() -> None:
@@ -496,7 +510,8 @@ def test_deploy_reports_build_migration_and_total_timings() -> None:
 
     assert "production image build completed in" in script
     assert "database migrations completed in" in script
-    assert "trade-research phase3-readiness" in script
+    assert "reconcile_dagster_schedules.py" in script
+    assert "Recent daemon heartbeats remain" in script
     assert "deployment completed in" in script
 
 
@@ -504,20 +519,16 @@ def test_prod_compose_reuses_one_api_image_for_python_services() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     compose = (repository_root / "docker-compose.prod.yml").read_text(encoding="utf-8")
 
-    assert compose.count("image: ${PROD_API_IMAGE:-trade-research-api:local}") == 5
+    assert compose.count("image: ${PROD_API_IMAGE:-trade-data-api:local}") == 4
 
 
 def test_production_minio_kms_environment_is_opt_in() -> None:
     repository_root = Path(__file__).resolve().parents[1]
-    compose = (repository_root / "docker-compose.prod.yml").read_text(
+    compose = (repository_root / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    kms_overlay = (repository_root / "docker-compose.prod.kms.yml").read_text(encoding="utf-8")
+    managed_kes_overlay = (repository_root / "docker-compose.prod.managed-kes.yml").read_text(
         encoding="utf-8"
     )
-    kms_overlay = (repository_root / "docker-compose.prod.kms.yml").read_text(
-        encoding="utf-8"
-    )
-    managed_kes_overlay = (
-        repository_root / "docker-compose.prod.managed-kes.yml"
-    ).read_text(encoding="utf-8")
     deploy = (repository_root / "deploy/deploy.sh").read_text(encoding="utf-8")
 
     assert "MINIO_KMS_SERVER:" not in compose
@@ -528,7 +539,7 @@ def test_production_minio_kms_environment_is_opt_in() -> None:
     assert 'docker-compose.prod.managed-kes.yml")' in deploy
     assert 'docker-compose.prod.kms.yml")' in deploy
     assert 'deploy/managed-kes.sh" prepare' in deploy
-    assert 'up -d --no-deps kes' in deploy
+    assert "up -d --no-deps kes" in deploy
 
 
 def _call_index(calls: list[str], fragment: str) -> int:

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 APP_DIR="${TRADE_APP_DIR:-/opt/trade/app}"
 ENV_FILE="${TRADE_ENV_FILE:-/opt/trade/.env}"
@@ -60,11 +61,9 @@ compose=(docker compose --env-file "$ENV_FILE" -f "$APP_DIR/docker-compose.prod.
 db_name="${PROD_POSTGRES_DB:-trade_research}"
 db_user="${PROD_POSTGRES_USER:-trade}"
 
-filing_worker_was_running=false
 dagster_daemon_was_running=false
 dagster_webserver_was_running=false
 cloudbeaver_was_running=false
-qdrant_was_running=false
 minio_was_running=false
 clickhouse_was_running=false
 
@@ -87,25 +86,9 @@ restart_quiesced_services() {
       status=$?
     fi
   fi
-  if [[ "$qdrant_was_running" == true ]]; then
-    log "restarting Qdrant after backup"
-    if "${compose[@]}" up -d --no-deps qdrant; then
-      qdrant_was_running=false
-    else
-      status=$?
-    fi
-  fi
-  if [[ "$filing_worker_was_running" == true ]]; then
-    log "restarting filing worker after backup"
-    if "${compose[@]}" up -d filing-worker; then
-      filing_worker_was_running=false
-    else
-      status=$?
-    fi
-  fi
   if [[ "$dagster_daemon_was_running" == true ]]; then
     log "restarting Dagster daemon after backup"
-    if "${compose[@]}" up -d dagster-daemon; then
+    if "${compose[@]}" up -d --no-deps dagster-daemon; then
       dagster_daemon_was_running=false
     else
       status=$?
@@ -113,7 +96,7 @@ restart_quiesced_services() {
   fi
   if [[ "$dagster_webserver_was_running" == true ]]; then
     log "restarting Dagster webserver after backup"
-    if "${compose[@]}" up -d dagster-webserver; then
+    if "${compose[@]}" --profile admin up -d --no-deps dagster-webserver; then
       dagster_webserver_was_running=false
     else
       status=$?
@@ -131,11 +114,8 @@ restart_quiesced_services() {
   return "$status"
 }
 
-if [[ -n "$("${compose[@]}" ps --status running -q filing-worker)" ]]; then
-  log "stopping filing worker before backup"
-  "${compose[@]}" stop filing-worker
-  filing_worker_was_running=true
-fi
+trap restart_quiesced_services EXIT
+
 if [[ -n "$("${compose[@]}" ps --status running -q dagster-daemon)" ]]; then
   log "stopping Dagster daemon before backup"
   "${compose[@]}" stop dagster-daemon
@@ -151,11 +131,6 @@ if [[ -n "$("${compose[@]}" ps --status running -q cloudbeaver)" ]]; then
   "${compose[@]}" stop cloudbeaver
   cloudbeaver_was_running=true
 fi
-if [[ -n "$("${compose[@]}" ps --status running -q qdrant)" ]]; then
-  log "stopping Qdrant before backup"
-  "${compose[@]}" stop qdrant
-  qdrant_was_running=true
-fi
 if [[ -n "$("${compose[@]}" ps --status running -q minio)" ]]; then
   log "stopping MinIO before backup"
   "${compose[@]}" stop minio
@@ -167,14 +142,12 @@ if [[ -n "$("${compose[@]}" --profile research ps --status running -q clickhouse
   clickhouse_was_running=true
 fi
 
-trap restart_quiesced_services EXIT
 
 log "dumping postgres database $db_name"
 "${compose[@]}" exec -T postgres pg_dump -U "$db_user" -d "$db_name" -Fc > "$BACKUP_DIR/postgres.dump"
 
 tar_if_exists "${PROD_TRADE_DATA_DIR:-/opt/trade/data}" "data.tgz"
 tar_if_exists "${PROD_TRADE_ARTIFACTS_DIR:-/opt/trade/artifacts}" "artifacts.tgz"
-tar_if_exists "${PROD_QDRANT_DATA_DIR:-/opt/trade/qdrant}" "qdrant.tgz"
 tar_if_exists "${PROD_DAGSTER_HOME_DIR:-/opt/trade/dagster_home}" "dagster_home.tgz"
 tar_if_exists "${PROD_MINIO_DATA_DIR:-/opt/trade/minio}" "minio.tgz"
 if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == true \
@@ -183,18 +156,25 @@ if [[ "${PROD_RESEARCH_STORAGE_DEPLOY_ENABLED:-false}" == true \
 else
   log "skipping ClickHouse archive because Phase 2 deployment is disabled"
 fi
+# Encryption keys/configuration belong to the stored-data recovery boundary.
+tar_if_exists "${PROD_KES_CONFIG_DIR:-/opt/trade/kes/config}" "kes-config.tgz"
+tar_if_exists "${PROD_KES_CERT_DIR:-/opt/trade/kes/certs}" "kes-certs.tgz"
+tar_if_exists "${PROD_KES_KEY_DIR:-/opt/trade/kes/keys}" "kes-keys.tgz"
+tar_if_exists "${PROD_KES_SECRET_DIR:-/opt/trade/kes/secrets}" "kes-secrets.tgz"
+
 tar_if_exists "${PROD_CLOUDBEAVER_WORKSPACE_DIR:-/opt/trade/cloudbeaver}" "cloudbeaver.tgz"
 
 cat > "$BACKUP_DIR/README.txt" <<'EOF'
-This backup contains the Postgres database dump, the versioned MinIO filing
+This backup contains the Postgres database dump, the versioned daily-data MinIO
 and research object stores, ClickHouse analytical storage when present, the
 CloudBeaver workspace, and selected persistent runtime directories. Mutable
-workflow, analytical, vector-store, object-store, and workspace services are
+workflow, analytical, object-store, and workspace services are
 stopped briefly while their state is archived. Provider
 credentials are stored encrypted in Postgres. Restore of those credentials
 requires the matching PROD_APP_SECRET_KEY from the server environment, which
 is intentionally not copied into this backup. Encrypted MinIO objects likewise
-require the matching external KMS configuration, which is not copied here.
+require the matching KMS configuration and keys. Managed KES directories are
+archived when present; externally managed KMS recovery must be handled separately.
 EOF
 
 (

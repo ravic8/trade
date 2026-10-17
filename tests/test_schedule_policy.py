@@ -1,24 +1,27 @@
-from trade_research.config import Settings
-from trade_research.dagster.schedule_policy import (
+from trade_data.config import Settings
+from trade_data.dagster.schedule_policy import (
     desired_schedule_statuses,
     load_schedule_manifest,
     schedule_policy,
 )
 
 
-def test_schedule_policy_keeps_upstox_daily_research_running() -> None:
-    settings = Settings(
-        _env_file=None,
-        nse_daily_primary_source="upstox",
-        legacy_upstox_nse_enabled=True,
+def test_removed_registration_flags_cannot_enable_non_daily_schedules() -> None:
+    settings = Settings(_env_file=None).model_copy(update={
+        "research_pipelines_enabled": True,
+        "opportunity_analytics_enabled": True,
+        "bigquery_enabled": True,
+        "bigquery_production_sync_enabled": True,
+    })
+    statuses = desired_schedule_statuses(settings)
+    assert all(
+        token not in name
+        for name in statuses
+        for token in ("research", "opportunity", "bigquery", "intraday", "minute")
     )
 
-    statuses = desired_schedule_statuses(settings)
 
-    assert statuses["daily_research_schedule"] == "running"
-
-
-def test_schedule_policy_enables_exchange_targets_from_yfinance_flags() -> None:
+def test_schedule_policy_enables_daily_planners_from_yfinance_flags() -> None:
     settings = Settings(
         _env_file=None,
         yfinance_daily_enabled=True,
@@ -29,11 +32,8 @@ def test_schedule_policy_enables_exchange_targets_from_yfinance_flags() -> None:
 
     statuses = desired_schedule_statuses(settings)
 
-    assert statuses["nse_completed_session_opportunity_targets_schedule"] == "running"
     assert statuses["yfinance_tsx_completed_session_work_planner_schedule"] == "running"
     assert statuses["yfinance_us_completed_session_work_planner_schedule"] == "running"
-    assert statuses["tsx_completed_session_opportunity_targets_schedule"] == "running"
-    assert statuses["us_completed_session_opportunity_targets_schedule"] == "running"
     assert statuses["north_america_daily_yfinance_schedule"] == "stopped"
 
 
@@ -52,7 +52,7 @@ def test_north_america_post_close_planners_follow_exchange_flags() -> None:
 
 
 def test_schedule_policy_metadata_matches_dagster_definitions() -> None:
-    from trade_research.dagster.definitions import defs
+    from trade_data.dagster.definitions import defs
 
     definitions = {schedule.name: schedule for schedule in defs.schedules}
     policies = {
@@ -91,3 +91,23 @@ def test_production_manifest_has_required_operational_fields() -> None:
     assert all(required <= set(row) for row in manifest["schedules"])
     assert all(row["freshness_sla_minutes"] > 0 for row in manifest["schedules"])
     assert all(row["alert_owner"] for row in manifest["schedules"])
+
+
+def test_daily_data_only_policy_does_not_restart_research_or_other_markets() -> None:
+    statuses = desired_schedule_statuses(Settings(
+        _env_file=None,
+        nse_daily_primary_source="yfinance",
+        legacy_upstox_nse_enabled=False,
+        yfinance_daily_enabled=True,
+        yfinance_nse_enabled=True,
+        materialized_exchange_sessions_enabled=True,
+        research_pipelines_enabled=False,
+        opportunity_analytics_enabled=False,
+    ))
+    assert {name for name, state in statuses.items() if state == "running"} == {
+        "yfinance_daily_work_planner_schedule",
+        "yfinance_nse_completed_session_work_planner_schedule",
+        "yfinance_daily_work_worker_schedule",
+        "nse_universe_refresh_schedule",
+        "nse_exchange_sessions_schedule",
+    }

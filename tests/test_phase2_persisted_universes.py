@@ -4,9 +4,9 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
-from trade_research.config import Settings
-from trade_research.schemas import Symbol
-from trade_research.universe.persisted import (
+from trade_data.config import Settings
+from trade_data.schemas import Symbol
+from trade_data.universe.persisted import (
     PersistedUniverseService,
     UniverseInstrumentState,
     UniverseValidationPolicy,
