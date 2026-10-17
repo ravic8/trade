@@ -421,7 +421,7 @@ execution remain disabled. Repository separation does not delete historical data
   without repairs, confirming that normal ingestion preserves replica precision.
   The next automatic tick (`a86e55d4-727c-41ae-978a-fa668276dbfb`) succeeded:
   **100 tasks succeeded, zero failed/retried/terminal**, ingestion run
-  `434d2ee8-dd6b-4734-8515-858c452e078a`. Retry timers for the 100 tasks affected
+  `434d2ee8-dd6b-4734-8515-858c452e078a`. Retry timers for the 196 tasks affected
   by the now-fixed quality insert were resumed without clearing their history.
 - Production browser checks use the real gateway/API on desktop and mobile.
   Coverage, daily candle chart, jobs and unauthorized Settings behavior passed
