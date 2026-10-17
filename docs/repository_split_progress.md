@@ -1,6 +1,7 @@
 # Repository split: implementation progress
 
-Updated 2026-10-16. Implementation has started; the split is not complete.
+Updated 2026-10-17. Source extraction and production cutover are complete;
+see Batch 7 for acceptance and the continuing acquisition backlog.
 
 ## Batch 1 — daily import boundaries (completed locally)
 
@@ -339,11 +340,112 @@ Updated 2026-10-16. Implementation has started; the split is not complete.
   log and new-image acceptance proof are recorded privately under
   output/repository_split_implementation_2026-10-16/batch06/.
 
-## Remaining acceptance
+## Batch 7 — recovery and production cutover (17 October 2026)
 
-The daily-only source cleanup is complete. Remaining work is full MinIO/KES and
-ClickHouse recovery acceptance, independent frontend/gateway/auth integration and
-the coordinated, bounded NSE production cutover. Preserve historical stored data
-and encryption keys throughout. The source has not been deployed; the server still
-runs the repaired NSE image. Do not treat the old monolithic frontend as compatible
-with the reduced backend until the coordinated frontend cutover is verified.
+The daily backend and independent frontend now serve production. The API and
+Dagster daemon use `trade_data`; the frontend is deployed as the independent
+`trade-web` Compose project. The existing loopback gateway on port 8081 and
+Cloudflare routing remain compatible, including the separate SQL-console host.
+Exactly five current-origin NSE schedules are running. TSX/US and legacy Upstox
+execution remain disabled. Repository separation does not delete historical data.
+
+### Verified release
+
+- **533 backend tests passed, six service integration tests skipped locally**,
+  with **72.71% coverage**. CI separately exercises real PostgreSQL/Timescale,
+  Redis, ClickHouse and encrypted MinIO. Ruff, the mypy contract/validation
+  boundary, documentation checks and production Compose checks pass.
+- Fixed ClickHouse's unbounded batch-verification scan by filtering immutable
+  replacement-key scope before FINAL and filtering mutable run lineage afterward.
+  Per-query memory and thread bounds keep real reconciliation within the server's
+  4 GB ClickHouse limit.
+- Disabled high-volume diagnostic collectors and detached their existing tables
+  without deleting files. The large trace/text/metric logs had exhausted server
+  memory and blocked ordinary business queries. User data remains attached.
+- Explicitly round analytical Decimal(20,8) prices before insertion. The driver
+  previously truncated extra digits while PostgreSQL's audit rounded them. The
+  regression reproduces the actual historical replay values.
+- Deduplicate quality outcome IDs within a bulk upsert, retaining sequential
+  last-observation semantics. Overlapping queue windows previously caused
+  PostgreSQL's ON CONFLICT cardinality error and a whole batch retry. A real
+  PostgreSQL integration regression covers repeated overlapping observations.
+- Fixed fresh-setup copying of uv.lock, idle yfinance configuration, and external
+  acceptance handling of optional Compose volume maps. MinIO's old published
+  images are unavailable; fresh builds use pinned upstream community source.
+  Existing production MinIO/KES images are preserved under explicit cached tags
+  and in a private Docker image archive.
+
+### Storage and data acceptance
+
+- A fresh private pre-cutover PostgreSQL dump is 2,769,399,540 bytes, SHA-256
+  `a1a7a4f05e14399dae05ff842c27af0b72eaeea7801c597deca22deca48f6a49`.
+  The earlier matching-schema full backup restored successfully in Batch 6.
+- An isolated recovery of the complete MinIO/KES archive verified **six buckets,
+  882 object versions and 339 encrypted versions**, including versioning, delete
+  markers, byte digests and encryption-key recovery. All **12 ClickHouse user
+  tables** matched their source canonical counts/digests. Diagnostic logs were
+  retained on the source volume and intentionally excluded from user-data restore.
+  All disposable clone containers, volumes and networks were removed.
+- The serialized pre-worker audit reconciled **124 monthly partitions** containing
+  **4,450,979 accepted NSE/yfinance daily rows** in both databases. All business
+  digests matched. Recent replica repair corrected **46,246** rows affected by
+  the previous precision behavior; no authoritative rows were deleted.
+- Stored accepted history spans **18 July 2016–16 October 2026**, across **2,597
+  instruments**. The latest session has **2,554** eligible active instruments with
+  accepted data against **2,606** eligible active instruments. This is coverage
+  evidence, not a claim of complete ten-year history for every stock.
+- Bounded real refresh of RELIANCE.NS/TCS.NS succeeded (four daily rows). The
+  incremental planner rerun generated zero work. A separate RELIANCE.NS January
+  2018 historical replay succeeded (22 rows), with raw-object persistence and
+  PostgreSQL/ClickHouse verification. The fixed precision release repeated both.
+- Requeued **75,349** tasks attributable to verified old MinIO HeadObject failures
+  or ClickHouse memory errors, limited to active NSE instruments with accepted
+  history and current acquisition windows. Attempts and error fields were
+  preserved; exact before-state rows are privately archived. Provider exceptions,
+  inactive instruments and expired windows were excluded. The historical queue
+  continues in production and is not expected to drain during release acceptance.
+
+### Independent repositories and gateway
+
+- Private repositories have initial commits and remotes:
+  [trade-web](https://github.com/ravic8/trade-web),
+  [trade-research](https://github.com/ravic8/trade-research),
+  [trade-fundamentals](https://github.com/ravic8/trade-fundamentals), and
+  [trade-market-experiments](https://github.com/ravic8/trade-market-experiments).
+  Web and research CI passed independently. The other two hold inert archives.
+- The first fixed automatic worker tick processed 100 tasks: **98 succeeded**
+  and two SAB.NS windows were explicitly quarantined for invalid provider candles.
+  Its **696 validated rows** reconciled by count/digest. Dagster reports this batch
+  as degraded/failure because of those terminal exceptions; it is not hidden as
+  an all-success tick. A subsequent serialized audit of August–October passed
+  without repairs, confirming that normal ingestion preserves replica precision.
+- Production browser checks use the real gateway/API on desktop and mobile.
+  Coverage, daily candle chart, jobs and unauthorized Settings behavior passed
+  without mocks or JavaScript errors. API health and the SQL-console route returned
+  200; admin access returned 403 without identity and 200 for an authorized identity.
+- Backend image/configuration, source hashes, original container specifications,
+  environment/workspace backups and old application images remain recoverable.
+  The old frontend is retained stopped as a gateway rollback option. Candidate
+  services are removed after final acceptance. lens_fa/nifty_stream are untouched.
+
+### Release evidence and rollback
+
+Private local evidence is under
+`output/repository_split_implementation_2026-10-17/batch07/`; the server checkpoint
+is `/opt/trade/maintenance/20261017-daily-cutover-20f0a42a1344`. These paths contain
+sensitive recovery material and are excluded from Git.
+
+The server's `production-release.json` records the exact application image ID and
+release tag. `api.inspect.private.json`, `dagster-daemon.inspect.private.json`,
+`web.inspect.private.json`, `.env.before` and `workspace.yaml.before` retain the
+previous application configuration. Rollback stops the daemon between runs,
+restores the previous image/environment/workspace and reconciles only the five
+saved NSE schedules. Stop the independent frontend before restarting the retained
+old gateway on port 8081. Application rollback requires no database downgrade or
+stored-data deletion. Keep private storage backups, keys and immutable image
+archives together; never roll back or rebuild encryption keys from source alone.
+
+Automatic deployment is held during this coordinated cutover and is re-enabled
+after the merged source passes CI. The backend source checkout is synchronized
+with main; frontend deployment source remains independent. Future backend builds
+use revision tags unless the operator explicitly pins an image.

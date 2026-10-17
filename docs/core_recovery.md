@@ -33,3 +33,19 @@ application migrations, snapshot concurrency or production recovery time.
 exercise isolated core recovery, schema upgrades and volume retention. Current
 execution evidence and outstanding checks are tracked in
 [the implementation journal](repository_split_progress.md).
+
+## Storage image reproducibility
+
+The former MinIO server/client Docker Hub and Quay references are unavailable.
+Local Compose and new production defaults build the preserved community releases
+from immutable upstream commits in `minio/Dockerfile.minio` and
+`minio/Dockerfile.mc`. These builds preserve upstream AGPL license files. Existing
+production storage is not upgraded as part of the application split. Explicitly
+configured cached images remain supported; archive them with `docker save`,
+record their immutable IDs and retain private backups outside the server.
+
+The 17 October cutover checkpoint includes a private image archive for the exact
+MinIO and KES images used by the successful encrypted recovery rehearsal. KES
+remains operator-managed; preserve that archive and its configuration, certificates
+and key files together. Changing image defaults cannot reconstruct encryption keys.
+Upstream source: [MinIO container instructions](https://github.com/minio/minio/blob/master/docs/docker/README.md).

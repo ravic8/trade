@@ -1,7 +1,7 @@
 ---
 document_status: current
-last_verified_commit: 32cac48a91324483253b9ab054c5c97cb4aab04e
-last_verified_date: 2026-10-16
+last_verified_commit: 312680b274bb895f9307bc42929ace49a39fb29c
+last_verified_date: 2026-10-17
 owner: trade-data
 replaced_by: null
 ---
