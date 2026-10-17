@@ -49,6 +49,17 @@ def test_yfinance_primary_requires_both_nse_execution_flags() -> None:
         )
 
 
+def test_yfinance_primary_can_be_configured_with_all_execution_disabled() -> None:
+    settings = Settings(
+        _env_file=None,
+        nse_daily_primary_source="yfinance",
+        yfinance_daily_enabled=False,
+        yfinance_nse_enabled=False,
+    )
+    assert settings.nse_daily_primary_source == "yfinance"
+    assert not settings.yfinance_daily_enabled
+
+
 def test_provider_comparison_matches_shared_symbol_sessions_only() -> None:
     sessions = [date(2026, 7, day) for day in (13, 14, 15)]
     upstox = _candles(["AAA", "BBB"], sessions)

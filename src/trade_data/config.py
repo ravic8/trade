@@ -212,8 +212,10 @@ class Settings(BaseSettings):
             > self.exchange_session_maximum_open_days_per_year
         ):
             raise ValueError("exchange session open-day settings must satisfy minimum <= maximum")
-        if self.nse_daily_primary_source == "yfinance" and not (
-            self.yfinance_daily_enabled and self.yfinance_nse_enabled
+        if (
+            self.nse_daily_primary_source == "yfinance"
+            and (self.yfinance_daily_enabled or self.yfinance_nse_enabled)
+            and not (self.yfinance_daily_enabled and self.yfinance_nse_enabled)
         ):
             raise ValueError(
                 "NSE yfinance primary requires YFINANCE_DAILY_ENABLED and YFINANCE_NSE_ENABLED"
