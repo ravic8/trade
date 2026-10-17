@@ -109,7 +109,7 @@ def prepare_yfinance_batch(
     )
     if not validation.valid and not quarantine_invalid_instruments:
         raise MarketDataValidationError(validation)
-    rejected_instruments = {candle.instrument_id for candle in validation.rejected}
+    rejected_instruments = validation.invalid_instrument_ids
     quarantined_symbols = {
         candle.provider_symbol for candle in candles if candle.instrument_id in rejected_instruments
     }

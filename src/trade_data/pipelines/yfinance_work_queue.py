@@ -1038,7 +1038,7 @@ def _execute_claimed_exchange_work(
         frame=frame,
     )
     if validated is not None:
-        rejected_instruments = {candle.instrument_id for candle in validated.validation.rejected}
+        rejected_instruments = validated.validation.invalid_instrument_ids
         ticker_outcomes = _quarantine_invalid_work_outcomes(
             ticker_outcomes, executable_work, rejected_instruments
         )
