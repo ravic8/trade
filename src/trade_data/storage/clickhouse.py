@@ -4,6 +4,7 @@ import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
+from decimal import Decimal
 from typing import Any, Protocol
 
 from trade_data.config import Settings
@@ -187,10 +188,12 @@ class ClickHouseMarketDataRepository(_Repository):
             "provider_symbol": candle.provider_symbol,
             "currency": candle.currency,
             "session_date": candle.session_date,
-            "open": candle.open,
-            "high": candle.high,
-            "low": candle.low,
-            "close": candle.close,
+            # Decimal(20, 8) inserts truncate extra digits in the driver. Round
+            # explicitly to the same scale used by authoritative replica audits.
+            "open": candle.open.quantize(Decimal("0.00000001")),
+            "high": candle.high.quantize(Decimal("0.00000001")),
+            "low": candle.low.quantize(Decimal("0.00000001")),
+            "close": candle.close.quantize(Decimal("0.00000001")),
             "volume": candle.volume,
             "source": candle.provider,
             "provider_timestamp": candle.provider_timestamp,

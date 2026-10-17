@@ -273,7 +273,7 @@ preserve_minio_rollback_image() {
 }
 
 reject_minio_downgrade() {
-  local candidate_image="${PROD_MINIO_IMAGE:-minio/minio:latest}"
+  local candidate_image="${PROD_MINIO_IMAGE:-trade-minio:RELEASE.2025-09-07T16-13-09Z}"
   local candidate_release
   local previous_release
 
@@ -358,9 +358,15 @@ start_and_validate_minio() {
   reject_minio_downgrade
 
   log "pulling the requested MinIO server and client images"
-  "${compose[@]}" pull minio
+  if [[ "${PROD_MINIO_IMAGE:-trade-minio:RELEASE.2025-09-07T16-13-09Z}" == trade-minio:* ]]; then
+    "${compose[@]}" build minio minio-research-init
+  elif ! docker image inspect "$PROD_MINIO_IMAGE" >/dev/null 2>&1; then
+    "${compose[@]}" pull minio
+  fi
   if [[ "${PROD_SELF_MANAGED_KES_ENABLED:-false}" == "true" ]]; then
-    "${compose[@]}" pull kes
+    if ! docker image inspect "${PROD_KES_IMAGE:-minio/kes:latest}" >/dev/null 2>&1; then
+      "${compose[@]}" pull kes
+    fi
   fi
   log "starting MinIO before replacing application services"
   if ! start_managed_kes_if_needed \

@@ -251,6 +251,27 @@ def test_clickhouse_market_data_repository_routes_daily_rows() -> None:
         repository.batch_summary(exchange="NSE", interval="1m", source_run_id="run-1")
 
 
+def test_clickhouse_rounds_prices_before_decimal_storage() -> None:
+    client = _ClickHouseClient()
+    repository = ClickHouseMarketDataRepository(client, write_enabled=True)
+    candle = replace(
+        _candle(_request()),
+        open=Decimal("421.827392578125"),
+        high=Decimal("423.3360595703125"),
+        low=Decimal("417.4157409667969"),
+        close=Decimal("418.2157897949219"),
+    )
+    repository.insert_validated([candle], source_run_id="precision-replay", version=1)
+    _, rows, columns = client.inserts[0]
+    stored = dict(zip(columns, rows[0], strict=True))
+    assert [stored[key] for key in ("open", "high", "low", "close")] == [
+        Decimal("421.82739258"),
+        Decimal("423.33605957"),
+        Decimal("417.41574097"),
+        Decimal("418.21578979"),
+    ]
+
+
 def test_clickhouse_market_data_repository_bounds_partitions_per_insert() -> None:
     client = _ClickHouseClient()
     repository = ClickHouseMarketDataRepository(client, write_enabled=True)

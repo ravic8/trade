@@ -19,6 +19,7 @@ from uuid import uuid4
 
 ROOT_FILES = (
     "pyproject.toml",
+    "uv.lock",
     "README.md",
     "alembic.ini",
     "Dockerfile.api",

@@ -479,7 +479,10 @@ services:
     # Keep the recovery default on the upgrade path used before Phase 2. The
     # deploy script snapshots the running image and rejects explicit release
     # downgrades before this service is recreated.
-    image: ${PROD_MINIO_IMAGE:-minio/minio:latest}
+    image: ${PROD_MINIO_IMAGE:-trade-minio:RELEASE.2025-09-07T16-13-09Z}
+    build:
+      context: .
+      dockerfile: minio/Dockerfile.minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${PROD_MINIO_ROOT_USER:?set PROD_MINIO_ROOT_USER}
@@ -495,7 +498,10 @@ services:
     restart: unless-stopped
 
   minio-research-init:
-    image: ${PROD_MINIO_CLIENT_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    build:
+      context: .
+      dockerfile: minio/Dockerfile.mc
+    image: ${PROD_MINIO_CLIENT_IMAGE:-trade-minio-mc:RELEASE.2025-08-13T08-35-41Z}
     profiles: ["research-setup"]
     depends_on:
       minio:
