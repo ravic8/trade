@@ -15,7 +15,7 @@ def test_cloudbeaver_is_internal_pinned_and_hardened() -> None:
     service = compose["services"]["cloudbeaver"]
 
     assert service["image"] == "${PROD_CLOUDBEAVER_IMAGE:-dbeaver/cloudbeaver:26.1.2}"
-    assert service["ports"] == ["127.0.0.1:${PROD_CLOUDBEAVER_PORT:-8978}:8978"]
+    assert "ports" not in service
     assert service["expose"] == ["8978"]
     assert service["networks"] == ["analytics_access"]
     assert compose["networks"]["analytics_access"]["internal"] is True

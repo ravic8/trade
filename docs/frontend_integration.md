@@ -15,9 +15,9 @@ Provider credentials remain server-side.
 For deployment, build the frontend image from trade-web's own Dockerfile and set
 `API_UPSTREAM` to a separately reachable backend. Trade's production Compose no
 longer builds or starts a frontend. The API listener uses loopback
-`PROD_API_PORT` (8000 by default); CloudBeaver uses loopback
-`PROD_CLOUDBEAVER_PORT` (8978 by default). Existing gateway/tunnel mappings must be
-updated during the eventual coordinated cutover. They are unchanged on the server.
+`PROD_API_PORT` (8000 by default). CloudBeaver stays on the private Docker network
+at cloudbeaver:8978 without a published host port. The independent gateway
+preserves the existing server entrypoint on loopback port 8081.
 Trade-web's proxy does not provision CloudBeaver or authenticate users; retain the
 existing trusted gateway/admin identity boundary for administrative operations.
 

@@ -126,9 +126,11 @@ exit 0
     assert admin_build not in docker_calls
     assert (admin_recreate in docker_calls) is dagster_running
     assert "restart cloudbeaver" in docker_calls
+    assert "up -d --no-deps api dagster-daemon cloudbeaver" in docker_calls
     assert ("http://127.0.0.1:3300" in curl_calls) is dagster_running
     assert "http://localhost:8081/api/health" in curl_calls
-    assert "http://localhost:8979/" in curl_calls
+    assert "exec -T cloudbeaver curl -fsS http://localhost:8978/" in docker_calls
+    assert "http://localhost:8979/" not in curl_calls
 
     docker_call_lines = docker_calls.splitlines()
     build_index = _call_index(docker_call_lines, "build api")

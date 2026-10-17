@@ -532,7 +532,8 @@ log "reconciling retained schedules under the new code location"
 "${compose[@]}" run --rm --no-deps --entrypoint python dagster-daemon   /app/scripts/reconcile_dagster_schedules.py   --apply --confirm APPLY_SCHEDULE_RECONCILIATION
 
 log "starting production stack"
-"${compose[@]}" up -d --no-deps api dagster-daemon
+# Reconcile the SQL console before checking its private container endpoint.
+"${compose[@]}" up -d --no-deps api dagster-daemon cloudbeaver
 if [[ "$cloudbeaver_policy_changed" == true \
   && "$cloudbeaver_was_running" == true ]]; then
   log "restarting CloudBeaver to apply updated connection policy"
@@ -547,9 +548,9 @@ if [[ "$dagster_webserver_was_running" == true ]]; then
 fi
 
 health_url="${TRADE_HEALTH_URL:-http://localhost:${PROD_API_PORT:-8000}/api/health}"
-cloudbeaver_health_url="${TRADE_CLOUDBEAVER_HEALTH_URL:-http://localhost:${PROD_CLOUDBEAVER_PORT:-8978}/}"
+cloudbeaver_health_url="${TRADE_CLOUDBEAVER_HEALTH_URL:-http://localhost:8978/}"
 log "checking health at $health_url"
-log "checking CloudBeaver directly at $cloudbeaver_health_url"
+log "checking CloudBeaver inside its private container at $cloudbeaver_health_url"
 if [[ "$dagster_webserver_was_running" == true ]]; then
   dagster_health_url="${TRADE_DAGSTER_HEALTH_URL:-http://127.0.0.1:${PROD_DAGSTER_WEB_PORT:-3000}}"
   log "checking Dagster admin health at $dagster_health_url"
@@ -564,7 +565,7 @@ for attempt in {1..30}; do
   if curl -fsS "$health_url" >/dev/null; then
     api_health_ok=true
   fi
-  if curl -fsS "$cloudbeaver_health_url" >/dev/null; then
+  if "${compose[@]}" exec -T cloudbeaver curl -fsS "$cloudbeaver_health_url" >/dev/null; then
     cloudbeaver_health_ok=true
   fi
   if [[ "$dagster_webserver_was_running" == true ]]; then
