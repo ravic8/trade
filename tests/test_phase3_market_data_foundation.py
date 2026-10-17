@@ -107,6 +107,7 @@ def test_daily_validation_accepts_one_exact_duplicate_idempotently() -> None:
     assert result.accepted == (candle,)
     assert result.rejected == (candle,)
     assert result.duplicate_count == 1
+    assert result.invalid_instrument_ids == set()
 
 
 def test_daily_validation_rejects_invalid_ohlc_and_ineligible_session() -> None:
@@ -637,6 +638,88 @@ def test_daily_batch_quarantines_whole_invalid_instrument_only() -> None:
     with engine.connect() as connection:
         quality = connection.execute(select(market_data_quality_outcomes_table)).mappings().all()
     assert any(row["status"] == "invalid" and row["instrument_id"] == "bad" for row in quality)
+
+
+@pytest.mark.parametrize("duplicate_close", [100.5, 100.75])
+def test_overlapping_windows_keep_exact_duplicates_but_quarantine_conflicts(
+    duplicate_close, monkeypatch
+):
+    from trade_data.data.yahoo_executor import YahooExecutionSummary
+    from trade_data.pipelines import yfinance_work_queue
+    engine = create_engine("sqlite://")
+    market_data_quality_outcomes_table.create(engine)
+    row = {
+        "Date": date(2026, 9, 5), "InstrumentKey": "YF|RELIANCE.NS",
+        "TradingSymbol": "RELIANCE.NS", "Symbol": "RELIANCE", "Exchange": "NSE",
+        "Open": 100.0, "High": 102.0, "Low": 98.0, "Close": 100.5, "Volume": 1000,
+    }
+    batch = prepare_yfinance_batch(
+        settings=Settings(_env_file=None), database_engine=engine,
+        frame=pd.DataFrame([row, {**row, "Close": duplicate_close}]),
+        exchange="NSE", interval=CandleInterval.ONE_DAY, run_id="overlapping-windows",
+        window_start=date(2026, 9, 5), window_end=date(2026, 9, 5),
+        provider_symbols=("RELIANCE.NS",),
+        canonical_instrument_ids={"RELIANCE.NS": "reliance"},
+        eligible_sessions={date(2026, 9, 5)},
+        retrieved_at=datetime(2026, 9, 5, 12, tzinfo=UTC),
+        quarantine_invalid_instruments=True,
+    )
+
+    if duplicate_close == 100.5:
+        assert len(batch.frame) == len(batch.candles) == 1
+        assert batch.validation.valid
+        assert batch.validation.duplicate_count == 1
+        assert not batch.validation.invalid_instrument_ids
+    else:
+        assert batch.frame.empty and not batch.candles
+        assert batch.validation.invalid_instrument_ids == {"reliance"}
+        assert any(issue.code == "conflicting_duplicate" for issue in batch.validation.issues)
+
+    # Two overlapping work items must inherit errors, not duplicate warnings.
+    outcomes = [{"work_item_id": key, "status": "success"} for key in ("a", "b")]
+    monkeypatch.setattr(
+        yfinance_work_queue, "_execute_yfinance_daily_batches_with_controls",
+        lambda **kwargs: YahooExecutionSummary(
+            frames=[pd.DataFrame([row, {**row, "Close": duplicate_close}])],
+            ticker_outcomes=outcomes,
+        ),
+    )
+    monkeypatch.setattr(yfinance_work_queue, "prepare_yfinance_batch", lambda **kwargs: batch)
+    monkeypatch.setattr(yfinance_work_queue, "build_provider_rate_limiter", lambda settings: None)
+    store = SimpleNamespace(
+        engine=engine,
+        latest_provider_eligible_exchange_session=lambda *args, **kwargs: {
+            "session_date": date(2026, 9, 5)
+        },
+        exchange_sessions=lambda *args: [{
+            "session_date": date(2026, 9, 5), "is_trading_day": True,
+            "validation_status": "valid",
+        }],
+        upsert_daily_ohlcv=lambda frame, **kwargs: len(frame),
+        upsert_daily_price_adjustments=lambda frame, **kwargs: len(frame),
+        daily_ohlcv_dates_by_instrument=lambda *args, **kwargs: {
+            "YF|RELIANCE.NS": {date(2026, 9, 5)}
+        },
+        upsert_provider_daily_history_evidence=lambda rows: len(rows),
+    )
+    work = [{
+        "work_item_id": key, "work_type": "gap_repair",
+        "exchange": "NSE", "provider": "yfinance", "interval": "1d",
+        "provider_symbol": "RELIANCE.NS", "canonical_instrument_id": "reliance",
+        "provider_instrument_key": "YF|RELIANCE.NS",
+        "window_start": date(2026, 9, 5), "window_end": date(2026, 9, 5),
+    } for key in ("a", "b")]
+    actual, written, _ = yfinance_work_queue._execute_claimed_exchange_work(
+        db=store, settings=Settings(_env_file=None).model_copy(
+            update={"phase3_market_data_enabled": True}
+        ),
+        exchange="NSE", work_items=work, run_id="overlapping-worker", provider=None,
+        at=datetime(2026, 9, 5, 12, tzinfo=UTC),
+    )
+    assert written == (1 if duplicate_close == 100.5 else 0)
+    assert {outcome["status"] for outcome in actual} == {
+        "success" if duplicate_close == 100.5 else "invalid_market_data"
+    }
 
 
 @pytest.mark.parametrize("interval", ["1m", "5m", "15m", "30m", "1h"])

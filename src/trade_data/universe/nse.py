@@ -41,8 +41,10 @@ class NSEUniverseProvider(UniverseProvider):
             response.raise_for_status()
 
         df = pd.read_csv(StringIO(response.text))
-        if "SERIES" in df.columns:
-            df = df[df["SERIES"].eq("EQ")].copy()
+        df.columns = df.columns.str.strip()
+        if not {"SYMBOL", "SERIES"}.issubset(df.columns):
+            raise ValueError("NSE equity list requires SYMBOL and SERIES columns")
+        df = df[df["SERIES"].astype(str).str.strip().str.upper().eq("EQ")].copy()
 
         symbols: list[Symbol] = []
         for row in df.to_dict(orient="records"):

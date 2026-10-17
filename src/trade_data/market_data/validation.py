@@ -36,6 +36,15 @@ class CandleValidationResult:
     def duplicate_count(self) -> int:
         return sum(issue.code == "duplicate" for issue in self.issues)
 
+    @property
+    def invalid_instrument_ids(self) -> set[str]:
+        """Quarantine errors while retaining instruments with duplicate warnings."""
+        return {
+            issue.instrument_id
+            for issue in self.issues
+            if issue.severity is ValidationSeverity.ERROR
+        }
+
 
 class MarketDataValidationError(RuntimeError):
     def __init__(self, result: CandleValidationResult) -> None:
