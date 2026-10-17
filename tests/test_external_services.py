@@ -47,6 +47,13 @@ def test_application_borrows_infrastructure_network_and_owns_its_storage():
     assert config["services"]["api"]["ports"][0]["published"] == "0"
 
 
+def test_application_accepts_compose_omitting_unused_volume_definitions():
+    config = application_config()
+    del config["volumes"]
+    isolated = external.isolated_application(config, "app", "infra")
+    assert set(isolated["volumes"]) == {"acceptance_data", "acceptance_artifacts"}
+
+
 @pytest.mark.parametrize("mutation", ["database", "dependency", "volume", "external_network"])
 def test_application_rejects_local_dependencies_and_unowned_resources(mutation):
     config = copy.deepcopy(application_config())

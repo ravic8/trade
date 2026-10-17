@@ -81,13 +81,13 @@ def isolated_application(config: dict, project: str, infrastructure_project: str
         {"type": "volume", "source": "acceptance_data", "target": "/app/data"},
         {"type": "volume", "source": "acceptance_artifacts", "target": "/app/artifacts"},
     ]
-    config["volumes"].update(
+    config.setdefault("volumes", {}).update(
         {
             name: {"name": f"{project}_{name}"}
             for name in ("acceptance_data", "acceptance_artifacts")
         }
     )
-    config["networks"]["infrastructure"] = {
+    config.setdefault("networks", {})["infrastructure"] = {
         "external": True,
         "name": f"{infrastructure_project}_services",
     }
