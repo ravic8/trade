@@ -121,6 +121,30 @@ def test_verified_correction_replays_but_unexpected_basis_fails_closed():
         corrected_values(before, {**evidence, "evidence_url": ""})
 
 
+def test_verified_volume_repair_accepts_only_preserved_price_repair_states():
+    from trade_data.market_data.corrections import corrected_values
+
+    original = dict(open=11.0, high=12.0, low=10.0, close=11.0, volume=100)
+    repaired_price = {**original, "open": 12.0}
+    repaired_volume = {**repaired_price, "volume": 110}
+    evidence = {
+        "before_prices": repaired_price,
+        "additional_before_prices": [original],
+        "after_prices": repaired_volume,
+        "evidence_url": "https://nsearchives.nseindia.com/example.zip",
+        "evidence_sha256": "a" * 64,
+    }
+    for observed in (original, repaired_price, repaired_volume):
+        assert corrected_values(observed, evidence) == repaired_volume
+    # Individually known field values do not prove this combined observation.
+    with pytest.raises(ValueError, match="basis changed"):
+        corrected_values({**original, "volume": 110}, evidence)
+    with pytest.raises(ValueError, match="basis changed"):
+        corrected_values({**repaired_price, "volume": 109}, evidence)
+    with pytest.raises(ValueError, match="malformed prior input"):
+        corrected_values(original, {**evidence, "additional_before_prices": [{}]})
+
+
 def test_verified_corrections_preserve_adjustment_factor_and_isolate_symbol():
     from datetime import UTC, datetime
 

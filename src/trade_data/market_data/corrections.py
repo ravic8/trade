@@ -93,6 +93,16 @@ def corrected_values(current: Mapping[str, Any], correction: Mapping[str, Any]) 
             and current["volume"] == expected["volume"]
         )
 
-    if not matches(before) and not matches(after):
+    prior_inputs = correction.get("additional_before_prices", [])
+    if not isinstance(prior_inputs, list) or any(
+        not isinstance(value, Mapping)
+        or not all(key in value for key in ("open", "high", "low", "close", "volume"))
+        for value in prior_inputs
+    ):
+        raise ValueError("Verified correction has malformed prior input evidence")
+    # A later volume correction may follow a previously verified price repair.
+    # Accept only complete observations explicitly preserved in the evidence;
+    # never infer combinations of independently observed field values.
+    if not any(matches(value) for value in (before, after, *prior_inputs)):
         raise ValueError("Verified correction basis changed; source re-verification required")
     return dict(after)
