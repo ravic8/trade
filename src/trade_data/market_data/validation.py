@@ -156,33 +156,23 @@ def _validate_candle(
                 "Daily candle session is outside the requested window.",
             )
         )
-    if any(value <= 0 for value in (candle.open, candle.high, candle.low, candle.close)):
-        issues.append(
-            _issue(
-                candle,
-                "non_positive_price",
-                ValidationSeverity.ERROR,
-                "OHLC values must be positive.",
-            )
-        )
-    if candle.high < max(candle.open, candle.low, candle.close) or candle.low > min(
-        candle.open, candle.high, candle.close
+    from trade_data.market_data.price_quality import daily_price_errors
+
+    for code in daily_price_errors(
+        {
+            "open": candle.open,
+            "high": candle.high,
+            "low": candle.low,
+            "close": candle.close,
+            "volume": candle.volume,
+        }
     ):
         issues.append(
             _issue(
                 candle,
-                "invalid_ohlc_range",
+                "negative_volume" if code == "invalid_volume" else code,
                 ValidationSeverity.ERROR,
-                "High/low values do not contain the open and close.",
-            )
-        )
-    if candle.volume < 0:
-        issues.append(
-            _issue(
-                candle,
-                "negative_volume",
-                ValidationSeverity.ERROR,
-                "Volume must be non-negative.",
+                "Daily OHLCV invariant failed: " + code,
             )
         )
     if eligible_sessions is not None and candle.session_date not in eligible_sessions:

@@ -131,3 +131,16 @@ def test_incomplete_exchange_calendar_prevents_export(tmp_path):
             end_date=date(2026, 1, 1),
         )
     assert not (tmp_path / "snapshot").exists()
+
+
+def test_legacy_ok_flag_cannot_publish_invalid_candle(tmp_path):
+    engine = SnapshotEngine()
+    engine.rows[0]["open"] = 0
+    with pytest.raises(ValueError, match="invalid OHLCV"):
+        export_daily_snapshot(
+            engine,
+            destination=tmp_path / "snapshot",
+            start_date=date(2025, 1, 1),
+            end_date=date(2026, 1, 1),
+        )
+    assert not (tmp_path / "snapshot").exists()

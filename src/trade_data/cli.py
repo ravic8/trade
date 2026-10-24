@@ -1387,6 +1387,31 @@ def export_daily_snapshot_command(
     console.print(str(manifest))
 
 
+@app.command("export-validated-history")
+def export_validated_history_command(
+    destination: Annotated[Path, typer.Argument(help="New audit/export directory.")],
+    start_date: Annotated[str, typer.Option(help="First date, YYYY-MM-DD.")],
+    end_date: Annotated[str, typer.Option(help="Last date, YYYY-MM-DD.")],
+    source_validation: Annotated[
+        Path | None, typer.Option(help="Optional preserved NSE comparison Parquet.")
+    ] = None,
+) -> None:
+    """Revalidate all stored NSE history; export accepted, quarantine and review files."""
+    from trade_data.operations.history_validation import export_validated_daily_history
+
+    console.print(
+        str(
+            export_validated_daily_history(
+                TimescaleStore(get_settings().database_url).engine,
+                destination=destination,
+                start_date=_parse_cli_date(start_date, "--start-date"),
+                end_date=_parse_cli_date(end_date, "--end-date"),
+                source_validation=source_validation,
+            )
+        )
+    )
+
+
 # Validate configuration before the CLI can open provider or database connections.
 get_settings()
 

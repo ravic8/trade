@@ -49,3 +49,42 @@ The snapshot writer is tested through a controlled transaction source. An actual
 PostgreSQL export, including a repeated read under concurrent ingestion, remains
 an integration acceptance check. No new historical download or production
 snapshot was triggered for this local extraction.
+
+
+## Whole-history validation and corrections
+
+`trade-data export-validated-history /new/directory --start-date 2016-07-18
+--end-date 2026-10-23` creates a single `nse_daily_validated.parquet`, separate
+`quarantined.parquet` and `review_flags.parquet`, instrument coverage, session
+provenance and a checksummed manifest. The original export is never overwritten.
+This command is read-only and uses a repeatable-read transaction with bounded
+batches. It rechecks prices and volume instead of trusting legacy `ok` labels.
+Hard failures, unknown exchange sessions and known non-stock rights/partly paid
+symbols are excluded from the accepted file. Zero volume, extreme returns and
+missing or inconsistent adjustment factors are independent review flags.
+
+Adjustment fields preserve Yahoo's `auto_adjust=False` conventions; they are not
+independent corporate-action verification. Special exchange sessions are retained
+using calendar membership. Historical coverage does not prove a complete listed
+universe or absence of survivorship bias. Research selection belongs to the
+research repository; ingestion applies no trading-liquidity filter.
+
+Authoritatively verified corrections use `source_verified_correction` outcomes
+in the existing quality ledger. Each records the instrument key, original and
+corrected OHLCV, source URL and source archive checksum. Raw provider snapshots
+remain unchanged. The correction is replayed before canonical validation and
+replication, and at legacy storage entry points. A different future provider
+price basis fails closed for re-verification rather than silently applying stale
+prices. Unresolved hard anomalies retain their original values with suspicious
+acceptance and reasoned quarantine evidence. Internal consistency alone does not
+establish agreement with every NSE observation; inspect the audit manifest.
+
+The optional `--source-validation /path/source-validation.parquet` joins a
+preserved NSE archive comparison. Exchange price disagreements are quarantined;
+uniform price ratios, volume differences and unavailable exchange observations
+remain explicit flags. The comparison script resolves historical symbol changes
+only through a unique matching ISIN, never fuzzy company names. Inspect its
+archive checksums and as-of timestamp along with the export manifest.
+
+Provider observations cannot reopen an official NSE holiday. Previously verified
+special sessions retain their exchange-archive provenance across calendar refreshes.

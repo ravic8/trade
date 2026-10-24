@@ -2990,6 +2990,11 @@ class TimescaleStore:
         exchange: str = "NSE",
         source: str = "upstox",
     ) -> int:
+        from trade_data.market_data.corrections import apply_verified_daily_corrections
+
+        frame = apply_verified_daily_corrections(
+            self.engine, frame, exchange=exchange, provider=source
+        )
         rows = self._daily_ohlcv_rows(frame, exchange=exchange, source=source)
         if not rows:
             return 0
@@ -3018,6 +3023,11 @@ class TimescaleStore:
         exchange: str = "NSE",
         source: str = "upstox",
     ) -> int:
+        from trade_data.market_data.corrections import apply_verified_daily_corrections
+
+        frame = apply_verified_daily_corrections(
+            self.engine, frame, exchange=exchange, provider=source
+        )
         rows = self._daily_price_adjustment_rows(frame, exchange=exchange, source=source)
         if not rows:
             return 0
@@ -4909,7 +4919,11 @@ class TimescaleStore:
                 ),
                 "fetched_at": _as_utc(record.get("fetched_at") or fetched_at),
             }
-            row["quality_status"] = str(record.get("quality_status") or _quality_status(row))
+            row["quality_status"] = (
+                "suspicious"
+                if _quality_status(row) != "ok"
+                else str(record.get("quality_status") or "ok")
+            )
             rows.append(row)
         return _deduplicate_rows(rows, ("instrument_key", "source", "date"))
 
@@ -5099,11 +5113,9 @@ def make_timescale_store(database_url: str) -> TimescaleStore:
 
 
 def _quality_status(row: Mapping[str, Any]) -> str:
-    if row["close"] <= 0 or row["high"] < row["low"]:
-        return "suspicious"
-    if row["volume"] < 0:
-        return "suspicious"
-    return "ok"
+    from trade_data.market_data.price_quality import daily_price_errors
+
+    return "suspicious" if daily_price_errors(row) else "ok"
 
 
 def _as_utc(value: datetime) -> datetime:

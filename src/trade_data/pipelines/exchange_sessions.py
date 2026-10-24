@@ -113,12 +113,24 @@ def run_exchange_session_materialization_pipeline(
         if observed_loader is not None
         else set()
     )
+    stored_loader = getattr(resolved_repository, "exchange_sessions", None)
+    verified_special = {
+        row["session_date"]: row["source_url"]
+        for row in (
+            stored_loader(canonical_exchange, start_date, requested_end_date)
+            if stored_loader is not None
+            else []
+        )
+        if "source_verified_special_open" in str(row.get("calendar_version", ""))
+        and str(row.get("source_url", "")).startswith("https://nsearchives.nseindia.com/")
+    }
     sessions = build_materialized_exchange_sessions(
         canonical_exchange,
         start_date,
         current_year_end,
         holiday_overrides=holiday_records,
         observed_special_open_dates=observed_dates,
+        verified_special_open_dates=verified_special,
         generated_at=generated_at,
     )
     validation = validate_materialized_exchange_sessions(
@@ -139,6 +151,7 @@ def run_exchange_session_materialization_pipeline(
                 future_end,
                 holiday_overrides=holiday_records,
                 observed_special_open_dates=observed_dates,
+                verified_special_open_dates=verified_special,
                 generated_at=generated_at,
             )
             future_validation = validate_materialized_exchange_sessions(
