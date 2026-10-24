@@ -332,12 +332,12 @@ def daily_candles(
     instrument_key: Annotated[str, Query(min_length=1, max_length=256)],
     start_date: date,
     end_date: date,
-    provider: Literal["yfinance", "upstox"] = "yfinance",
+    provider: Literal["yfinance", "upstox", "nse_official_bhavcopy"] = "yfinance",
     exchange: str = "NSE",
 ) -> DailyCandlesResponse:
     canonical_exchange = _operations_exchange(exchange)
-    if provider == "upstox" and canonical_exchange != "NSE":
-        raise HTTPException(status_code=400, detail="Upstox daily candles support only NSE.")
+    if provider in {"upstox", "nse_official_bhavcopy"} and canonical_exchange != "NSE":
+        raise HTTPException(status_code=400, detail=f"{provider} daily candles support only NSE.")
     if start_date.year < 2 or not 0 <= (end_date - start_date).days <= 3660:
         raise HTTPException(status_code=400, detail="Choose an ordered range of at most ten years.")
     if not instrument_key.strip():

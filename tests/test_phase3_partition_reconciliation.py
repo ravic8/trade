@@ -392,3 +392,25 @@ def test_clickhouse_partition_read_is_scoped_and_final() -> None:
     assert "workspace_id = {workspace_id:String}" in client.query_text
     assert "source = {provider:String}" in client.query_text
     assert client.parameters["window_start"] == date(2026, 8, 1)
+
+
+def test_official_nse_partition_reconciles_without_modifying_yahoo():
+    engine = _source_engine()
+    with engine.begin() as c:
+        row = dict(c.execute(select(ohlcv_daily_table)).mappings().one())
+        row.update(source="nse_official_bhavcopy", volume=12345, symbol="RELIANCE.NS")
+        c.execute(ohlcv_daily_table.insert().values(row))
+    clickhouse = _ClickHousePartitionRepository()
+    result = DailyPartitionReconciler(engine=engine, clickhouse=clickhouse).reconcile(
+        month="2026-08", provider="nse_official_bhavcopy", repair=True,
+        source_run_id="repair-run", at=NOW,
+    )
+    assert result.status == "reconciled"
+    assert result.repaired_rows == 1
+    assert clickhouse.insert_calls[0][0].provider == "nse_official_bhavcopy"
+    assert clickhouse.insert_calls[0][0].volume == 12345
+    with engine.connect() as c:
+        yahoo = c.execute(select(ohlcv_daily_table).where(
+            ohlcv_daily_table.c.source == "yfinance"
+        )).mappings().one()
+    assert yahoo["volume"] == 1000

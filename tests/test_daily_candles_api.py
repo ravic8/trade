@@ -69,3 +69,26 @@ def test_daily_candle_read_empty_is_honest_and_failure_is_unavailable(monkeypatc
         response = client.get("/api/data/candles", params=PARAMS)
         assert response.status_code == 503
         assert "private" not in response.text
+
+
+def test_official_nse_source_is_explicit_and_never_falls_back_to_yahoo(monkeypatch):
+    calls = []
+
+    class Store:
+        def daily_ohlcv_frame(self, **kwargs):
+            calls.append(kwargs)
+            return pd.DataFrame()
+
+    monkeypatch.setattr(api, "_store", Store)
+    with TestClient(api.app) as client:
+        response = client.get("/api/data/candles", params={
+            **PARAMS, "provider": "nse_official_bhavcopy",
+        })
+        assert response.status_code == 200
+        assert response.json()["provider"] == "nse_official_bhavcopy"
+        assert response.json()["rows"] == []
+        assert calls[0]["source"] == "nse_official_bhavcopy"
+        assert client.get("/api/data/candles", params={
+            **PARAMS, "provider": "nse_official_bhavcopy", "exchange": "US",
+        }).status_code == 400
+        assert len(calls) == 1
