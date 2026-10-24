@@ -28,8 +28,8 @@ def export_daily_snapshot(
     provider: str = "yfinance",
     chunk_rows: int = 50_000,
 ) -> Path:
-    if exchange != "NSE" or provider != "yfinance":
-        raise ValueError("Snapshot exports currently support NSE/yfinance only.")
+    if exchange != "NSE" or provider not in {"yfinance", "nse_official_bhavcopy"}:
+        raise ValueError("Snapshot exports support NSE/yfinance or NSE/nse_official_bhavcopy.")
     if not 0 <= (end_date - start_date).days <= 36_525 or start_date.year < 2:
         raise ValueError("Choose an ordered date range of at most 36,525 days.")
     if not 1 <= chunk_rows <= 100_000:
