@@ -46,6 +46,19 @@ def compare_session(stored: pd.DataFrame, official: pd.DataFrame) -> pd.DataFram
     symbols = stored.symbol.str.replace(r"\.NS$", "", regex=True)
     source = official.reindex(symbols)
     source.index = stored.index
+    identity_match = np.full(len(stored), "symbol", dtype=object)
+    if "isin" in stored and "ISIN" in source:
+        by_isin = official.reset_index()
+        by_isin = by_isin[~by_isin.ISIN.duplicated(keep=False)].set_index("ISIN", drop=False)
+        absent = source.OPEN.isna() & stored["isin"].notna()
+        fallback = by_isin.reindex(stored.loc[absent, "isin"])
+        fallback.index = stored.index[absent]
+        # Require the same unique security identity; no fuzzy company-name match.
+        resolved = fallback.OPEN.notna()
+        indices = fallback.index[resolved]
+        source.loc[indices] = fallback.loc[indices, source.columns].to_numpy()
+        identity_match[indices] = "isin"
+
     y = stored[["open", "high", "low", "close"]].to_numpy(dtype=float)
     n = source[["OPEN", "HIGH", "LOW", "CLOSE"]].to_numpy(dtype=float)
     exists = source.OPEN.notna().to_numpy()
@@ -66,6 +79,7 @@ def compare_session(stored: pd.DataFrame, official: pd.DataFrame) -> pd.DataFram
     result = stored[["instrument_key", "symbol", "date"]].copy()
     result["exchange_verification"] = status
     result["exchange_series"] = source.SERIES.fillna("")
+    result["identity_match"] = identity_match
     result["source_price_factor"] = factor
     return result
 
@@ -76,7 +90,13 @@ def main() -> None:
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--start-date", type=date.fromisoformat, required=True)
     parser.add_argument("--end-date", type=date.fromisoformat, required=True)
+    parser.add_argument("--equity-list", type=Path)
     args = parser.parse_args()
+    identities = {}
+    if args.equity_list:
+        master = pd.read_csv(args.equity_list)
+        master.columns = master.columns.str.strip()
+        identities = dict(zip(master.SYMBOL, master["ISIN NUMBER"], strict=True))
     args.destination.mkdir(parents=True, exist_ok=False)
     path = args.destination / "source-validation.parquet"
     schema = pa.schema(
@@ -86,6 +106,7 @@ def main() -> None:
             pa.field("date", pa.date32()),
             pa.field("exchange_verification", pa.string()),
             pa.field("exchange_series", pa.string()),
+            pa.field("identity_match", pa.string()),
             pa.field("source_price_factor", pa.float64()),
             pa.field("evidence_url", pa.string()),
             pa.field("evidence_sha256", pa.string()),
@@ -94,6 +115,15 @@ def main() -> None:
     counts = Counter()
     evidence = []
     engine = TimescaleStore(get_settings().database_url).engine
+    with engine.connect() as master_connection:
+        for symbol, isin in master_connection.execute(
+            text(
+                "SELECT yahoo_symbol,source_identity FROM symbols "
+                "WHERE exchange='NSE' AND source_identity IS NOT NULL"
+            )
+        ):
+            if symbol:
+                identities.setdefault(symbol.removesuffix(".NS"), isin)
     with engine.connect().execution_options(isolation_level="REPEATABLE READ") as c:
         with c.begin(), pq.ParquetWriter(path, schema, compression="zstd") as writer:
             c.execute(text("SET TRANSACTION READ ONLY"))
@@ -122,6 +152,7 @@ def main() -> None:
                     .mappings()
                     .all()
                 )
+                stored["isin"] = stored.symbol.str.removesuffix(".NS").map(identities)
                 metadata = args.archive_directory / (str(day) + ".json")
                 archive = args.archive_directory / (str(day) + ".zip")
                 meta = json.loads(metadata.read_text()) if metadata.exists() else {}
@@ -138,6 +169,7 @@ def main() -> None:
                     result = stored[["instrument_key", "symbol", "date"]].copy()
                     result["exchange_verification"] = "exchange_archive_unavailable"
                     result["exchange_series"] = ""
+                    result["identity_match"] = "unavailable"
                     result["source_price_factor"] = np.nan
                 result["evidence_url"] = meta.get("url", "")
                 result["evidence_sha256"] = meta.get("sha256", "")

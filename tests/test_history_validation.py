@@ -289,3 +289,46 @@ def test_exchange_conflicts_quarantine_and_coherent_adjustments_remain_flags():
         DailyHistoryAuditor(source).annotate(pd.DataFrame([sample])).quality_status.iloc[0]
         == "quarantined"
     )
+
+
+def test_exchange_comparison_resolves_renamed_security_only_by_unique_isin():
+    import runpy
+    from pathlib import Path
+
+    compare = runpy.run_path(
+        str(Path(__file__).parents[1] / "scripts/validate_nse_history_sources.py")
+    )["compare_session"]
+    stored = pd.DataFrame(
+        [
+            dict(
+                instrument_key="YF|NEW.NS",
+                symbol="NEW.NS",
+                date=date(2025, 1, 9),
+                open=10.0,
+                high=12.0,
+                low=9.0,
+                close=11.0,
+                volume=100,
+                isin="INE001A01010",
+            )
+        ]
+    )
+    official = pd.DataFrame(
+        [
+            dict(
+                SYMBOL="OLD",
+                SERIES="EQ",
+                ISIN="INE001A01010",
+                OPEN=10.0,
+                HIGH=12.0,
+                LOW=9.0,
+                CLOSE=11.0,
+                TOTTRDQTY=100,
+            )
+        ]
+    )
+    result = compare(stored, official)
+    assert result.exchange_verification.iloc[0] == "exchange_match"
+    assert result.identity_match.iloc[0] == "isin"
+    ambiguous = pd.concat([official, official.assign(SYMBOL="OTHER")], ignore_index=True)
+    assert compare(stored, ambiguous).exchange_verification.iloc[0] == "exchange_record_unavailable"

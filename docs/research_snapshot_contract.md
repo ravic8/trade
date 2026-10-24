@@ -78,3 +78,13 @@ price basis fails closed for re-verification rather than silently applying stale
 prices. Unresolved hard anomalies retain their original values with suspicious
 acceptance and reasoned quarantine evidence. Internal consistency alone does not
 establish agreement with every NSE observation; inspect the audit manifest.
+
+The optional `--source-validation /path/source-validation.parquet` joins a
+preserved NSE archive comparison. Exchange price disagreements are quarantined;
+uniform price ratios, volume differences and unavailable exchange observations
+remain explicit flags. The comparison script resolves historical symbol changes
+only through a unique matching ISIN, never fuzzy company names. Inspect its
+archive checksums and as-of timestamp along with the export manifest.
+
+Provider observations cannot reopen an official NSE holiday. Previously verified
+special sessions retain their exchange-archive provenance across calendar refreshes.

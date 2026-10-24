@@ -94,6 +94,7 @@ def build_materialized_exchange_sessions(
     *,
     holiday_overrides: Mapping[int, ExchangeHolidays] | None = None,
     observed_special_open_dates: set[date] | frozenset[date] | None = None,
+    verified_special_open_dates: Mapping[date, str] | None = None,
     generated_at: datetime | None = None,
 ) -> list[MaterializedExchangeSession]:
     if start_date > end_date:
@@ -105,7 +106,8 @@ def build_materialized_exchange_sessions(
     schedule = calendar.schedule(start_date=start_date, end_date=end_date)
     schedule_by_date = {index.date(): row for index, row in schedule.iterrows()}
     overrides = holiday_overrides or {}
-    special_open_dates = observed_special_open_dates or frozenset()
+    verified_dates = verified_special_open_dates or {}
+    special_open_dates = (observed_special_open_dates or frozenset()) | set(verified_dates)
     generated = _as_utc(generated_at or datetime.now(UTC))
     calendar_version = (
         f"pandas_market_calendars:{version('pandas_market_calendars')}:{calendar_name}"
@@ -117,8 +119,14 @@ def build_materialized_exchange_sessions(
         override = overrides.get(current.year)
         schedule_row = schedule_by_date.get(current)
         is_calendar_override_closed = override is not None and current in override.closed_dates
-        is_observed_special_open = current in special_open_dates and (
-            schedule_row is None or is_calendar_override_closed
+        is_observed_special_open = (
+            current in special_open_dates
+            and (schedule_row is None or is_calendar_override_closed)
+            and (
+                canonical_exchange != "NSE"
+                or not is_calendar_override_closed
+                or current in verified_dates
+            )
         )
         is_forced_closed = is_calendar_override_closed and not is_observed_special_open
         if schedule_row is None or is_forced_closed or is_observed_special_open:
@@ -139,8 +147,12 @@ def build_materialized_exchange_sessions(
                             config.timezone,
                         ),
                         is_early_close=False,
-                        source_url="stored_ohlcv_observation",
-                        calendar_version=f"{calendar_version}:observed_special_open",
+                        source_url=verified_dates.get(current, "stored_ohlcv_observation"),
+                        calendar_version=(
+                            f"{calendar_version}:source_verified_special_open"
+                            if current in verified_dates
+                            else f"{calendar_version}:observed_special_open"
+                        ),
                         validation_status="valid_observed_special_session",
                         generated_at=generated,
                     )
@@ -155,7 +167,11 @@ def build_materialized_exchange_sessions(
                     market_open_utc=None,
                     market_close_utc=None,
                     is_early_close=False,
-                    source_url=PANDAS_MARKET_CALENDARS_SOURCE_URL,
+                    source_url=(
+                        override.source_url
+                        if is_forced_closed and override is not None
+                        else PANDAS_MARKET_CALENDARS_SOURCE_URL
+                    ),
                     calendar_version=calendar_version,
                     validation_status="valid",
                     generated_at=generated,

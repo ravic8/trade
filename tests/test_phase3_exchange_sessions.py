@@ -161,7 +161,7 @@ def test_observed_special_session_reopens_weekend_with_auditable_status() -> Non
     assert sessions[0].source_url == "stored_ohlcv_observation"
 
 
-def test_observed_special_session_can_override_an_official_closure() -> None:
+def test_provider_observations_cannot_override_an_official_nse_closure() -> None:
     special_date = date(2026, 1, 15)
     sessions = build_materialized_exchange_sessions(
         "NSE",
@@ -177,8 +177,8 @@ def test_observed_special_session_can_override_an_official_closure() -> None:
         observed_special_open_dates={special_date},
     )
 
-    assert sessions[0].is_trading_day is True
-    assert sessions[0].validation_status == "valid_observed_special_session"
+    assert sessions[0].is_trading_day is False
+    assert sessions[0].source_url == "official"
 
 
 def test_full_year_session_validation_checks_completeness_and_open_day_bounds() -> None:
@@ -445,6 +445,13 @@ def test_materialization_ignores_poisoned_empty_year_and_keeps_special_sessions(
     monkeypatch,
 ) -> None:
     store = MemorySessionStore()
+    store.exchange_sessions = lambda *args: [
+        {
+            "session_date": date(2025, 10, 21),
+            "source_url": "https://nsearchives.nseindia.com/content/historical/verified.zip",
+            "calendar_version": "source_verified_special_open",
+        }
+    ]
     store.holidays[("NSE", 2024)] = {
         "closed_dates": [],
         "early_close_dates": [],
