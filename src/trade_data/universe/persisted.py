@@ -278,6 +278,9 @@ def reconcile_universe_snapshot(
             and same_symbol.source_identity
             and symbol.source_identity
             and same_symbol.source_identity != symbol.source_identity
+            and not _same_nse_equity_class(
+                canonical_exchange, same_symbol.source_identity, symbol.source_identity
+            )
         )
         previous = same_identity or (None if ticker_reused else same_symbol)
         if previous is not None:
@@ -387,6 +390,26 @@ def reconcile_universe_snapshot(
                     snapshot_id,
                     observed_at,
                     _state_json(previous),
+                )
+            )
+
+        if (
+            previous is not None
+            and previous.source_identity
+            and source_identity
+            and previous.source_identity != source_identity
+            and _same_nse_equity_class(
+                canonical_exchange, previous.source_identity, source_identity
+            )
+        ):
+            events.append(
+                _event(
+                    "security_identifier_changed",
+                    state,
+                    snapshot_id,
+                    observed_at,
+                    {"source_identity": previous.source_identity},
+                    {"source_identity": source_identity},
                 )
             )
 
@@ -858,3 +881,15 @@ def _subtract_years(value: date, years: int) -> date:
         return value.replace(year=value.year - years)
     except ValueError:
         return value.replace(month=2, day=28, year=value.year - years)
+
+
+def _same_nse_equity_class(exchange: str, before: str, after: str) -> bool:
+    # NSDL positions 4–7 identify the issuer, 8–9 the security type. The
+    # issue serial/check digit can change after a split or consolidation.
+    # Preserve a continuing ticker's lineage; retain the full ISIN and event.
+    return (
+        exchange == "NSE"
+        and bool(re.fullmatch(r"IN[E9][A-Z0-9]{9}", before))
+        and bool(re.fullmatch(r"IN[E9][A-Z0-9]{9}", after))
+        and before[:9] == after[:9]
+    )

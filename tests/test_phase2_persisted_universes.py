@@ -4,6 +4,8 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from trade_data.config import Settings
 from trade_data.schemas import Symbol
 from trade_data.universe.persisted import (
@@ -217,9 +219,7 @@ def test_source_failure_is_recorded_without_reconciliation() -> None:
 
 def test_disabled_exchange_refresh_persists_snapshot_without_backfill_work() -> None:
     repository = MemoryRepository()
-    provider = MutableProvider(
-        [_symbol("SHOP", exchange="TSX", provider_symbol="SHOP.TO")]
-    )
+    provider = MutableProvider([_symbol("SHOP", exchange="TSX", provider_symbol="SHOP.TO")])
     provider.exchange = "TSX"
     provider.diagnostics = lambda: {
         "source_rows": 3,
@@ -403,3 +403,44 @@ def test_failed_halt_enrichment_preserves_previous_lifecycle_state() -> None:
     assert plan.members[0].listing_status == "halted"
     assert plan.members[0].pipeline_eligibility == "none"
     assert not any(event.event_type == "trading_resumed" for event in plan.events)
+
+
+@pytest.mark.parametrize(
+    "new_isin,retains_identity",
+    [
+        ("INE123A01020", True),
+        ("INE999A01015", False),
+    ],
+)
+def test_nse_isin_serial_change_preserves_lineage_but_new_issuer_reuses_ticker(
+    new_isin,
+    retains_identity,
+):
+    initial = _symbol("EXAMPLE", exchange="NSE", provider_symbol="EXAMPLE.NS")
+    initial.source_identity = "INE123A01012"
+    before = reconcile_universe_snapshot(
+        [initial],
+        [],
+        exchange="NSE",
+        snapshot_id="before",
+        fetched_at=datetime(2026, 7, 17, tzinfo=UTC),
+    ).members[0]
+    current = initial.model_copy(update={"source_identity": new_isin})
+    after = reconcile_universe_snapshot(
+        [current],
+        [before],
+        exchange="NSE",
+        snapshot_id="after",
+        fetched_at=datetime(2026, 7, 18, tzinfo=UTC),
+    )
+    member = after.members[0]
+    assert (member.canonical_instrument_id == before.canonical_instrument_id) == retains_identity
+    assert (member.provider_instrument_key == before.provider_instrument_key) == retains_identity
+    assert member.source_identity == new_isin
+    if retains_identity:
+        assert not after.work_items
+        event = next(e for e in after.events if e.event_type == "security_identifier_changed")
+        assert event.old_value == {"source_identity": "INE123A01012"}
+        assert event.new_value == {"source_identity": new_isin}
+    else:
+        assert any(e.event_type == "ticker_reused" for e in after.events)
