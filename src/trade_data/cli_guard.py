@@ -16,6 +16,7 @@ class CommandEffect(StrEnum):
 # its effects have been reviewed and added to this inventory.
 COMMAND_EFFECTS: dict[str, CommandEffect] = {
     "export-daily-snapshot": CommandEffect.READ_ONLY,
+    "export-validated-history": CommandEffect.READ_ONLY,
     "doctor": CommandEffect.READ_ONLY,
     "daily-canary-snapshot": CommandEffect.READ_ONLY,
     "daily-canary-run-report": CommandEffect.READ_ONLY,

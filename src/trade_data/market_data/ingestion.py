@@ -86,6 +86,11 @@ def prepare_yfinance_batch(
         request=request,
         frame=raw_frame if raw_frame is not None else frame,
     )
+    from trade_data.market_data.corrections import apply_verified_daily_corrections
+
+    frame = apply_verified_daily_corrections(
+        database_engine, frame, exchange=exchange, provider="yfinance"
+    )
     currency = {"NSE": "INR", "TSX": "CAD", "US": "USD"}.get(exchange.upper(), "USD")
     candles = yfinance_frame_to_candles(
         frame,

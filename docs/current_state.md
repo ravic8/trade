@@ -14,7 +14,7 @@ production cutover. Operational counts below are point-in-time observations.
 
 Trade now owns a Python daily equity data backend (`trade_data`, command
 `trade-data`), a FastAPI operations API and Dagster planner/worker roles. The active
-provider scope is all NSE EQ stocks through yfinance, without a liquidity filter.
+provider scope is all ordinary NSE equities across eligible series through yfinance, without a liquidity filter.
 The acquisition window is ten years. Incremental work, listing history, gap repair,
 validation and replica reconciliation share the durable daily queue.
 

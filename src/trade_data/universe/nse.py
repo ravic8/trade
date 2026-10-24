@@ -1,3 +1,4 @@
+import re
 from io import StringIO
 
 import httpx
@@ -44,7 +45,9 @@ class NSEUniverseProvider(UniverseProvider):
         df.columns = df.columns.str.strip()
         if not {"SYMBOL", "SERIES"}.issubset(df.columns):
             raise ValueError("NSE equity list requires SYMBOL and SERIES columns")
-        df = df[df["SERIES"].astype(str).str.strip().str.upper().eq("EQ")].copy()
+        if not {"NAME OF COMPANY", "ISIN NUMBER"}.issubset(df.columns):
+            raise ValueError("NSE equity classification requires company name and ISIN NUMBER")
+        df = df[df.apply(is_ordinary_nse_equity, axis=1)].copy()
 
         symbols: list[Symbol] = []
         for row in df.to_dict(orient="records"):
@@ -57,7 +60,34 @@ class NSEUniverseProvider(UniverseProvider):
                     name=str(row.get("NAME OF COMPANY", "")).strip() or None,
                     currency="INR",
                     source="nse_equity_list",
+                    source_identity=str(row["ISIN NUMBER"]).strip().upper(),
+                    instrument_type="common_stock",
+                    official_security_type="fully_paid_equity:" + str(row["SERIES"]).strip(),
+                    reconciliation_status="matched",
+                    reconciliation_reason="official_equity_list_isin_series_v2",
                     source_url=url,
                 )
             )
         return symbols
+
+
+def is_ordinary_nse_equity(row: dict | pd.Series) -> bool:
+    """Classify the official equity-share list, not a general security master.
+
+    INE is necessary, not sufficient: rights also have issuer ISINs. Separate
+    ETF/fund, debt and partly paid lists are not inputs to this classifier.
+    Unknown series/identities fail closed; BE/BZ are trading regimes, not types.
+    """
+    symbol = str(row.get("SYMBOL", "")).strip().upper()
+    series = str(row.get("SERIES", "")).strip().upper()
+    isin = str(row.get("ISIN NUMBER", "")).strip().upper()
+    name = str(row.get("NAME OF COMPANY", "")).strip().upper()
+    return bool(
+        symbol
+        and name
+        and name != "NAN"
+        and series in {"EQ", "BE", "BZ", "SM", "ST", "SZ"}
+        and re.fullmatch(r"IN[E9][A-Z0-9]{9}", isin)
+        and not re.search(r"-RE\d*$|-(?:PP|P1|P2)$", symbol)
+        and not re.search(r"RIGHTS? ENTITLEMENT|PARTLY PAID|EXCHANGE TRADED|\bETF\b", name)
+    )

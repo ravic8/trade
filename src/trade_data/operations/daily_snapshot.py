@@ -14,6 +14,7 @@ import pandas as pd
 from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 
+from trade_data.market_data.price_quality import daily_price_errors
 from trade_data.storage.timescale import exchange_sessions_table, ohlcv_daily_table
 
 
@@ -29,8 +30,8 @@ def export_daily_snapshot(
 ) -> Path:
     if exchange != "NSE" or provider != "yfinance":
         raise ValueError("Snapshot exports currently support NSE/yfinance only.")
-    if not 0 <= (end_date - start_date).days <= 3660 or start_date.year < 2:
-        raise ValueError("Choose an ordered date range of at most 3,660 days.")
+    if not 0 <= (end_date - start_date).days <= 36_525 or start_date.year < 2:
+        raise ValueError("Choose an ordered date range of at most 36,525 days.")
     if not 1 <= chunk_rows <= 100_000:
         raise ValueError("chunk_rows must be between 1 and 100,000.")
     if destination.exists():
@@ -88,6 +89,10 @@ def export_daily_snapshot(
                 row_count = 0
                 result = connection.execution_options(stream_results=True).execute(query).mappings()
                 for number, rows in enumerate(result.partitions(chunk_rows), start=1):
+                    if any(daily_price_errors(row) for row in rows):
+                        raise ValueError(
+                            "Accepted history contains invalid OHLCV; revalidate first."
+                        )
                     frame = pd.DataFrame(rows)
                     name = f"ohlcv-{number:05d}.parquet"
                     frame.to_parquet(stage / name, index=False)
@@ -114,7 +119,10 @@ def export_daily_snapshot(
                     "adjustment": (
                         "Yahoo OHLCV as stored; auto_adjust=False; not total-return adjusted"
                     ),
-                    "quality": "quality_status=ok; validated exchange trading sessions only",
+                    "quality": (
+                        "quality_status=ok; hard OHLCV invariants checked; "
+                        "validated exchange sessions"
+                    ),
                     "row_count": row_count,
                     "files": files,
                 }

@@ -11,7 +11,7 @@ replaced_by: null
 This is the current scope agreed during the repository split. Earlier research,
 filing and UI specifications are archival and do not govern this backend.
 
-- Acquire all NSE EQ symbols through yfinance, with no liquidity or top-N filter.
+- Acquire all ordinary NSE equities across eligible series through yfinance, with no liquidity or top-N filter.
 - Maintain a rolling ten-year acquisition window, daily increments, new listings
   and historical gap repair. Preserve older stored observations.
 - Retain canonical identity, provider provenance, validated exchange calendars,

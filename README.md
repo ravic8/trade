@@ -1,7 +1,7 @@
 # Daily market data
 
 This repository acquires, validates, and maintains daily equity OHLCV data.
-The active scope is **all NSE EQ stocks using yfinance**, with a rolling ten-year
+The active scope is **all ordinary NSE equities across eligible series using yfinance**, with a rolling ten-year
 acquisition window, daily incremental updates, and historical gap repair.
 There is no liquidity, turnover, or top-N filter at ingestion. Newly listed
 stocks and provider history limitations are recorded as coverage exceptions.
