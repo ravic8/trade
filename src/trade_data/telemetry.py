@@ -1,4 +1,5 @@
 """Optional OpenTelemetry setup for daily API and database operations."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -41,17 +42,13 @@ def configure_telemetry(
         )
         tracer_provider = TracerProvider(resource=resource)
         tracer_provider.add_span_processor(
-            BatchSpanProcessor(
-                OTLPSpanExporter(endpoint=_signal_endpoint(settings, "traces"))
-            )
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=_signal_endpoint(settings, "traces")))
         )
         trace.set_tracer_provider(tracer_provider)
         metric_reader = PeriodicExportingMetricReader(
             OTLPMetricExporter(endpoint=_signal_endpoint(settings, "metrics"))
         )
-        metrics.set_meter_provider(
-            MeterProvider(resource=resource, metric_readers=[metric_reader])
-        )
+        metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[metric_reader]))
         _configured = True
 
     if app is not None and id(app) not in _instrumented_apps and settings.otel_enabled:

@@ -1,5 +1,5 @@
 {
-  "provider": "yfinance",
+  "provider": "nse_bhavcopy",
   "exchange": "NSE",
   "instrument_key": "YF|RELIANCE.NS",
   "start_date": "2026-10-15",

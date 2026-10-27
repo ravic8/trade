@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-import pandas as pd
 import pytest
 
 from trade_data.config import Settings
@@ -21,7 +20,6 @@ from trade_data.pipelines.exchange_sessions import (
     _stored_holiday_records,
     run_exchange_session_materialization_pipeline,
 )
-from trade_data.pipelines.yfinance_daily import _build_yfinance_missing_fetch_plan
 
 
 class MemorySessionStore:
@@ -97,8 +95,8 @@ class MemorySessionStore:
 def test_phase3_defaults_keep_planning_in_shadow_mode() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.materialized_exchange_sessions_enabled is False
-    assert settings.exchange_session_history_years == 10
+    assert settings.materialized_exchange_sessions_enabled is True
+    assert settings.exchange_session_history_years == 1
     assert settings.exchange_session_future_years == 1
     assert settings.exchange_session_shadow_max_discrepancies == 5
 
@@ -339,65 +337,6 @@ def test_first_trade_date_excludes_prelisting_sessions_from_coverage() -> None:
     assert clipped == (date(2026, 7, 7), date(2026, 7, 8))
 
 
-def test_yfinance_missing_plan_does_not_queue_prelisting_dates() -> None:
-    plan = _build_yfinance_missing_fetch_plan(
-        mapping=pd.DataFrame(
-            [
-                {
-                    "symbol": "NEW",
-                    "instrument_key": "YF|NEW",
-                    "trading_symbol": "NEW",
-                    "yahoo_symbol": "NEW",
-                }
-            ]
-        ),
-        expected_set={date(2026, 7, 6), date(2026, 7, 7), date(2026, 7, 8)},
-        stored_dates={"YF|NEW": {date(2026, 7, 7)}},
-        first_trade_dates={"YF|NEW": date(2026, 7, 7)},
-        avg_turnover={},
-        coverage_status=None,
-        min_avg_daily_turnover=None,
-        min_coverage_pct=None,
-        limit=None,
-    )
-
-    assert plan[["fetch_start", "fetch_end", "expected_rows"]].to_dict(orient="records") == [
-        {
-            "fetch_start": "2026-07-08",
-            "fetch_end": "2026-07-08",
-            "expected_rows": 2,
-        }
-    ]
-
-
-def test_yfinance_missing_plan_preserves_a_real_gap_at_window_start() -> None:
-    plan = _build_yfinance_missing_fetch_plan(
-        mapping=pd.DataFrame(
-            [
-                {
-                    "symbol": "OLD",
-                    "instrument_key": "YF|OLD",
-                    "trading_symbol": "OLD",
-                    "yahoo_symbol": "OLD",
-                }
-            ]
-        ),
-        expected_set={date(2026, 7, 6), date(2026, 7, 7), date(2026, 7, 8)},
-        stored_dates={"YF|OLD": {date(2026, 7, 7)}},
-        first_trade_dates={"YF|OLD": date(2020, 1, 2)},
-        avg_turnover={},
-        coverage_status=None,
-        min_avg_daily_turnover=None,
-        min_coverage_pct=None,
-        limit=None,
-    )
-
-    assert plan[["fetch_start", "fetch_end"]].to_dict(orient="records") == [
-        {"fetch_start": "2026-07-06", "fetch_end": "2026-07-06"},
-        {"fetch_start": "2026-07-08", "fetch_end": "2026-07-08"},
-    ]
-
-
 def test_materialization_pipeline_persists_valid_full_year(monkeypatch) -> None:
     store = MemorySessionStore()
     monkeypatch.setattr(
@@ -437,7 +376,7 @@ def test_materialization_pipeline_persists_valid_full_year(monkeypatch) -> None:
     assert result.status == "pass"
     assert result.rows == 365
     assert result.metrics["shadow_discrepancy_count"] == 0
-    assert result.metrics["planning_enabled"] is False
+    assert result.metrics["planning_enabled"] is True
     assert len(store.sessions) == 365
 
 

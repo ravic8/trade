@@ -118,11 +118,7 @@ def evaluate_eligible_session_coverage(
         raise ValueError("requested_start must be on or before requested_end.")
     sessions = tuple(
         sorted(
-            {
-                value
-                for value in exchange_session_dates
-                if requested_start <= value <= requested_end
-            }
+            {value for value in exchange_session_dates if requested_start <= value <= requested_end}
         )
     )
     provider_eligible = (
@@ -147,9 +143,7 @@ def evaluate_eligible_session_coverage(
         else:
             exclusion_counts[reason] += 1
 
-    stored = {
-        value for value in stored_dates if requested_start <= value <= requested_end
-    }
+    stored = {value for value in stored_dates if requested_start <= value <= requested_end}
     valid = stored if valid_stored_dates is None else set(valid_stored_dates).intersection(stored)
     eligible_set = set(eligible)
     valid_eligible = eligible_set.intersection(valid)

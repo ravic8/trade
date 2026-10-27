@@ -130,9 +130,7 @@ def validated_exchange_calendar_years(
         reference_date or date.today()
     ).year + MAXIMUM_EXCHANGE_CALENDAR_FUTURE_YEARS
     if end.year > latest_supported_year:
-        raise ValueError(
-            f"Exchange calendar dates after {latest_supported_year} are unsupported."
-        )
+        raise ValueError(f"Exchange calendar dates after {latest_supported_year} are unsupported.")
     year_count = end.year - start.year + 1
     if year_count > MAXIMUM_EXCHANGE_CALENDAR_YEAR_COUNT:
         raise ValueError(
@@ -248,9 +246,7 @@ def fetch_nse_holidays(year: int) -> ExchangeHolidays:
     if not closed_dates:
         fallback_dates = NSE_FALLBACK_CLOSED_DATES.get(year)
         if fallback_dates is None:
-            raise MarketCalendarError(
-                f"NSE holiday calendar is unavailable for {year}"
-            )
+            raise MarketCalendarError(f"NSE holiday calendar is unavailable for {year}")
         closed_dates = set(fallback_dates)
     return ExchangeHolidays(
         closed_dates=frozenset(closed_dates),

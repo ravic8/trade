@@ -1,4 +1,3 @@
-
 from trade_data.validation.calendar import resolve_latest_expected_trading_date
 from trade_data.validation.coverage import (
     CoverageExclusionReason,

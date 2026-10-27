@@ -12,6 +12,22 @@ from trade_data.config import Settings
 from trade_data.dagster.schedule_policy import desired_schedule_statuses
 from trade_data.dagster.status import CURRENT_ORIGIN_MARKER
 
+RETIRED_SCHEDULES = frozenset(
+    [
+        "yfinance_daily_work_planner_schedule",
+        "yfinance_nse_completed_session_work_planner_schedule",
+        "yfinance_tsx_completed_session_work_planner_schedule",
+        "yfinance_us_completed_session_work_planner_schedule",
+        "yfinance_daily_work_worker_schedule",
+        "nse_universe_refresh_schedule",
+        "tsx_universe_refresh_schedule",
+        "us_universe_refresh_schedule",
+        "tsx_exchange_sessions_schedule",
+        "us_exchange_sessions_schedule",
+        "north_america_daily_yfinance_schedule",
+    ]
+)
+
 
 @dataclass(frozen=True)
 class ScheduleReconciliationAction:
@@ -42,13 +58,9 @@ def build_schedule_reconciliation_plan(
     remote_repository: Any,
     settings: Settings,
 ) -> ScheduleReconciliationPlan:
-    remote_schedules = {
-        schedule.name: schedule for schedule in remote_repository.get_schedules()
-    }
+    remote_schedules = {schedule.name: schedule for schedule in remote_repository.get_schedules()}
     desired = desired_schedule_statuses(settings)
-    stored_states = list(
-        instance.all_instigator_state(instigator_type=InstigatorType.SCHEDULE)
-    )
+    stored_states = list(instance.all_instigator_state(instigator_type=InstigatorType.SCHEDULE))
     actions: list[ScheduleReconciliationAction] = []
 
     for schedule_name, remote_schedule in remote_schedules.items():
@@ -111,7 +123,16 @@ def build_schedule_reconciliation_plan(
             for state in stale_states
         )
 
-    managed_names = set(remote_schedules)
+    actions.extend(
+        ScheduleReconciliationAction(
+            "stop_retired", state.instigator_name, state.instigator_origin_id, state.selector_id
+        )
+        for state in stored_states
+        if state.is_running
+        and state.instigator_name in RETIRED_SCHEDULES
+        and state.instigator_name not in remote_schedules
+    )
+    managed_names = set(remote_schedules) | RETIRED_SCHEDULES
     unmanaged_active = sorted(
         {
             state.instigator_name
@@ -122,6 +143,7 @@ def build_schedule_reconciliation_plan(
     actions.sort(
         key=lambda action: (
             {
+                "stop_retired": -1,
                 "stop_stale": 0,
                 "delete_stale": 1,
                 "start_current": 2,
@@ -148,13 +170,12 @@ def apply_schedule_reconciliation_plan(
 ) -> None:
     if plan.unmanaged_active_schedules:
         names = ", ".join(plan.unmanaged_active_schedules)
-        raise RuntimeError(
-            "Refusing to reconcile while unmanaged schedules are active: " + names
-        )
-    remote_schedules = {
-        schedule.name: schedule for schedule in remote_repository.get_schedules()
-    }
+        raise RuntimeError("Refusing to reconcile while unmanaged schedules are active: " + names)
+    remote_schedules = {schedule.name: schedule for schedule in remote_repository.get_schedules()}
     for action in plan.actions:
+        if action.action == "stop_retired":
+            instance.stop_schedule(action.origin_id, action.selector_id, None)
+            continue
         remote_schedule = remote_schedules[action.schedule_name]
         if action.action == "start_current":
             instance.start_schedule(remote_schedule)

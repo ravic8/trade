@@ -261,7 +261,7 @@ def check_fresh_core(verifier: Verifier, checks: dict, expected_services: set[st
     expected_statuses = {
         "postgresql": "pass",
         "redis": "pass",
-        "daily_provider": "not_configured",
+        "daily_provider": "configured",
         "clickhouse": "disabled",
         "object_store": "disabled",
     }

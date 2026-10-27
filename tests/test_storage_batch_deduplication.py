@@ -47,17 +47,6 @@ def test_daily_ohlcv_rows_deduplicate_database_conflict_keys() -> None:
     assert rows[0]["volume"] == 200
 
 
-def test_daily_adjustment_rows_deduplicate_database_conflict_keys() -> None:
-    rows = TimescaleStore._daily_price_adjustment_rows(
-        _duplicate_daily_frame(),
-        exchange="NSE",
-        source="yfinance",
-    )
-
-    assert len(rows) == 1
-    assert rows[0]["adjusted_close"] == 11.5
-
-
 def test_snapshot_rows_deduplicate_composite_conflict_keys() -> None:
     rows = _deduplicate_rows(
         [

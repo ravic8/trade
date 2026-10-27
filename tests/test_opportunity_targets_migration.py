@@ -17,9 +17,7 @@ def test_opportunity_target_migration_creates_durable_table(
 
     engine = create_engine(database_url)
     inspector = inspect(engine)
-    columns = {
-        column["name"] for column in inspector.get_columns("opportunity_targets_daily")
-    }
+    columns = {column["name"] for column in inspector.get_columns("opportunity_targets_daily")}
     assert {
         "instrument_key",
         "source",
@@ -55,12 +53,9 @@ def test_opportunity_target_migration_creates_durable_table(
         "report_payload",
         "trace_id",
         "created_at",
-    } == {
-        column["name"]
-        for column in inspector.get_columns("filing_investigation_evaluations")
-    }
+    } == {column["name"] for column in inspector.get_columns("filing_investigation_evaluations")}
     with engine.begin() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "20260906_0018"
+            == "20261027_0019"
         )

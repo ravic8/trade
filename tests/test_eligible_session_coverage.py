@@ -9,10 +9,7 @@ from trade_data.validation.coverage import (
 
 
 def test_eligible_coverage_applies_lifecycle_grace_and_evidence_exclusions() -> None:
-    sessions = tuple(
-        date(2026, 1, day)
-        for day in (1, 2, 5, 6, 7, 8)
-    )
+    sessions = tuple(date(2026, 1, day) for day in (1, 2, 5, 6, 7, 8))
 
     coverage = evaluate_eligible_session_coverage(
         requested_start=date(2026, 1, 1),
@@ -61,9 +58,7 @@ def test_point_in_time_membership_and_delisting_bound_the_denominator() -> None:
     coverage = evaluate_eligible_session_coverage(
         requested_start=date(2026, 1, 1),
         requested_end=date(2026, 1, 8),
-        exchange_session_dates=tuple(
-            date(2026, 1, day) for day in (1, 2, 5, 6, 7, 8)
-        ),
+        exchange_session_dates=tuple(date(2026, 1, day) for day in (1, 2, 5, 6, 7, 8)),
         listing_end=date(2026, 1, 7),
         universe_membership_windows=(DateWindow(date(2026, 1, 5), date(2026, 1, 8)),),
     )

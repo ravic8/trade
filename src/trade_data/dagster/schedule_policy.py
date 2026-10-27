@@ -54,9 +54,7 @@ def schedule_policy(settings: Settings) -> list[SchedulePolicy]:
                 exchange=str(raw["exchange"]),
                 desired_status=_status(conditions[condition]),
                 freshness_sla_minutes=int(raw["freshness_sla_minutes"]),
-                upstream_dependencies=tuple(
-                    str(value) for value in raw["upstream_dependencies"]
-                ),
+                upstream_dependencies=tuple(str(value) for value in raw["upstream_dependencies"]),
                 alert_owner=str(raw["alert_owner"]),
                 notes=str(raw["notes"]),
             )
@@ -69,24 +67,9 @@ def desired_schedule_statuses(settings: Settings) -> dict[str, str]:
 
 
 def _enabled_conditions(settings: Settings) -> dict[str, bool]:
-    any_yfinance = settings.yfinance_daily_enabled and any(
-        (
-            settings.yfinance_nse_enabled,
-            settings.yfinance_full_tsx_enabled,
-            settings.yfinance_full_us_enabled,
-        )
-    )
-    nse_yfinance = settings.yfinance_daily_enabled and settings.yfinance_nse_enabled
-    tsx_yfinance = settings.yfinance_daily_enabled and settings.yfinance_full_tsx_enabled
-    us_yfinance = settings.yfinance_daily_enabled and settings.yfinance_full_us_enabled
     return {
-        "any_yfinance_daily": any_yfinance,
-        "nse_yfinance": nse_yfinance,
-        "tsx_yfinance": tsx_yfinance,
-        "us_yfinance": us_yfinance,
-        "nse_sessions": settings.materialized_exchange_sessions_enabled and nse_yfinance,
-        "tsx_sessions": settings.materialized_exchange_sessions_enabled and tsx_yfinance,
-        "us_sessions": settings.materialized_exchange_sessions_enabled and us_yfinance,
+        "nse_daily": settings.nse_daily_enabled,
+        "nse_sessions": settings.materialized_exchange_sessions_enabled,
         "never": False,
     }
 

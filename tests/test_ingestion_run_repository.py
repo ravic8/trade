@@ -1,13 +1,28 @@
 from uuid import UUID
 
+from sqlalchemy import select
+
+from trade_data.storage.ingestion_runs import IngestionRunRepository
 from trade_data.storage.timescale import TimescaleStore, ingestion_runs_table
 
 
 def test_ingestion_run_lifecycle_keeps_public_store_contract() -> None:
     store = TimescaleStore("sqlite://")
     ingestion_runs_table.create(store.engine)
+    engine = store.engine
+    store = IngestionRunRepository(engine, ingestion_runs_table)
 
-    run_id = store.start_ingestion_run(
+    def get_run(run_id):
+        with engine.connect() as c:
+            return (
+                c.execute(
+                    select(ingestion_runs_table).where(ingestion_runs_table.c.run_id == str(run_id))
+                )
+                .mappings()
+                .one()
+            )
+
+    run_id = store.start(
         job_name="daily_ingestion",
         exchange="NSE",
         source="yfinance",
@@ -15,13 +30,13 @@ def test_ingestion_run_lifecycle_keeps_public_store_contract() -> None:
         run_metadata={"trigger": "unit_test"},
     )
     assert isinstance(run_id, UUID)
-    started = store.ingestion_run(str(run_id))
+    started = get_run(run_id)
     assert started is not None
     assert started["status"] == "running"
     assert started["items_requested"] == 3
     assert started["run_metadata"] == {"trigger": "unit_test"}
 
-    store.finish_ingestion_run(
+    store.finish(
         run_id=run_id,
         status="completed",
         items_processed=3,
@@ -29,7 +44,7 @@ def test_ingestion_run_lifecycle_keeps_public_store_contract() -> None:
         items_failed=1,
         run_metadata_patch={"batch_count": 1},
     )
-    finished = store.ingestion_run(str(run_id))
+    finished = get_run(run_id)
     assert finished is not None
     assert finished["status"] == "completed"
     assert finished["items_succeeded"] == 2

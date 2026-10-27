@@ -84,7 +84,7 @@ def test_reconciliation_migrates_stale_origin_before_starting_current(
     tmp_path: Path,
 ) -> None:
     worker = _Schedule(
-        "yfinance_daily_work_worker_schedule",
+        "nse_daily_bhavcopy_schedule",
         "current-worker-origin",
         "current-worker-selector",
     )
@@ -120,12 +120,8 @@ def test_reconciliation_migrates_stale_origin_before_starting_current(
         marker_path=marker,
     )
     assert instance.started == [worker.name]
-    assert instance.stopped == [
-        ("stale-worker-origin", "stale-worker-selector", None)
-    ]
-    assert instance.deleted == [
-        ("stale-worker-origin", "stale-worker-selector")
-    ]
+    assert instance.stopped == [("stale-worker-origin", "stale-worker-selector", None)]
+    assert instance.deleted == [("stale-worker-origin", "stale-worker-selector")]
     assert instance.events == [
         ("stop", "stale-worker-origin"),
         ("delete", "stale-worker-origin"),
@@ -140,7 +136,7 @@ def test_reconciliation_deletes_stopped_stale_origin_before_starting_current(
     tmp_path: Path,
 ) -> None:
     worker = _Schedule(
-        "yfinance_daily_work_worker_schedule",
+        "nse_daily_bhavcopy_schedule",
         "current-worker-origin",
         "current-worker-selector",
     )
@@ -174,9 +170,7 @@ def test_reconciliation_deletes_stopped_stale_origin_before_starting_current(
         marker_path=tmp_path / "schedule_current_origin.json",
     )
     assert instance.stopped == []
-    assert instance.deleted == [
-        ("stale-worker-origin", "stale-worker-selector")
-    ]
+    assert instance.deleted == [("stale-worker-origin", "stale-worker-selector")]
     assert instance.events == [
         ("delete", "stale-worker-origin"),
         ("start", worker.name),
@@ -187,7 +181,7 @@ def test_reconciliation_migrates_stale_selector_under_current_origin(
     tmp_path: Path,
 ) -> None:
     worker = _Schedule(
-        "yfinance_daily_work_worker_schedule",
+        "nse_daily_bhavcopy_schedule",
         "shared-worker-origin",
         "current-worker-selector",
     )
@@ -221,12 +215,8 @@ def test_reconciliation_migrates_stale_selector_under_current_origin(
         plan,
         marker_path=tmp_path / "schedule_current_origin.json",
     )
-    assert instance.stopped == [
-        ("shared-worker-origin", "stale-worker-selector", None)
-    ]
-    assert instance.deleted == [
-        ("shared-worker-origin", "stale-worker-selector")
-    ]
+    assert instance.stopped == [("shared-worker-origin", "stale-worker-selector", None)]
+    assert instance.deleted == [("shared-worker-origin", "stale-worker-selector")]
     assert instance.started == [worker.name]
 
 
@@ -275,7 +265,7 @@ def test_reconciliation_removes_stale_origin_for_desired_stopped_schedule(
 
 def test_reconciliation_is_idempotent_for_current_running_state() -> None:
     worker = _Schedule(
-        "yfinance_daily_work_worker_schedule",
+        "nse_daily_bhavcopy_schedule",
         "current-worker-origin",
         "current-worker-selector",
     )
@@ -359,9 +349,29 @@ def test_reconciliation_refuses_to_apply_with_unmanaged_active_schedule(
 def test_recent_daemon_heartbeat_blocks_live_reconciliation() -> None:
     now = datetime(2026, 7, 24, 8, 0, tzinfo=UTC)
     instance = SimpleNamespace(
-        get_daemon_heartbeats=lambda: {
-            "SCHEDULER": SimpleNamespace(timestamp=now.timestamp())
-        }
+        get_daemon_heartbeats=lambda: {"SCHEDULER": SimpleNamespace(timestamp=now.timestamp())}
     )
 
     assert recent_daemon_heartbeats(instance, now=now) == ["SCHEDULER"]
+
+
+def test_retired_provider_schedule_is_stopped_without_deleting_history(tmp_path):
+    instance = _Instance(
+        [
+            _state(
+                "yfinance_daily_work_worker_schedule",
+                "retired-origin",
+                "retired-selector",
+                running=True,
+            )
+        ]
+    )
+    repository = _Repository([])
+    plan = build_schedule_reconciliation_plan(instance, repository, Settings(_env_file=None))
+    assert plan.unmanaged_active_schedules == ()
+    assert [a.action for a in plan.actions] == ["stop_retired"]
+    apply_schedule_reconciliation_plan(
+        instance, repository, plan, marker_path=tmp_path / "origin.json"
+    )
+    assert instance.stopped == [("retired-origin", "retired-selector", None)]
+    assert instance.deleted == []
