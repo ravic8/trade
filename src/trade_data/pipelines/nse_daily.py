@@ -378,6 +378,7 @@ def run_daily(*, settings: Settings | None = None):
             .scalars()
             .all()
         )
+    sessions = [day if isinstance(day, date) else date.fromisoformat(day) for day in sessions]
     results, failures = [], []
     for day in sessions:
         with store.engine.connect() as c:
@@ -429,6 +430,7 @@ def repair_year(*, settings: Settings | None = None):
             .scalars()
             .all()
         )
+    days = [day if isinstance(day, date) else date.fromisoformat(day) for day in days]
     failures = []
     for day in days:
         with store.engine.connect() as c:
