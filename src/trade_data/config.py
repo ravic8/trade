@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     nse_retry_lookback_days: int = Field(default=7, ge=1, le=31)
     nse_request_interval_seconds: float = Field(default=1.0, ge=0.5, le=60)
     materialized_exchange_sessions_enabled: bool = True
-    exchange_session_history_years: int = Field(default=1, ge=1, le=2)
+    exchange_session_history_years: int = Field(default=1, ge=1, le=20)
     exchange_session_future_years: int = Field(default=1, ge=1, le=2)
     exchange_session_minimum_open_days_per_year: int = Field(default=220, ge=1, le=366)
     exchange_session_maximum_open_days_per_year: int = Field(default=260, ge=1, le=366)

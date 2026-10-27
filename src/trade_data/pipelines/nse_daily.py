@@ -38,22 +38,50 @@ def _identities(store: TimescaleStore, source: Bhavcopy) -> dict:
     for row in source.frame.itertuples():
         existing = symbols.get(row.exchange_symbol)
         if existing and existing.get("canonical_instrument_id"):
-            if existing.get("source_identity") != row.isin:
-                # Only inherit an already audited historical identity when the official
-                # stored bar matches every source field. New identity changes fail closed.
+            anchor = existing.get("source_identity")
+            reason = "exact_isin"
+            if not anchor:
+                # A missing legacy identity is established from the actual official
+                # equity record, not inferred from another data provider.
+                with store.engine.begin() as c:
+                    c.execute(
+                        symbols_table.update()
+                        .where(symbols_table.c.symbol == existing["symbol"])
+                        .where(symbols_table.c.exchange == "NSE")
+                        .where(symbols_table.c.source_identity.is_(None))
+                        .values(
+                            source_identity=row.isin,
+                            official_security_type="fully_paid_equity:" + row.series,
+                        )
+                    )
+                reason = "official_identity_established"
+            elif anchor != row.isin:
+                # NSDL issuer code is positions 4–7. Preserve raw dated ISINs and
+                # prices while retaining a stock alias across same-issuer equity
+                # serial changes. Never attach a reused ticker to another issuer.
+                same_issuer_equity = (
+                    anchor[:7] == row.isin[:7] and anchor[7:9] == row.isin[7:9] == "01"
+                )
                 old = by_symbol.get(row.exchange_symbol)
-                if (
-                    not old
-                    or old.volume != row.volume
-                    or any(
-                        abs(Decimal(str(getattr(row, f))) - getattr(old, f)) > Decimal("0.00000001")
+                audited = (
+                    old
+                    and old.volume == row.volume
+                    and all(
+                        abs(Decimal(str(getattr(row, f))) - getattr(old, f))
+                        <= Decimal("0.00000001")
                         for f in ("open", "high", "low", "close")
                     )
-                ):
+                )
+                if not same_issuer_equity and not audited:
                     raise ValueError(f"NSE identity changed; review ISIN: {row.exchange_symbol}")
+                reason = (
+                    "same_issuer_equity_serial" if same_issuer_equity else "prior_audited_identity"
+                )
             key = existing["provider_instrument_key"]
             canonical = existing["canonical_instrument_id"]
         else:
+            reason = "new_official_equity"
+            anchor = None
             key = "NSE|" + row.isin
             canonical = str(uuid5(NAMESPACE_URL, "nse-equity:" + row.isin))
             # New listings/previously uncollected equities are discovered from the
@@ -81,6 +109,8 @@ def _identities(store: TimescaleStore, source: Bhavcopy) -> dict:
             "provider_instrument_key": key,
             "canonical_instrument_id": canonical,
             "source_identity": row.isin,
+            "anchor_isin": anchor,
+            "identity_reason": reason,
             "provider_symbol": existing.get("yahoo_symbol") if existing else row.exchange_symbol,
         }
     if len({r["canonical_instrument_id"] for r in identities.values()}) != len(identities):
@@ -185,6 +215,16 @@ def _ingest(store, settings, source):
         "series_counts": source.frame.series.value_counts().to_dict(),
         "zero_volume_records": int(source.frame.volume.eq(0).sum()),
         "source_run_id": run,
+        "identity_bindings": [
+            {
+                "symbol": symbol,
+                "anchor_isin": value["anchor_isin"],
+                "source_isin": value["source_identity"],
+                "reason": value["identity_reason"],
+            }
+            for symbol, value in identities.items()
+            if value["identity_reason"] != "exact_isin"
+        ],
     }
     _checkpoint(
         store,

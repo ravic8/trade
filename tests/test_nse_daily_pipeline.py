@@ -282,3 +282,22 @@ def test_replication_bounds_instrument_parameters_for_a_full_exchange_file(monke
     )
     assert [n for n, _ in seen] == [200, 200, 200, 1]
     assert len({run for _, run in seen}) == 4
+
+
+def test_same_issuer_equity_serial_change_preserves_raw_prices_and_discloses_binding(storage):
+    source = parse_bhavcopy(archive([{"ISIN": "INE002A01026"}]), DAY)
+    binding = pipeline._identities(storage, source)["AAA"]
+    assert binding["canonical_instrument_id"] == "id-aaa"
+    assert binding["source_identity"] == "INE002A01026"
+    assert binding["anchor_isin"] == "INE002A01018"
+    assert binding["identity_reason"] == "same_issuer_equity_serial"
+    assert source.frame.iloc[0].open == Decimal("10.25")
+
+
+def test_missing_legacy_isin_is_established_from_official_source(storage):
+    with storage.engine.begin() as c:
+        c.execute(symbols_table.update().values(source_identity=None))
+    binding = pipeline._identities(storage, parse_bhavcopy(archive(), DAY))["AAA"]
+    assert binding["identity_reason"] == "official_identity_established"
+    with storage.engine.connect() as c:
+        assert c.execute(select(symbols_table.c.source_identity)).scalar() == "INE002A01018"

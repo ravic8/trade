@@ -43,7 +43,7 @@ def archive_url(session: date) -> str:
 def exclusion(row: dict[str, str]) -> str | None:
     if row["FinInstrmTp"] != "STK" or row["SctySrs"] not in SERIES:
         return "non_equity_series"
-    if not re.fullmatch(r"IN[E9][A-Z0-9]{9}", row["ISIN"]):
+    if not re.fullmatch(r"IN[E9][A-Z0-9]{9}", row["ISIN"]) or row["ISIN"][7:9] != "01":
         return "non_ordinary_equity_isin"
     if re.search(r"-RE\d*$|-(?:PP|P1|P2)$", row["TckrSymb"]) or re.search(
         r"RIGHTS? ENTITLEMENT|PARTLY PAID|EXCHANGE TRADED|\bETF\b", row["FinInstrmNm"]

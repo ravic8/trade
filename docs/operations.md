@@ -28,7 +28,11 @@ The daily scope includes main-market and SME ordinary equities, including BE/BZ.
 Funds/debt/rights/partly paid securities are excluded explicitly. Zero volume is a
 separate flag, not automatically an invalid bar. No-print sessions never receive
 synthetic candles. New securities are discovered from the file; unresolved issuer
-identity changes fail closed and require review. The frozen main-market audited
+issuer changes fail closed and require review. Missing identities are established
+from official records. Same-ticker ordinary-equity serial changes retain a stock's
+stable alias only within the same NSDL issuer code; the raw dated ISIN is preserved
+and each non-exact binding is recorded in the session proof. This never adjusts
+prices or volume. See [NSDL's ISIN structure](https://nsdl.co.in/downloadables/pdf/Demat%20and%20Remat%20of%20Securities%2001062021.pdf). The frozen main-market audited
 export remains unchanged and has a different scope from live collection.
 
 ## Jobs and schedules
