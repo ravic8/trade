@@ -213,3 +213,72 @@ def test_new_security_can_be_discovered_without_a_legacy_snapshot(storage):
     ids = pipeline._identities(storage, source)
     assert ids["NEW"]["provider_instrument_key"] == "NSE|INE003A01018"
     assert ids["NEW"]["source_identity"] == "INE003A01018"
+
+
+def test_replication_bounds_instrument_parameters_for_a_full_exchange_file(monkeypatch):
+    from types import SimpleNamespace
+
+    from trade_data.market_data import ingestion
+    from trade_data.market_data.replication import candle_batch_summary
+
+    source = parse_bhavcopy(archive(), DAY)
+    candles = []
+    from trade_data.market_data.contracts import CandleInterval, MarketCandle
+
+    for i in range(601):
+        candles.append(
+            MarketCandle(
+                instrument_id=f"id-{i}",
+                provider_symbol=f"S{i}",
+                symbol=f"S{i}",
+                exchange="NSE",
+                session_date=DAY,
+                open=Decimal(10),
+                high=Decimal(12),
+                low=Decimal(9),
+                close=Decimal(11),
+                volume=7,
+                currency="INR",
+                provider=SOURCE,
+                provider_timestamp=datetime.now(UTC),
+                request_id="test",
+                adapter_version="test",
+                interval=CandleInterval.ONE_DAY,
+            )
+        )
+    seen = []
+
+    class Repository:
+        def __init__(self, *a, **k):
+            self.candles = []
+
+        def insert_validated(self, rows, **kwargs):
+            self.candles = rows
+            seen.append((len(rows), kwargs["source_run_id"]))
+            return len(rows)
+
+        def batch_summary(self, **kwargs):
+            assert len(kwargs["instrument_ids"]) <= 200
+            return candle_batch_summary(self.candles)
+
+    monkeypatch.setattr(ingestion, "ClickHouseMarketDataRepository", Repository)
+    monkeypatch.setattr(ingestion, "create_clickhouse_client", lambda settings: None)
+    batch = ingestion.ValidatedMarketDataBatch(
+        SimpleNamespace(exchange="NSE", interval=CandleInterval.ONE_DAY),
+        source.frame,
+        tuple(candles),
+        None,
+        None,
+    )
+    settings = Settings(
+        _env_file=None,
+        clickhouse_enabled=True,
+        clickhouse_write_enabled=True,
+        clickhouse_password="test",
+    )
+    assert (
+        ingestion.replicate_validated_batch(settings, batch, source_run_id="whole-file", version=1)
+        == 601
+    )
+    assert [n for n, _ in seen] == [200, 200, 200, 1]
+    assert len({run for _, run in seen}) == 4
