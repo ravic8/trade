@@ -2,66 +2,38 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
-from trade_data.api import app as api_module
+from trade_data.api import app as api
+from trade_data.storage.timescale import ohlcv_daily_table
 
 
-class EmptyStore:
-    def market_status(self) -> list[dict]:
-        return []
+def test_empty_storage_is_empty_and_unreachable_storage_is_unknown(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    ohlcv_daily_table.create(engine)
+    monkeypatch.setattr(api, "_store", lambda: SimpleNamespace(engine=engine))
+    assert api.market_status() == []
 
-    def candles(self, ticker: str) -> list[dict]:
-        return []
+    def unavailable():
+        raise SQLAlchemyError("private connection detail")
 
-    def latest_runs(self) -> list[dict]:
-        return []
-
-
-class FailingStore(EmptyStore):
-    def market_status(self) -> list[dict]:
-        raise SQLAlchemyError("database unavailable")
-
-
-@pytest.fixture
-def production(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        api_module,
-        "get_settings",
-        lambda: SimpleNamespace(app_env="production"),
-    )
+    monkeypatch.setattr(api, "_store", unavailable)
+    with pytest.raises(HTTPException) as error:
+        api.market_status()
+    assert error.value.status_code == 503
+    assert "private" not in error.value.detail
 
 
-def test_production_market_status_never_returns_demo_rows(
-    monkeypatch: pytest.MonkeyPatch,
-    production: None,
-) -> None:
-    monkeypatch.setattr(api_module, "_store", lambda: EmptyStore())
-    assert api_module.market_status() == []
-
-    monkeypatch.setattr(api_module, "_store", lambda: FailingStore())
-    with pytest.raises(HTTPException) as exc_info:
-        api_module.market_status()
-    assert exc_info.value.status_code == 503
-
-
-def test_daily_api_excludes_discarded_and_research_routes() -> None:
-    from fastapi.testclient import TestClient
-    with TestClient(api_module.app) as client:
+def test_api_has_no_legacy_provider_mutations_or_research_routes():
+    with TestClient(api.app) as client:
         for path in (
-            "/api/chat/health", "/api/filings/health", "/api/research/notes",
-            "/api/opportunities/daily", "/api/screeners/intraday-range/latest",
-            "/api/symbols/MISSING.NS/candles",
+            "/api/chat/health",
+            "/api/filings/health",
+            "/api/research/notes",
+            "/api/admin/provider-credentials/upstox/status",
+            "/api/data/provider-history",
+            "/api/data/bulk-fetch",
         ):
-            assert client.get(path).status_code == 404, path
-
-
-def test_local_endpoints_do_not_generate_market_or_job_data(monkeypatch) -> None:
-    monkeypatch.setattr(api_module, "get_settings", lambda: SimpleNamespace(app_env="local"))
-    monkeypatch.setattr(api_module, "_store", lambda: EmptyStore())
-    assert api_module.market_status() == []
-    assert api_module.latest_jobs() == []
-    monkeypatch.setattr(api_module, "_store", lambda: FailingStore())
-    with pytest.raises(HTTPException) as unavailable_error:
-        api_module.market_status()
-    assert unavailable_error.value.status_code == 503
+            assert client.get(path).status_code == 404

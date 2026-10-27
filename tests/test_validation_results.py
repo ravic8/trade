@@ -88,9 +88,7 @@ def test_downstream_policy_accepts_only_named_safe_warnings() -> None:
     with pytest.raises(ValidationContractError, match="check.safe_warning"):
         report.require_downstream_ready()
 
-    report.require_downstream_ready(
-        accepted_warning_check_ids={"check.safe_warning"}
-    )
+    report.require_downstream_ready(accepted_warning_check_ids={"check.safe_warning"})
 
 
 @pytest.mark.parametrize("status", ["failed", "skipped_with_reason"])
@@ -102,6 +100,4 @@ def test_failed_or_skipped_check_cannot_be_accepted_as_safe_warning(status: str)
     )
 
     with pytest.raises(ValidationContractError, match="check.blocking"):
-        report.require_downstream_ready(
-            accepted_warning_check_ids={"check.blocking"}
-        )
+        report.require_downstream_ready(accepted_warning_check_ids={"check.blocking"})

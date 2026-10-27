@@ -69,18 +69,7 @@ def inspect_runtime(settings: Settings, *, check_services: bool = False) -> Runt
                 "redis", "fail", "Connection failed; check REDIS_URL and service health"
             )
 
-    daily_provider_configured = bool(
-        settings.yfinance_daily_enabled or settings.upstox_access_token
-    )
-    checks.append(
-        RuntimeCheck(
-            "daily_provider",
-            "configured" if daily_provider_configured else "not_configured",
-            "At least one daily provider is enabled or credentialed"
-            if daily_provider_configured
-            else "No daily provider is enabled; configure a real provider before ingestion",
-        )
-    )
+    checks.append(RuntimeCheck("daily_provider", "configured", "Official NSE final bhavcopy"))
     checks.append(
         RuntimeCheck(
             "clickhouse",

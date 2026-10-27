@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "baseline_commit": "cfc039b95218e6bc9d0ec7e9ca0b673f564497ce",
+  "baseline_commit": "7f76df0131911988de377d3df5c974aa0c07e91b",
   "verified_date": "2026-10-27",
   "documents": {
     "docs/operations.md": "current"
@@ -37,18 +37,8 @@
     "alertmanager"
   ],
   "dagster_schedules": [
-    "north_america_daily_yfinance_schedule",
-    "nse_universe_refresh_schedule",
-    "tsx_universe_refresh_schedule",
-    "us_universe_refresh_schedule",
-    "yfinance_daily_work_planner_schedule",
-    "yfinance_nse_completed_session_work_planner_schedule",
-    "yfinance_tsx_completed_session_work_planner_schedule",
-    "yfinance_us_completed_session_work_planner_schedule",
-    "yfinance_daily_work_worker_schedule",
-    "nse_exchange_sessions_schedule",
-    "tsx_exchange_sessions_schedule",
-    "us_exchange_sessions_schedule"
+    "nse_daily_bhavcopy_schedule",
+    "nse_exchange_sessions_schedule"
   ],
   "forbidden_current_claims": {
     "README.md": [

@@ -31,22 +31,29 @@ def test_daily_candle_read_matches_consumer_fixture_and_scopes_storage(monkeypat
         response = client.get("/api/data/candles", params=PARAMS)
     assert response.status_code == 200
     assert response.json() == fixture
-    assert calls == [{
-        "exchange": "NSE", "source": "yfinance",
-        "start_date": date(2026, 10, 15), "end_date": date(2026, 10, 16),
-        "instrument_keys": ["YF|RELIANCE.NS"],
-    }]
+    assert calls == [
+        {
+            "exchange": "NSE",
+            "source": "nse_official_bhavcopy",
+            "start_date": date(2026, 10, 15),
+            "end_date": date(2026, 10, 16),
+            "instrument_keys": ["YF|RELIANCE.NS"],
+        }
+    ]
 
 
-@pytest.mark.parametrize("params,status", [
-    ({"end_date": "2026-10-14"}, 400),
-    ({"start_date": "2000-01-01"}, 400),
-    ({"start_date": "0001-01-01"}, 400),
-    ({"instrument_key": " "}, 400),
-    ({"exchange": "FX"}, 400),
-    ({"provider": "upstox", "exchange": "US"}, 400),
-    ({"provider": "unknown"}, 422),
-])
+@pytest.mark.parametrize(
+    "params,status",
+    [
+        ({"end_date": "2026-10-14"}, 400),
+        ({"start_date": "2000-01-01"}, 400),
+        ({"start_date": "0001-01-01"}, 400),
+        ({"instrument_key": " "}, 400),
+        ({"exchange": "FX"}, 422),
+        ({"provider": "upstox", "exchange": "US"}, 422),
+        ({"provider": "unknown"}, 422),
+    ],
+)
 def test_unbounded_or_unsupported_reads_fail_before_storage(monkeypatch, params, status):
     monkeypatch.setattr(api, "_store", lambda: pytest.fail("Unexpected storage access"))
     with TestClient(api.app) as client:
@@ -81,14 +88,26 @@ def test_official_nse_source_is_explicit_and_never_falls_back_to_yahoo(monkeypat
 
     monkeypatch.setattr(api, "_store", Store)
     with TestClient(api.app) as client:
-        response = client.get("/api/data/candles", params={
-            **PARAMS, "provider": "nse_official_bhavcopy",
-        })
+        response = client.get(
+            "/api/data/candles",
+            params={
+                **PARAMS,
+                "provider": "nse_official_bhavcopy",
+            },
+        )
         assert response.status_code == 200
         assert response.json()["provider"] == "nse_official_bhavcopy"
         assert response.json()["rows"] == []
         assert calls[0]["source"] == "nse_official_bhavcopy"
-        assert client.get("/api/data/candles", params={
-            **PARAMS, "provider": "nse_official_bhavcopy", "exchange": "US",
-        }).status_code == 400
+        assert (
+            client.get(
+                "/api/data/candles",
+                params={
+                    **PARAMS,
+                    "provider": "nse_official_bhavcopy",
+                    "exchange": "US",
+                },
+            ).status_code
+            == 422
+        )
         assert len(calls) == 1

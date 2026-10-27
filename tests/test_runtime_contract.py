@@ -18,18 +18,20 @@ def test_doctor_does_not_expose_connection_strings_or_tokens() -> None:
     assert "private-db-pass" not in rendered
     assert "private-redis-pass" not in rendered
     assert "private-provider-token" not in rendered
-    assert next(check for check in report["checks"] if check["name"] == "daily_provider")[
-        "status"
-    ] == "configured"
+    assert (
+        next(check for check in report["checks"] if check["name"] == "daily_provider")["status"]
+        == "configured"
+    )
 
 
 def test_doctor_marks_missing_provider_without_blocking_local_startup() -> None:
     settings = Settings(_env_file=None, yfinance_daily_enabled=False, upstox_access_token=None)
     report = inspect_runtime(settings).as_dict()
     assert report["ready"] is True
-    assert next(check for check in report["checks"] if check["name"] == "daily_provider")[
-        "status"
-    ] == "not_configured"
+    assert (
+        next(check for check in report["checks"] if check["name"] == "daily_provider")["status"]
+        == "configured"
+    )
 
 
 def test_doctor_fails_closed_when_required_services_are_unreachable(

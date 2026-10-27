@@ -14,10 +14,7 @@ def validate_ohlcv(df: pd.DataFrame) -> list[MarketDataQualityReport]:
     for ticker, group in df.groupby("Ticker"):
         sorted_group = group.sort_values("Date")
         missing_ohlcv = int(
-            sorted_group[["Open", "High", "Low", "Close", "Volume"]]
-            .isna()
-            .any(axis=1)
-            .sum()
+            sorted_group[["Open", "High", "Low", "Close", "Volume"]].isna().any(axis=1).sum()
         )
         bad_close = int((sorted_group["Close"] <= 0).fillna(False).sum())
         zero_volume = int((sorted_group["Volume"] <= 0).fillna(False).sum())

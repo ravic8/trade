@@ -1,6 +1,5 @@
 """Daily data contracts and fail-closed publication evaluation."""
 
-
 from trade_data.contracts.daily_catalog import (
     DAILY_DATA_CONTRACT_REGISTRY,
     DAILY_DATA_CONTRACTS,

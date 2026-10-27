@@ -45,5 +45,3 @@ def _normalized_items(value: str | Iterable[str]) -> set[str]:
     else:
         items = value
     return {item.strip().lower() for item in items if item and item.strip()}
-
-

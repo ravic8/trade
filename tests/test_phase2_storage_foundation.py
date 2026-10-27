@@ -195,9 +195,9 @@ def test_phase2_settings_fail_closed() -> None:
 
 
 def test_clickhouse_role_limits_use_validated_numeric_literals() -> None:
-    script = (
-        Path(__file__).parents[1] / "clickhouse" / "bootstrap-access.sh"
-    ).read_text(encoding="utf-8")
+    script = (Path(__file__).parents[1] / "clickhouse" / "bootstrap-access.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "invalid numeric ClickHouse role limit" in script
     assert "invalid ClickHouse identifier" in script

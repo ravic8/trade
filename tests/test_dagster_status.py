@@ -112,9 +112,7 @@ def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> No
     statuses = read_dagster_schedule_statuses(
         home,
         {
-            "yfinance_daily_work_worker_schedule": (
-                "yfinance_daily_work_worker_job"
-            ),
+            "yfinance_daily_work_worker_schedule": ("yfinance_daily_work_worker_job"),
             "stopped_by_default_schedule": "stopped_by_default_job",
         },
     )
@@ -145,10 +143,13 @@ def test_status_reader_reports_stale_origin_ticks_and_runs(tmp_path: Path) -> No
 def test_status_reader_returns_empty_when_storage_is_unavailable(
     tmp_path: Path,
 ) -> None:
-    assert read_dagster_schedule_statuses(
-        tmp_path / "missing",
-        {"schedule": "job"},
-    ) == {}
+    assert (
+        read_dagster_schedule_statuses(
+            tmp_path / "missing",
+            {"schedule": "job"},
+        )
+        == {}
+    )
 
 
 def test_instigator_name_supports_legacy_serialized_shape() -> None:
@@ -379,9 +380,7 @@ def test_readonly_sqlite_opens_wal_database_on_readonly_mount(
     database_dir.chmod(0o555)
     try:
         with _readonly_sqlite(database_path) as connection:
-            assert connection.execute("SELECT value FROM values_table").fetchone()[
-                0
-            ] == 1
+            assert connection.execute("SELECT value FROM values_table").fetchone()[0] == 1
     finally:
         database_dir.chmod(0o755)
         database_path.chmod(0o644)

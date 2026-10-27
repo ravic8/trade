@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from time import perf_counter
@@ -10,12 +9,7 @@ import pandas as pd
 
 from trade_data.config import Settings
 from trade_data.control_plane.artifacts import ArtifactManifestRepository
-from trade_data.market_data.adapters import yfinance_frame_to_candles
-from trade_data.market_data.contracts import CandleInterval, MarketCandle, ProviderRequest
-from trade_data.market_data.quality import (
-    MarketDataQualityRepository,
-    validation_quality_outcomes,
-)
+from trade_data.market_data.contracts import MarketCandle, ProviderRequest
 from trade_data.market_data.raw_snapshots import RawSnapshotWriter, StoredRawSnapshot
 from trade_data.market_data.replication import (
     MarketDataReplicationError,
@@ -29,8 +23,6 @@ from trade_data.market_data.replication import (
 )
 from trade_data.market_data.validation import (
     CandleValidationResult,
-    MarketDataValidationError,
-    validate_candle_batch,
 )
 from trade_data.storage.clickhouse import (
     ClickHouseMarketDataRepository,
@@ -46,98 +38,6 @@ class ValidatedMarketDataBatch:
     candles: tuple[MarketCandle, ...]
     validation: CandleValidationResult
     raw_snapshot: StoredRawSnapshot | None
-
-
-def prepare_yfinance_batch(
-    *,
-    settings: Settings,
-    database_engine: Any,
-    frame: pd.DataFrame,
-    raw_frame: pd.DataFrame | None = None,
-    exchange: str,
-    interval: CandleInterval,
-    run_id: str,
-    window_start: date | datetime,
-    window_end: date | datetime,
-    provider_symbols: Sequence[str],
-    canonical_instrument_ids: Mapping[str, str],
-    eligible_sessions: set[date] | None,
-    retrieved_at: datetime,
-    adapter_version: str = "yfinance-v1",
-    quarantine_invalid_instruments: bool = False,
-) -> ValidatedMarketDataBatch:
-    """Snapshot, translate, validate, and deduplicate one yfinance response."""
-
-    request = ProviderRequest(
-        request_id=f"{run_id}-{exchange.lower()}-{interval.value}",
-        provider="yfinance",
-        exchange=exchange.upper(),
-        interval=interval,
-        window_start=_as_datetime(window_start),
-        window_end=_exclusive_end(window_end),
-        provider_symbols=tuple(sorted(set(provider_symbols))),
-        retrieved_at=_as_utc(retrieved_at),
-        adapter_version=adapter_version,
-        parameters={"auto_adjust": False},
-    )
-    snapshot = _write_raw_snapshot_if_enabled(
-        settings=settings,
-        database_engine=database_engine,
-        request=request,
-        frame=raw_frame if raw_frame is not None else frame,
-    )
-    from trade_data.market_data.corrections import apply_verified_daily_corrections
-
-    frame = apply_verified_daily_corrections(
-        database_engine, frame, exchange=exchange, provider="yfinance"
-    )
-    currency = {"NSE": "INR", "TSX": "CAD", "US": "USD"}.get(exchange.upper(), "USD")
-    candles = yfinance_frame_to_candles(
-        frame,
-        request,
-        currency=currency,
-        raw_artifact_id=(snapshot.artifact_manifest_id if snapshot is not None else None),
-        canonical_instrument_ids=canonical_instrument_ids,
-    )
-    validation = validate_candle_batch(
-        request,
-        candles,
-        eligible_sessions=eligible_sessions,
-        observed_at=retrieved_at,
-    )
-    MarketDataQualityRepository(database_engine).record(
-        validation_quality_outcomes(
-            request=request,
-            source_run_id=run_id,
-            result=validation,
-        )
-    )
-    if not validation.valid and not quarantine_invalid_instruments:
-        raise MarketDataValidationError(validation)
-    rejected_instruments = validation.invalid_instrument_ids
-    quarantined_symbols = {
-        candle.provider_symbol for candle in candles if candle.instrument_id in rejected_instruments
-    }
-    publishable_frame = (
-        frame.loc[~frame["TradingSymbol"].isin(quarantined_symbols)]
-        if quarantined_symbols
-        else frame
-    )
-    identity_columns = ["InstrumentKey", "Date"]
-    accepted_frame = publishable_frame.drop_duplicates(
-        subset=identity_columns, keep="first"
-    ).reset_index(drop=True)
-    return ValidatedMarketDataBatch(
-        request=request,
-        frame=accepted_frame,
-        candles=tuple(
-            candle
-            for candle in validation.accepted
-            if candle.instrument_id not in rejected_instruments
-        ),
-        validation=validation,
-        raw_snapshot=snapshot,
-    )
 
 
 def replicate_validated_batch(

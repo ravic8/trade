@@ -89,11 +89,7 @@ def read_dagster_schedule_statuses(
             current_origin.schedule_selector_ids.get(schedule_name),
         )
         latest_tick = max(
-            (
-                ticks[str(row["selector_id"])]
-                for row in rows
-                if str(row["selector_id"]) in ticks
-            ),
+            (ticks[str(row["selector_id"])] for row in rows if str(row["selector_id"]) in ticks),
             key=lambda item: _timestamp_sort_key(item["timestamp"]),
             default=None,
         )
@@ -102,23 +98,13 @@ def read_dagster_schedule_statuses(
             actual_status=actual_status,
             origin_health=origin_health,
             origin_drift=(
-                origin_health in {"stale", "mixed"}
-                if origin_health != "unknown"
-                else None
+                origin_health in {"stale", "mixed"} if origin_health != "unknown" else None
             ),
-            stored_origin_count=len(
-                {str(row["repository_origin_id"]) for row in rows}
-            ),
-            active_origin_count=len(
-                {str(row["repository_origin_id"]) for row in active_rows}
-            ),
-            last_tick_status=(
-                str(latest_tick["status"]).lower() if latest_tick else None
-            ),
+            stored_origin_count=len({str(row["repository_origin_id"]) for row in rows}),
+            active_origin_count=len({str(row["repository_origin_id"]) for row in active_rows}),
+            last_tick_status=(str(latest_tick["status"]).lower() if latest_tick else None),
             last_tick_at=(
-                _timestamp_to_datetime(latest_tick["timestamp"])
-                if latest_tick
-                else None
+                _timestamp_to_datetime(latest_tick["timestamp"]) if latest_tick else None
             ),
             last_run_status=job_runs.get("last_run_status"),
             last_run_at=job_runs.get("last_run_at"),
@@ -213,9 +199,9 @@ def _latest_ticks(connection: sqlite3.Connection) -> dict[str, sqlite3.Row]:
     for row in rows:
         selector_id = str(row["selector_id"])
         existing = latest.get(selector_id)
-        if existing is None or _timestamp_sort_key(
-            row["timestamp"]
-        ) > _timestamp_sort_key(existing["timestamp"]):
+        if existing is None or _timestamp_sort_key(row["timestamp"]) > _timestamp_sort_key(
+            existing["timestamp"]
+        ):
             latest[selector_id] = row
     return latest
 
@@ -233,20 +219,13 @@ def _origin_health(
         # effect and there is no stale origin capable of launching ticks.
         return "current"
     relevant = active_rows or rows
-    identities = {
-        (str(row["repository_origin_id"]), str(row["selector_id"]))
-        for row in relevant
-    }
+    identities = {(str(row["repository_origin_id"]), str(row["selector_id"])) for row in relevant}
     if current_selector_id is None:
         current_identities = {
-            identity
-            for identity in identities
-            if identity[0] == current_repository_origin_id
+            identity for identity in identities if identity[0] == current_repository_origin_id
         }
     else:
-        current_identities = {
-            (current_repository_origin_id, current_selector_id)
-        } & identities
+        current_identities = {(current_repository_origin_id, current_selector_id)} & identities
     if identities == current_identities:
         return "current"
     if current_identities:

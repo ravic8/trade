@@ -9,6 +9,7 @@ from sqlalchemy import engine_from_config, pool
 from trade_data.config import get_settings
 from trade_data.control_plane import tables as control_plane_tables
 from trade_data.operations.tables import workflow_requests_table as workflow_requests_table
+from trade_data.storage.nse import nse_sessions as nse_sessions
 from trade_data.storage.timescale import metadata
 
 config = context.config

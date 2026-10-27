@@ -1,31 +1,34 @@
 # Trade — NSE daily data backend
 
-Trade owns daily NSE equity OHLCV collection, validation, PostgreSQL/TimescaleDB
-storage, ClickHouse replication and operational health monitoring. Frontend,
-fundamental analysis, ML and backtesting are outside this repository's scope.
+Trade collects official NSE final bhavcopies, validates ordinary-equity OHLCV,
+stores it in PostgreSQL/TimescaleDB, and verifies replication into ClickHouse.
+The API serves only `nse_official_bhavcopy`; there is no alternate-provider fallback.
+Frontend, fundamental analysis, ML and backtesting belong outside this repository.
 
-The intended daily source is the official NSE final bhavcopy. **The source-code
-and scheduled-collector migration is still pending.** This file cleanup does not
-switch the running collectors or redeploy production.
+## Data and coverage
 
-## Retained audited data
+The collector includes fully paid ordinary equities in EQ, BE, BZ, SM, ST and SZ
+series, with explicit fund, debt, rights and partly paid exclusions. Volume is
+exact integer exchange-reported shares; prices are unadjusted as traded. Every
+eligible record in a final file must match both databases before that session is
+marked complete. An absent exchange print is not a missing ingestion record.
 
-The only retained market-data export is:
+The scheduled job checks after publication, retries unavailable/failed files,
+and catches recent missed sessions. A separate, unscheduled job verifies and
+completes the rolling past year through the latest eligible completed session.
+Existing database history is preserved under its original source labels.
+
+The immutable audited export remains at:
 
 ```
 data/audited/nse_daily_2025-10-24_2026-10-23.parquet
 data/audited/manifest.json
 ```
 
-It contains 574,811 audited NSE bars for 2,612 ordinary main-market stocks across
-247 sessions. Prices are unadjusted as traded; volume is exact exchange-reported
-integer shares. Provenance, security IDs and archive checksums are included in
-the rows. The manifest records its checksum and existing audit results.
-
-Other generated exports, raw downloads, historical reports and temporary files
-have been removed from this checkout rather than archived elsewhere. PostgreSQL,
-ClickHouse, existing database dumps, secrets and infrastructure state are not
-cleanup targets. Existing server data is outside this local cleanup.
+It contains 574,811 NSE bars for 2,612 main-market stocks across 247 sessions.
+It is a frozen historical scope, not the live pipeline's coverage denominator.
+No other generated exports, source archives or accumulated reports belong in
+this checkout. Database storage, backups and credentials must not be deleted.
 
 ## Development
 
@@ -34,11 +37,12 @@ Python 3.11+:
 ```sh
 uv sync --extra dev
 uv run pytest -q
-uv run ruff check src tests scripts
+uv run ruff check
 python scripts/check_current_state_docs.py
+uv run trade-data doctor --check-services
 ```
 
 Keep credentials in private environment configuration. See `.env.example`,
-`.env.prod.example` and [operations](docs/operations.md). Infrastructure/schema
-compatibility files remain in `deploy/`, `migrations/`, `clickhouse/` and Compose.
-Do not run volume deletion or retention commands as part of repository cleanup.
+`.env.prod.example` and [operations](docs/operations.md). Historical schema
+revision IDs, tables, instrument aliases and storage names remain compatible;
+these do not enable legacy collectors.

@@ -6,12 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-VALIDATION_RESULT_CONTRACT_VERSION: Literal["validation_result.v1"] = (
-    "validation_result.v1"
-)
-VALIDATION_REPORT_CONTRACT_VERSION: Literal["validation_report.v1"] = (
-    "validation_report.v1"
-)
+VALIDATION_RESULT_CONTRACT_VERSION: Literal["validation_result.v1"] = "validation_result.v1"
+VALIDATION_REPORT_CONTRACT_VERSION: Literal["validation_report.v1"] = "validation_report.v1"
 
 ValidationSeverity = Literal["info", "warning", "error"]
 ValidationStatus = Literal["passed", "warning", "failed", "skipped_with_reason"]
@@ -109,10 +105,7 @@ class ValidationReport(BaseModel):
             result
             for result in self.results
             if result.status in {"failed", "skipped_with_reason"}
-            or (
-                result.status == "warning"
-                and result.check_id not in accepted_warnings
-            )
+            or (result.status == "warning" and result.check_id not in accepted_warnings)
         )
 
     def require_downstream_ready(
@@ -120,9 +113,7 @@ class ValidationReport(BaseModel):
         *,
         accepted_warning_check_ids: Collection[str] = (),
     ) -> None:
-        blockers = self.downstream_blockers(
-            accepted_warning_check_ids=accepted_warning_check_ids
-        )
+        blockers = self.downstream_blockers(accepted_warning_check_ids=accepted_warning_check_ids)
         if not blockers:
             return
         details = "; ".join(

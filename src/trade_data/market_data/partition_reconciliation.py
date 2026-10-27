@@ -193,21 +193,16 @@ class DailyPartitionReconciler:
         *,
         month: str,
         repair: bool = False,
-        provider: str = "yfinance",
+        provider: str = "nse_official_bhavcopy",
         exchange: str = "NSE",
         workspace_id: str = "default",
         source_run_id: str | None = None,
         at: datetime | None = None,
     ) -> DailyPartitionReconciliationResult:
         window_start, window_end = month_window(month)
-        if (
-            provider not in {"yfinance", "nse_official_bhavcopy"}
-            or exchange != "NSE"
-            or workspace_id != "default"
-        ):
+        if provider != "nse_official_bhavcopy" or exchange != "NSE" or workspace_id != "default":
             raise ValueError(
-                "daily partition reconciliation supports default/NSE "
-                "yfinance or nse_official_bhavcopy"
+                "daily partition reconciliation supports default/NSE nse_official_bhavcopy"
             )
         observed_at = _as_utc(at or datetime.now(UTC))
         run_id = source_run_id or f"phase3-daily-{month}-{uuid4()}"

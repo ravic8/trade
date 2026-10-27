@@ -27,7 +27,7 @@ def test_unclassified_command_fails_closed_in_production() -> None:
 
 
 def test_read_only_command_is_allowed_in_production() -> None:
-    enforce_cli_policy("market-session", app_env="production")
+    enforce_cli_policy("doctor", app_env="production")
 
 
 def test_mutating_command_is_allowed_outside_production() -> None:
