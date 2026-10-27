@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that canonical Phase 0 documentation matches repository structure."""
+"""Check the operating guide and preserved deployment structure."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST_PATH = ROOT / "docs/current_state_manifest.json"
+MANIFEST_PATH = ROOT / "deploy/repository_contract.json"
 ALLOWED_STATUSES = {
     "current",
     "historical",
@@ -161,14 +161,6 @@ def check() -> list[str]:
             if claim in text:
                 errors.append(
                     f"{relative_path}: obsolete current claim remains: {claim!r}"
-                )
-
-    current_state = (ROOT / "docs/current_state.md").read_text(encoding="utf-8")
-    for relative_path, status in manifest["documents"].items():
-        if status == "current" and relative_path.startswith("docs/phase0_"):
-            if relative_path not in current_state:
-                errors.append(
-                    f"docs/current_state.md: missing companion {relative_path}"
                 )
 
     return errors
