@@ -301,3 +301,32 @@ def test_missing_legacy_isin_is_established_from_official_source(storage):
     assert binding["identity_reason"] == "official_identity_established"
     with storage.engine.connect() as c:
         assert c.execute(select(symbols_table.c.source_identity)).scalar() == "INE002A01018"
+
+
+def test_renamed_ticker_alias_does_not_duplicate_the_same_stored_candle(monkeypatch, storage):
+    memory_replica(monkeypatch)
+    with storage.engine.begin() as c:
+        c.execute(
+            symbols_table.insert().values(
+                symbol="OLDNAME",
+                exchange="NSE",
+                source=SOURCE,
+                source_identity="INE002A01018",
+                canonical_instrument_id="id-aaa",
+                provider_instrument_key="legacy|AAA",
+                yahoo_symbol="OLDNAME.NS",
+                fetched_at=datetime.now(UTC),
+            )
+        )
+    result = pipeline._ingest(storage, Settings(_env_file=None), parse_bhavcopy(archive(), DAY))
+    assert result["rows"] == 1
+    assert result["status"] == "complete"
+
+
+@pytest.mark.parametrize(
+    "end,start", [(date(2026, 10, 27), date(2025, 10, 28)), (date(2024, 2, 29), date(2023, 3, 1))]
+)
+def test_rolling_year_matches_frozen_snapshot_date_convention(end, start):
+    from trade_data.data.nse_bhavcopy import rolling_year_start
+
+    assert rolling_year_start(end) == start

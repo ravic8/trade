@@ -143,6 +143,7 @@ class PostgreSQLDailyPartitionRepository:
                 f"{preview}{'…' if len(unmapped) > 5 else ''}"
             )
         rows: dict[tuple[str, str, date], DailyReplicaRow] = {}
+        physical_keys = {}
         for record in records:
             fetched_at = _as_utc(record["fetched_at"])
             row = DailyReplicaRow(
@@ -162,10 +163,21 @@ class PostgreSQLDailyPartitionRepository:
                 provider_timestamp=fetched_at,
             )
             if row.identity in rows:
-                raise ValueError(
-                    f"Canonical identity collision in PostgreSQL daily partition: {row.identity}"
-                )
+                previous = rows[row.identity]
+                # Renamed exchange tickers can be aliases of one stable physical
+                # key. A join must not turn that same candle into two records.
+                if physical_keys[row.identity] != record[
+                    "instrument_key"
+                ] or daily_replica_content_sha256(previous) != daily_replica_content_sha256(row):
+                    raise ValueError(
+                        "Canonical identity collision in PostgreSQL daily partition: "
+                        f"{row.identity}"
+                    )
+                if row.provider_symbol == row.symbol:
+                    rows[row.identity] = row
+                continue
             rows[row.identity] = row
+            physical_keys[row.identity] = record["instrument_key"]
         return list(rows.values())
 
 

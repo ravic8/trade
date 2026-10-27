@@ -12,7 +12,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from trade_data.config import Settings, get_settings
-from trade_data.data.nse_bhavcopy import SOURCE, Bhavcopy, fetch_bhavcopy
+from trade_data.data.nse_bhavcopy import SOURCE, Bhavcopy, fetch_bhavcopy, rolling_year_start
 from trade_data.market_data.ingestion import replicate_validated_batch
 from trade_data.market_data.partition_reconciliation import (
     DailyReplicaRow,
@@ -150,27 +150,32 @@ def ingest_session(session: date, *, settings: Settings | None = None, loader=fe
     if not settings.clickhouse_write_enabled:
         raise ValueError("NSE publication requires PostgreSQL and ClickHouse writes")
     store = TimescaleStore(settings.database_url)
-    # Session-level lock prevents concurrent historical/daily imports and conflicting proofs.
-    with store.engine.connect() as lock:
-        locked = lock.execute(
-            text("SELECT pg_try_advisory_lock(:key)"), {"key": 726000000 + session.toordinal()}
-        ).scalar()
-        if not locked:
-            return {"session": str(session), "status": "already_running"}
-        try:
-            return _ingest(store, settings, loader(session))
-        except Exception as exc:
-            _checkpoint(
-                store,
-                session,
-                "failed",
-                details={"error_type": type(exc).__name__, "message": str(exc)[:400]},
-            )
-            raise
-        finally:
-            lock.execute(
-                text("SELECT pg_advisory_unlock(:key)"), {"key": 726000000 + session.toordinal()}
-            )
+    try:
+        # Session-level lock prevents concurrent historical/daily imports and conflicting proofs.
+        with store.engine.connect() as lock:
+            locked = lock.execute(
+                text("SELECT pg_try_advisory_lock(:key)"), {"key": 726000000 + session.toordinal()}
+            ).scalar()
+            if not locked:
+                return {"session": str(session), "status": "already_running"}
+            try:
+                return _ingest(store, settings, loader(session))
+            except Exception as exc:
+                _checkpoint(
+                    store,
+                    session,
+                    "failed",
+                    details={"error_type": type(exc).__name__, "message": str(exc)[:400]},
+                )
+                raise
+            finally:
+                lock.execute(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": 726000000 + session.toordinal()},
+                )
+
+    finally:
+        store.engine.dispose()
 
 
 def _checkpoint(store, session, status, **values):
@@ -353,11 +358,7 @@ def repair_year(*, settings: Settings | None = None):
     end = store.latest_provider_eligible_exchange_session(
         "NSE", provider_grace_minutes=settings.nse_publication_grace_minutes
     )["session_date"]
-    start = (
-        end.replace(year=end.year - 1)
-        if (end.month, end.day) != (2, 29)
-        else date(end.year - 1, 2, 28)
-    )
+    start = rolling_year_start(end)
     with store.engine.connect() as c:
         days = (
             c.execute(

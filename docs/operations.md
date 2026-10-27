@@ -45,7 +45,7 @@ Only two schedules are loaded, both Asia/Kolkata:
 - `nse_exchange_sessions_schedule`: 06:00 on the first of each month.
 
 `nse_one_year_repair_job` is manual and resumable. It source-verifies each exchange
-session from the latest eligible session minus one calendar year through that
+session from the day after the prior-year anniversary through the latest eligible
 session, skipping only sessions with a completed durable source proof. Daily and
 historical jobs serialize the same session with PostgreSQL advisory locks.
 Successful replay upserts the same logical keys; it does not duplicate daily bars.

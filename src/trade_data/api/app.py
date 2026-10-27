@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from trade_data.api.daily_schemas import DailyCandle, DailyCandlesResponse
 from trade_data.api.security import cors_origins
 from trade_data.config import get_settings
-from trade_data.data.nse_bhavcopy import SOURCE
+from trade_data.data.nse_bhavcopy import SOURCE, rolling_year_start
 from trade_data.storage.nse import nse_sessions
 from trade_data.storage.timescale import TimescaleStore
 
@@ -102,6 +102,29 @@ def pipeline_health():
                     select(nse_sessions).order_by(nse_sessions.c.session_date.desc()).limit(10)
                 ).mappings()
             ]
+        year = None
+        if expected:
+            end = expected["session_date"]
+            with store.engine.connect() as c:
+                year = dict(
+                    c.execute(
+                        text("""SELECT COUNT(*) AS expected_sessions,
+                    COUNT(*) FILTER (WHERE n.status='complete') AS complete_sessions
+                    FROM exchange_sessions e LEFT JOIN nse_bhavcopy_sessions n
+                    ON n.session_date=e.session_date
+                    WHERE e.exchange='NSE' AND e.is_trading_day
+                    AND e.validation_status LIKE 'valid%'
+                    AND e.session_date BETWEEN :start AND :end"""),
+                        {"start": rolling_year_start(end), "end": end},
+                    )
+                    .mappings()
+                    .one()
+                )
+            year.update(
+                start_date=rolling_year_start(end),
+                end_date=end,
+                complete=year["expected_sessions"] == year["complete_sessions"],
+            )
         latest = rows[0] if rows else None
         complete = bool(
             expected
@@ -114,6 +137,7 @@ def pipeline_health():
             "expected_session": expected["session_date"] if expected else None,
             "complete": complete,
             "sessions": rows,
+            "rolling_year": year,
             "coverage_basis": "eligible ordinary equity records in official final bhavcopy",
         }
     except SQLAlchemyError:

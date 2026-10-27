@@ -52,12 +52,18 @@ def replicate_validated_batch(
     """Bound ClickHouse parameter size as well as insert payload size."""
     if not settings.clickhouse_write_enabled or not batch.candles:
         return 0
+    repository = ClickHouseMarketDataRepository(
+        create_clickhouse_client(settings),
+        database=settings.clickhouse_database,
+        write_enabled=True,
+    )
     total = 0
     for offset in range(0, len(batch.candles), 200):
         chunk = replace(batch, candles=batch.candles[offset : offset + 200])
         total += _replicate_chunk(
             settings,
             chunk,
+            repository=repository,
             database_engine=database_engine,
             source_run_id=f"{source_run_id}-{offset // 200:04d}",
             source_store=source_store,
@@ -70,6 +76,7 @@ def _replicate_chunk(
     settings: Settings,
     batch: ValidatedMarketDataBatch,
     *,
+    repository: ClickHouseMarketDataRepository,
     database_engine: Any | None = None,
     source_run_id: str,
     source_store: str = "validated_batch",
@@ -77,11 +84,6 @@ def _replicate_chunk(
 ) -> int:
     if not settings.clickhouse_write_enabled or not batch.candles:
         return 0
-    repository = ClickHouseMarketDataRepository(
-        create_clickhouse_client(settings),
-        database=settings.clickhouse_database,
-        write_enabled=True,
-    )
     candles = list(batch.candles)
     source = candle_batch_summary(candles)
     business = candle_business_batch_summary(candles)

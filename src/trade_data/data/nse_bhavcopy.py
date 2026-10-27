@@ -9,7 +9,7 @@ import re
 import zipfile
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -143,3 +143,13 @@ def fetch_bhavcopy(session: date) -> Bhavcopy:
     except httpx.HTTPError as exc:
         raise BhavcopyUnavailable(f"Official NSE final file unavailable for {session}") from exc
     return parse_bhavcopy(bytes(raw), session)
+
+
+def rolling_year_start(end: date) -> date:
+    """Same inclusive one-year convention as the retained 24 Oct–23 Oct snapshot."""
+    anniversary = (
+        end.replace(year=end.year - 1, day=28)
+        if (end.month, end.day) == (2, 29)
+        else end.replace(year=end.year - 1)
+    )
+    return anniversary + timedelta(days=1)
