@@ -29,8 +29,6 @@ services:
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
       TELEMETRY_RELEASE: ${TELEMETRY_RELEASE:-local}
-      INGESTION_PROFILE: local
-      DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:5173,http://localhost:8000}
     ports:
       - "${API_PORT:-8000}:8000"
@@ -87,9 +85,6 @@ services:
       OBJECT_STORE_RAW_BUCKET: trade-raw
       OBJECT_STORE_DATASETS_BUCKET: trade-datasets
       OBJECT_STORE_EXPORTS_BUCKET: trade-exports
-      PHASE3_MARKET_DATA_ENABLED: ${PHASE3_MARKET_DATA_ENABLED:-false}
-      INGESTION_PROFILE: local
-      DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
     ports:
       - "3000:3000"
     volumes:
@@ -132,9 +127,6 @@ services:
       OBJECT_STORE_RAW_BUCKET: trade-raw
       OBJECT_STORE_DATASETS_BUCKET: trade-datasets
       OBJECT_STORE_EXPORTS_BUCKET: trade-exports
-      PHASE3_MARKET_DATA_ENABLED: ${PHASE3_MARKET_DATA_ENABLED:-false}
-      INGESTION_PROFILE: local
-      DATA_PIPELINE_THROTTLE_SECONDS: ${DATA_PIPELINE_THROTTLE_SECONDS:-0}
     volumes:
       - ./data:/app/data
       - ./artifacts:/app/artifacts

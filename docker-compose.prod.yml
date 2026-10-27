@@ -89,15 +89,10 @@ services:
       DAGSTER_READONLY_HOME: /app/dagster_readonly
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
-      INGESTION_PROFILE: prod
-      PROVIDER_RATE_LIMIT_BACKEND: redis
-      PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
       API_CORS_ORIGINS: ${PROD_API_CORS_ORIGINS:-http://localhost:8080}
       APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
       ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
       ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
-      DATA_PIPELINE_MAX_CONCURRENT_FETCHES: ${PROD_DATA_PIPELINE_MAX_CONCURRENT_FETCHES:-1}
-      DATA_PIPELINE_THROTTLE_SECONDS: ${PROD_DATA_PIPELINE_THROTTLE_SECONDS:-0}
       TSX_OFFICIAL_ISSUER_URL: ${PROD_TSX_OFFICIAL_ISSUER_URL:-https://www.tsx.com/en/resource/571}
       TSX_OFFICIAL_DIRECTORY_BASE_URL: ${PROD_TSX_OFFICIAL_DIRECTORY_BASE_URL:-https://www.tsx.com/json/company-directory}
       TSX_OFFICIAL_TIMEOUT_SECONDS: ${PROD_TSX_OFFICIAL_TIMEOUT_SECONDS:-30}
@@ -142,14 +137,9 @@ services:
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
       GOOGLE_APPLICATION_CREDENTIALS: ${PROD_BIGQUERY_CREDENTIALS_PATH:-/run/secrets/gcp/service-account.json}
-      INGESTION_PROFILE: prod
-      PROVIDER_RATE_LIMIT_BACKEND: redis
-      PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
       APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
       ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
       ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
-      DATA_PIPELINE_MAX_CONCURRENT_FETCHES: ${PROD_DATA_PIPELINE_MAX_CONCURRENT_FETCHES:-1}
-      DATA_PIPELINE_THROTTLE_SECONDS: ${PROD_DATA_PIPELINE_THROTTLE_SECONDS:-0}
       TSX_OFFICIAL_ISSUER_URL: ${PROD_TSX_OFFICIAL_ISSUER_URL:-https://www.tsx.com/en/resource/571}
       TSX_OFFICIAL_DIRECTORY_BASE_URL: ${PROD_TSX_OFFICIAL_DIRECTORY_BASE_URL:-https://www.tsx.com/json/company-directory}
       TSX_OFFICIAL_TIMEOUT_SECONDS: ${PROD_TSX_OFFICIAL_TIMEOUT_SECONDS:-30}
@@ -197,9 +187,6 @@ services:
       DATABASE_URL: ${PROD_DATABASE_URL:-postgresql+psycopg://trade:trade_prod_change_me@postgres:5432/trade_research}
       REDIS_URL: ${PROD_REDIS_URL:-redis://redis:6379/0}
       GOOGLE_APPLICATION_CREDENTIALS: ${PROD_BIGQUERY_CREDENTIALS_PATH:-/run/secrets/gcp/service-account.json}
-      INGESTION_PROFILE: prod
-      PROVIDER_RATE_LIMIT_BACKEND: redis
-      PROVIDER_RATE_LIMIT_REQUIRE_REDIS: "true"
       APP_SECRET_KEY: ${PROD_APP_SECRET_KEY:-}
       ADMIN_EMAILS: ${PROD_ADMIN_EMAILS:-}
       ADMIN_EMAIL_HEADERS: ${PROD_ADMIN_EMAIL_HEADERS:-cf-access-authenticated-user-email,x-forwarded-email,x-authenticated-user-email}
