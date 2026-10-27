@@ -21,7 +21,13 @@ Files are downloaded in bounded memory without creating local CSV/ZIP/Parquet du
 exclusions, database counts, business digest and completion/failure state. Only a
 comparison of both replicas against actual NSE records establishes completeness.
 Failed imports remain retryable; publication in one database is not success.
-Original database source labels are preserved. Applied migrations, old columns and
+The new authoritative publication is versioned as `nse_bhavcopy`. Earlier
+`nse_official_bhavcopy` audit/import records and all other source histories remain
+untouched. This separate publication avoids treating current-ticker historical
+aliases as additional exchange prints. Original database source labels are preserved. On closed calendar dates the evening
+job makes a bounded final-file check: an official dated final file proves a special
+session; a 404 is an ordinary absent file, while access failures remain errors. The
+job never invents market opening/closing hours from this observation. Applied migrations, old columns and
 stable aliases such as `YF|RELIANCE.NS` are compatibility identifiers, not data feeds.
 
 The daily scope includes main-market and SME ordinary equities, including BE/BZ.

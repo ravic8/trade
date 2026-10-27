@@ -55,7 +55,7 @@ def test_default_registry_covers_phase1_required_domains() -> None:
         "universe",
         "instrument",
         "market_data",
-                        }
+    }
 
 
 def test_postgresql_contract_keys_and_columns_match_physical_tables() -> None:

@@ -205,14 +205,18 @@ class DailyPartitionReconciler:
         *,
         month: str,
         repair: bool = False,
-        provider: str = "nse_official_bhavcopy",
+        provider: str = "nse_bhavcopy",
         exchange: str = "NSE",
         workspace_id: str = "default",
         source_run_id: str | None = None,
         at: datetime | None = None,
     ) -> DailyPartitionReconciliationResult:
         window_start, window_end = month_window(month)
-        if provider != "nse_official_bhavcopy" or exchange != "NSE" or workspace_id != "default":
+        if (
+            provider not in {"nse_bhavcopy", "nse_official_bhavcopy"}
+            or exchange != "NSE"
+            or workspace_id != "default"
+        ):
             raise ValueError(
                 "daily partition reconciliation supports default/NSE nse_official_bhavcopy"
             )

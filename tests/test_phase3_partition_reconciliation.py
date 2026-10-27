@@ -48,7 +48,7 @@ def _source_engine(*, mapped: bool = True):
         connection.execute(
             ohlcv_daily_table.insert().values(
                 instrument_key="YF|RELIANCE.NS",
-                source="nse_official_bhavcopy",
+                source="nse_bhavcopy",
                 date=date(2026, 8, 31),
                 symbol="RELIANCE",
                 exchange="NSE",
@@ -77,7 +77,7 @@ def _replica_row(*, close: str = "104", instrument_id: str = "NSE_EQ|RELIANCE"):
         "low": Decimal("99"),
         "close": Decimal(close),
         "volume": 1000,
-        "source": "nse_official_bhavcopy",
+        "source": "nse_bhavcopy",
         "provider_timestamp": NOW,
     }
 
@@ -267,7 +267,7 @@ def test_partition_reconciliation_rejects_unmapped_and_unbounded_sources() -> No
         connection.execute(
             ohlcv_daily_table.insert().values(
                 instrument_key="YF|INFY.NS",
-                source="nse_official_bhavcopy",
+                source="nse_bhavcopy",
                 date=date(2026, 8, 31),
                 symbol="INFY",
                 exchange="NSE",
@@ -300,7 +300,7 @@ def test_partition_comparison_normalizes_clickhouse_decimal_scale() -> None:
         low=Decimal("99"),
         close=Decimal("104"),
         volume=1000,
-        provider="nse_official_bhavcopy",
+        provider="nse_bhavcopy",
         provider_timestamp=NOW,
     )
     scaled = DailyReplicaRow(**{**vars(row), "close": Decimal("104.00000000")})
@@ -378,7 +378,7 @@ def test_clickhouse_partition_read_is_scoped_and_final() -> None:
 
     rows = repository.read_daily_partition(
         workspace_id="default",
-        provider="nse_official_bhavcopy",
+        provider="nse_bhavcopy",
         exchange="NSE",
         window_start=date(2026, 8, 1),
         window_end=date(2026, 8, 31),
@@ -396,19 +396,19 @@ def test_official_nse_partition_reconciles_without_modifying_yahoo():
     with engine.begin() as c:
         c.execute(ohlcv_daily_table.update().values(source="legacy"))
         row = dict(c.execute(select(ohlcv_daily_table)).mappings().one())
-        row.update(source="nse_official_bhavcopy", volume=12345, symbol="RELIANCE.NS")
+        row.update(source="nse_bhavcopy", volume=12345, symbol="RELIANCE.NS")
         c.execute(ohlcv_daily_table.insert().values(row))
     clickhouse = _ClickHousePartitionRepository()
     result = DailyPartitionReconciler(engine=engine, clickhouse=clickhouse).reconcile(
         month="2026-08",
-        provider="nse_official_bhavcopy",
+        provider="nse_bhavcopy",
         repair=True,
         source_run_id="repair-run",
         at=NOW,
     )
     assert result.status == "reconciled"
     assert result.repaired_rows == 1
-    assert clickhouse.insert_calls[0][0].provider == "nse_official_bhavcopy"
+    assert clickhouse.insert_calls[0][0].provider == "nse_bhavcopy"
     assert clickhouse.insert_calls[0][0].volume == 12345
     with engine.connect() as c:
         yahoo = (

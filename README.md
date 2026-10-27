@@ -2,7 +2,7 @@
 
 Trade collects official NSE final bhavcopies, validates ordinary-equity OHLCV,
 stores it in PostgreSQL/TimescaleDB, and verifies replication into ClickHouse.
-The API serves only `nse_official_bhavcopy`; there is no alternate-provider fallback.
+The API serves only `nse_bhavcopy`; there is no alternate-provider fallback.
 Frontend, fundamental analysis, ML and backtesting belong outside this repository.
 
 ## Data and coverage

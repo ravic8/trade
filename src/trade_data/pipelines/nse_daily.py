@@ -7,12 +7,19 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from time import sleep
 from uuid import NAMESPACE_URL, uuid4, uuid5
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from trade_data.config import Settings, get_settings
-from trade_data.data.nse_bhavcopy import SOURCE, Bhavcopy, fetch_bhavcopy, rolling_year_start
+from trade_data.data.nse_bhavcopy import (
+    SOURCE,
+    Bhavcopy,
+    fetch_bhavcopy,
+    probe_special_session,
+    rolling_year_start,
+)
 from trade_data.market_data.ingestion import replicate_validated_batch
 from trade_data.market_data.partition_reconciliation import (
     DailyReplicaRow,
@@ -21,7 +28,7 @@ from trade_data.market_data.partition_reconciliation import (
 )
 from trade_data.operations.nse_authority import prepare_nse_batch
 from trade_data.storage.clickhouse import ClickHouseMarketDataRepository, create_clickhouse_client
-from trade_data.storage.nse import nse_sessions
+from trade_data.storage.nse import latest_nse_session, nse_sessions
 from trade_data.storage.timescale import TimescaleStore, symbols_table
 
 
@@ -34,9 +41,30 @@ def _identities(store: TimescaleStore, source: Bhavcopy) -> dict:
         window_start=source.session, window_end=source.session, provider=SOURCE, exchange="NSE"
     )
     by_symbol = {r.provider_symbol.removesuffix(".NS"): r for r in prior}
+    by_isin = {}
+    for candidate in symbols.values():
+        if candidate.get("source_identity") and candidate.get("canonical_instrument_id"):
+            by_isin.setdefault(candidate["source_identity"], []).append(candidate)
     identities = {}
     for row in source.frame.itertuples():
         existing = symbols.get(row.exchange_symbol)
+        matches = by_isin.get(row.isin, [])
+        if matches:
+            # Reuse the established stock alias across official ticker renames.
+            # Never create a second stock merely because its exchange name changed.
+            preferred = min(
+                matches,
+                key=lambda v: (
+                    str(v.get("provider_instrument_key") or "").startswith("NSE|"),
+                    not v.get("is_active", True),
+                    str(v["symbol"]),
+                ),
+            )
+            if not existing or (
+                str(existing.get("provider_instrument_key") or "").startswith("NSE|")
+                and not str(preferred.get("provider_instrument_key") or "").startswith("NSE|")
+            ):
+                existing = preferred
         if existing and existing.get("canonical_instrument_id"):
             anchor = existing.get("source_identity")
             reason = "exact_isin"
@@ -77,6 +105,11 @@ def _identities(store: TimescaleStore, source: Bhavcopy) -> dict:
                 reason = (
                     "same_issuer_equity_serial" if same_issuer_equity else "prior_audited_identity"
                 )
+            if (
+                reason == "exact_isin"
+                and existing["symbol"].removesuffix(".NS") != row.exchange_symbol
+            ):
+                reason = "official_ticker_alias"
             key = existing["provider_instrument_key"]
             canonical = existing["canonical_instrument_id"]
         else:
@@ -110,6 +143,7 @@ def _identities(store: TimescaleStore, source: Bhavcopy) -> dict:
             "canonical_instrument_id": canonical,
             "source_identity": row.isin,
             "anchor_isin": anchor,
+            "exchange_symbol": row.exchange_symbol,
             "identity_reason": reason,
             "provider_symbol": existing.get("yahoo_symbol") if existing else row.exchange_symbol,
         }
@@ -165,7 +199,11 @@ def ingest_session(session: date, *, settings: Settings | None = None, loader=fe
                     store,
                     session,
                     "failed",
-                    details={"error_type": type(exc).__name__, "message": str(exc)[:400]},
+                    details={
+                        "error_type": type(exc).__name__,
+                        "message": str(exc)[:400],
+                        "source_provider": SOURCE,
+                    },
                 )
                 raise
             finally:
@@ -213,6 +251,7 @@ def _ingest(store, settings, source):
         run_id=run,
         retrieved_at=now,
         eligible_sessions={source.session},
+        source=SOURCE,
     )
     details = {
         "total_source_records": source.total_records,
@@ -220,9 +259,11 @@ def _ingest(store, settings, source):
         "series_counts": source.frame.series.value_counts().to_dict(),
         "zero_volume_records": int(source.frame.volume.eq(0).sum()),
         "source_run_id": run,
+        "source_provider": SOURCE,
         "identity_bindings": [
             {
                 "symbol": symbol,
+                "exchange_symbol": value["exchange_symbol"],
                 "anchor_isin": value["anchor_isin"],
                 "source_isin": value["source_identity"],
                 "reason": value["identity_reason"],
@@ -315,8 +356,8 @@ def _ingest(store, settings, source):
 def run_daily(*, settings: Settings | None = None):
     settings = settings or get_settings()
     store = TimescaleStore(settings.database_url)
-    last = store.latest_provider_eligible_exchange_session(
-        "NSE", provider_grace_minutes=settings.nse_publication_grace_minutes
+    last = latest_nse_session(
+        store, provider=SOURCE, grace_minutes=settings.nse_publication_grace_minutes
     )
     if not last:
         raise ValueError("No validated completed NSE exchange session; refresh calendar")
@@ -328,8 +369,11 @@ def run_daily(*, settings: Settings | None = None):
             c.execute(
                 text("""SELECT session_date FROM exchange_sessions
             WHERE exchange='NSE' AND is_trading_day AND validation_status LIKE 'valid%'
+            AND session_date BETWEEN :start AND :end
+            UNION SELECT session_date FROM nse_bhavcopy_sessions
+            WHERE status='complete' AND details->>'source_provider'=:provider
             AND session_date BETWEEN :start AND :end ORDER BY session_date"""),
-                {"start": start, "end": end},
+                {"start": start, "end": end, "provider": SOURCE},
             )
             .scalars()
             .all()
@@ -338,7 +382,9 @@ def run_daily(*, settings: Settings | None = None):
     for day in sessions:
         with store.engine.connect() as c:
             status = c.execute(
-                select(nse_sessions.c.status).where(nse_sessions.c.session_date == day)
+                select(nse_sessions.c.status)
+                .where(nse_sessions.c.session_date == day)
+                .where(nse_sessions.c.details["source_provider"].as_string() == SOURCE)
             ).scalar()
         if status == "complete" and day < end:
             continue
@@ -347,6 +393,16 @@ def run_daily(*, settings: Settings | None = None):
         except Exception:
             failures.append(str(day))
         sleep(settings.nse_request_interval_seconds)
+    local_now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    today = local_now.date()
+    if local_now.hour >= 18 and today not in sessions:
+        try:
+            special = probe_special_session(today)
+            if special is not None:
+                results.append(ingest_session(today, settings=settings, loader=lambda _: special))
+        except Exception:
+            failures.append(str(today))
+    store.engine.dispose()
     if failures:
         raise RuntimeError("NSE sessions need attention: " + ", ".join(failures))
     return results
@@ -355,8 +411,8 @@ def run_daily(*, settings: Settings | None = None):
 def repair_year(*, settings: Settings | None = None):
     settings = settings or get_settings()
     store = TimescaleStore(settings.database_url)
-    end = store.latest_provider_eligible_exchange_session(
-        "NSE", provider_grace_minutes=settings.nse_publication_grace_minutes
+    end = latest_nse_session(
+        store, provider=SOURCE, grace_minutes=settings.nse_publication_grace_minutes
     )["session_date"]
     start = rolling_year_start(end)
     with store.engine.connect() as c:
@@ -364,8 +420,11 @@ def repair_year(*, settings: Settings | None = None):
             c.execute(
                 text("""SELECT session_date FROM exchange_sessions
             WHERE exchange='NSE' AND is_trading_day AND validation_status LIKE 'valid%'
+            AND session_date BETWEEN :start AND :end
+            UNION SELECT session_date FROM nse_bhavcopy_sessions
+            WHERE status='complete' AND details->>'source_provider'=:provider
             AND session_date BETWEEN :start AND :end ORDER BY session_date"""),
-                {"start": start, "end": end},
+                {"start": start, "end": end, "provider": SOURCE},
             )
             .scalars()
             .all()
@@ -374,7 +433,9 @@ def repair_year(*, settings: Settings | None = None):
     for day in days:
         with store.engine.connect() as c:
             status = c.execute(
-                select(nse_sessions.c.status).where(nse_sessions.c.session_date == day)
+                select(nse_sessions.c.status)
+                .where(nse_sessions.c.session_date == day)
+                .where(nse_sessions.c.details["source_provider"].as_string() == SOURCE)
             ).scalar()
         if status == "complete":
             continue

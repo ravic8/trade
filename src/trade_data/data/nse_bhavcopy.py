@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 import pandas as pd
 
-SOURCE = "nse_official_bhavcopy"
+SOURCE = "nse_bhavcopy"
 BASE = "https://nsearchives.nseindia.com/content/cm/"
 SERIES = frozenset({"EQ", "BE", "BZ", "SM", "ST", "SZ"})
 FIELDS = {"OpnPric": "open", "HghPric": "high", "LwPric": "low", "ClsPric": "close"}
@@ -24,6 +24,10 @@ MAX_BYTES = 20_000_000
 
 class BhavcopyUnavailable(RuntimeError):
     """The official final file has not been published or cannot be retrieved."""
+
+    def __init__(self, message: str, *, not_found: bool = False):
+        super().__init__(message)
+        self.not_found = not_found
 
 
 @dataclass(frozen=True)
@@ -141,7 +145,10 @@ def fetch_bhavcopy(session: date) -> Bhavcopy:
                     if len(raw) > MAX_BYTES:
                         raise ValueError("Oversized NSE response")
     except httpx.HTTPError as exc:
-        raise BhavcopyUnavailable(f"Official NSE final file unavailable for {session}") from exc
+        raise BhavcopyUnavailable(
+            f"Official NSE final file unavailable for {session}",
+            not_found=isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404,
+        ) from exc
     return parse_bhavcopy(bytes(raw), session)
 
 
@@ -153,3 +160,13 @@ def rolling_year_start(end: date) -> date:
         else end.replace(year=end.year - 1)
     )
     return anniversary + timedelta(days=1)
+
+
+def probe_special_session(session: date, *, loader=fetch_bhavcopy) -> Bhavcopy | None:
+    """A closed-day 404 is normal; denied access and outages are not proof of closure."""
+    try:
+        return loader(session)
+    except BhavcopyUnavailable as exc:
+        if exc.not_found:
+            return None
+        raise

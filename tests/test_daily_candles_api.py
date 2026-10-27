@@ -34,7 +34,7 @@ def test_daily_candle_read_matches_consumer_fixture_and_scopes_storage(monkeypat
     assert calls == [
         {
             "exchange": "NSE",
-            "source": "nse_official_bhavcopy",
+            "source": "nse_bhavcopy",
             "start_date": date(2026, 10, 15),
             "end_date": date(2026, 10, 16),
             "instrument_keys": ["YF|RELIANCE.NS"],
@@ -92,19 +92,19 @@ def test_official_nse_source_is_explicit_and_never_falls_back_to_yahoo(monkeypat
             "/api/data/candles",
             params={
                 **PARAMS,
-                "provider": "nse_official_bhavcopy",
+                "provider": "nse_bhavcopy",
             },
         )
         assert response.status_code == 200
-        assert response.json()["provider"] == "nse_official_bhavcopy"
+        assert response.json()["provider"] == "nse_bhavcopy"
         assert response.json()["rows"] == []
-        assert calls[0]["source"] == "nse_official_bhavcopy"
+        assert calls[0]["source"] == "nse_bhavcopy"
         assert (
             client.get(
                 "/api/data/candles",
                 params={
                     **PARAMS,
-                    "provider": "nse_official_bhavcopy",
+                    "provider": "nse_bhavcopy",
                     "exchange": "US",
                 },
             ).status_code

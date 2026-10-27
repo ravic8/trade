@@ -1232,7 +1232,7 @@ class TimescaleStore:
         query = (
             select(ohlcv_daily_table.c.date)
             .where(ohlcv_daily_table.c.exchange == exchange.upper())
-            .where(ohlcv_daily_table.c.source == "nse_official_bhavcopy")
+            .where(ohlcv_daily_table.c.source.in_(("nse_bhavcopy", "nse_official_bhavcopy")))
             .where(ohlcv_daily_table.c.date >= start_date)
             .where(ohlcv_daily_table.c.date <= end_date)
             .group_by(ohlcv_daily_table.c.date)
@@ -1247,7 +1247,7 @@ class TimescaleStore:
         self,
         frame: pd.DataFrame,
         exchange: str = "NSE",
-        source: str = "nse_official_bhavcopy",
+        source: str = "nse_bhavcopy",
     ) -> int:
         rows = self._daily_ohlcv_rows(frame, exchange=exchange, source=source)
         if not rows:
@@ -1274,7 +1274,7 @@ class TimescaleStore:
     def daily_ohlcv_frame(
         self,
         exchange: str = "NSE",
-        source: str = "nse_official_bhavcopy",
+        source: str = "nse_bhavcopy",
         limit: int | None = None,
         start_date: date | None = None,
         end_date: date | None = None,

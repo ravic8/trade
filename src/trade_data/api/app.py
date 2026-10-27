@@ -12,7 +12,7 @@ from trade_data.api.daily_schemas import DailyCandle, DailyCandlesResponse
 from trade_data.api.security import cors_origins
 from trade_data.config import get_settings
 from trade_data.data.nse_bhavcopy import SOURCE, rolling_year_start
-from trade_data.storage.nse import nse_sessions
+from trade_data.storage.nse import latest_nse_session, nse_sessions
 from trade_data.storage.timescale import TimescaleStore
 
 app = FastAPI(title="Trade — NSE daily data")
@@ -38,7 +38,7 @@ def daily_candles(
     instrument_key: Annotated[str, Query(min_length=1, max_length=200)],
     start_date: date,
     end_date: date,
-    provider: Literal["nse_official_bhavcopy"] = SOURCE,
+    provider: Literal["nse_bhavcopy"] = SOURCE,
     exchange: Literal["NSE"] = "NSE",
 ):
     if (
@@ -92,8 +92,8 @@ def pipeline_health():
     settings = get_settings()
     store = _store()
     try:
-        expected = store.latest_provider_eligible_exchange_session(
-            "NSE", provider_grace_minutes=settings.nse_publication_grace_minutes
+        expected = latest_nse_session(
+            store, provider=SOURCE, grace_minutes=settings.nse_publication_grace_minutes
         )
         with store.engine.connect() as c:
             rows = [
@@ -108,14 +108,18 @@ def pipeline_health():
             with store.engine.connect() as c:
                 year = dict(
                     c.execute(
-                        text("""SELECT COUNT(*) AS expected_sessions,
-                    COUNT(*) FILTER (WHERE n.status='complete') AS complete_sessions
+                        text("""SELECT COUNT(*) AS calendar_dates,
+                    COUNT(*) FILTER (WHERE e.is_trading_day OR
+                        (n.status='complete' AND n.details->>'source_provider'=:provider))
+                        AS expected_sessions,
+                    COUNT(*) FILTER (WHERE n.status='complete'
+                        AND n.details->>'source_provider'=:provider) AS complete_sessions
                     FROM exchange_sessions e LEFT JOIN nse_bhavcopy_sessions n
                     ON n.session_date=e.session_date
-                    WHERE e.exchange='NSE' AND e.is_trading_day
+                    WHERE e.exchange='NSE'
                     AND e.validation_status LIKE 'valid%'
                     AND e.session_date BETWEEN :start AND :end"""),
-                        {"start": rolling_year_start(end), "end": end},
+                        {"start": rolling_year_start(end), "end": end, "provider": SOURCE},
                     )
                     .mappings()
                     .one()
@@ -123,7 +127,12 @@ def pipeline_health():
             year.update(
                 start_date=rolling_year_start(end),
                 end_date=end,
-                complete=year["expected_sessions"] == year["complete_sessions"],
+                calendar_complete=year["calendar_dates"]
+                == (end - rolling_year_start(end)).days + 1,
+                complete=(
+                    year["calendar_dates"] == (end - rolling_year_start(end)).days + 1
+                    and year["expected_sessions"] == year["complete_sessions"]
+                ),
             )
         latest = rows[0] if rows else None
         complete = bool(
@@ -131,6 +140,7 @@ def pipeline_health():
             and latest
             and latest["session_date"] == expected["session_date"]
             and latest["status"] == "complete"
+            and latest["details"].get("source_provider") == SOURCE
         )
         return {
             "provider": SOURCE,

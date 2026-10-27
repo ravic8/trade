@@ -127,6 +127,7 @@ def prepare_nse_batch(
     run_id: str,
     retrieved_at: datetime,
     eligible_sessions: set[date],
+    source: str = NSE_SOURCE,
 ) -> ValidatedMarketDataBatch:
     """Retain raw provenance and validate canonical identity without Yahoo corrections."""
     if frame.empty:
@@ -150,7 +151,7 @@ def prepare_nse_batch(
         raise ValueError("NSE canonical identity is missing, ambiguous or changed")
     request = ProviderRequest(
         request_id=run_id,
-        provider=NSE_SOURCE,
+        provider=source,
         exchange="NSE",
         interval=CandleInterval.ONE_DAY,
         window_start=datetime.combine(frame.date.min(), time.min, tzinfo=UTC),
@@ -176,7 +177,7 @@ def prepare_nse_batch(
             **{f: Decimal(str(getattr(r, f))) for f in FIELDS[:4]},
             volume=int(r.volume),
             currency="INR",
-            provider=NSE_SOURCE,
+            provider=source,
             provider_timestamp=retrieved_at,
             request_id=request.request_id,
             adapter_version=request.adapter_version,

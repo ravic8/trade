@@ -330,3 +330,102 @@ def test_rolling_year_matches_frozen_snapshot_date_convention(end, start):
     from trade_data.data.nse_bhavcopy import rolling_year_start
 
     assert rolling_year_start(end) == start
+
+
+def test_official_rename_reuses_known_isin_stock_instead_of_creating_an_extra_stock(storage):
+    source = parse_bhavcopy(archive([{"TckrSymb": "OLDNAME"}]), DAY)
+    binding = pipeline._identities(storage, source)["OLDNAME"]
+    assert binding["provider_instrument_key"] == "legacy|AAA"
+    assert binding["provider_symbol"] == "AAA.NS"
+    assert binding["identity_reason"] == "official_ticker_alias"
+    assert binding["exchange_symbol"] == "OLDNAME"
+    with storage.engine.connect() as c:
+        assert c.execute(select(func.count()).select_from(symbols_table)).scalar() == 1
+
+
+def test_new_publication_preserves_earlier_official_imports_without_counting_their_aliases(
+    monkeypatch,
+    storage,
+):
+    memory_replica(monkeypatch)
+    with storage.engine.begin() as c:
+        c.execute(
+            ohlcv_daily_table.insert().values(
+                instrument_key="old-import-key",
+                source="nse_official_bhavcopy",
+                date=DAY,
+                symbol="OLDALIAS",
+                exchange="NSE",
+                open=1,
+                high=1,
+                low=1,
+                close=1,
+                volume=8,
+                fetched_at=datetime.now(UTC),
+                quality_status="ok",
+            )
+        )
+    result = pipeline._ingest(storage, Settings(_env_file=None), parse_bhavcopy(archive(), DAY))
+    assert result["status"] == "complete"
+    assert result["rows"] == 1
+    with storage.engine.connect() as c:
+        assert (
+            c.execute(
+                select(ohlcv_daily_table.c.volume).where(
+                    ohlcv_daily_table.c.source == "nse_official_bhavcopy"
+                )
+            ).scalar()
+            == 8
+        )
+
+
+def test_closed_day_probe_distinguishes_absent_file_from_access_failure():
+    from trade_data.data.nse_bhavcopy import BhavcopyUnavailable, probe_special_session
+
+    def missing(day):
+        raise BhavcopyUnavailable("not published", not_found=True)
+
+    def denied(day):
+        raise BhavcopyUnavailable("access denied")
+
+    assert probe_special_session(DAY, loader=missing) is None
+    with pytest.raises(BhavcopyUnavailable):
+        probe_special_session(DAY, loader=denied)
+    source = parse_bhavcopy(archive(), DAY)
+    assert probe_special_session(DAY, loader=lambda day: source) is source
+
+
+def test_daily_worker_retries_failed_session_without_starving_later_sessions(monkeypatch, storage):
+    from trade_data.storage.timescale import exchange_sessions_table
+
+    exchange_sessions_table.create(storage.engine)
+    day2 = date(2026, 10, 26)
+    with storage.engine.begin() as c:
+        for day in (DAY, day2):
+            c.execute(
+                exchange_sessions_table.insert().values(
+                    exchange="NSE",
+                    session_date=day,
+                    is_trading_day=True,
+                    source_url="official-test",
+                    calendar_version="test",
+                    validation_status="valid",
+                    generated_at=datetime.now(UTC),
+                )
+            )
+    monkeypatch.setattr(pipeline, "TimescaleStore", lambda url: storage)
+    monkeypatch.setattr(pipeline, "latest_nse_session", lambda *a, **k: {"session_date": day2})
+    monkeypatch.setattr(pipeline, "sleep", lambda n: None)
+    monkeypatch.setattr(pipeline, "probe_special_session", lambda day: None)
+    called = []
+
+    def ingest(day, **kwargs):
+        called.append(day)
+        if day == DAY:
+            raise ValueError("source not yet available")
+        return {"session": str(day), "status": "complete"}
+
+    monkeypatch.setattr(pipeline, "ingest_session", ingest)
+    with pytest.raises(RuntimeError, match="sessions need attention"):
+        pipeline.run_daily(settings=Settings(_env_file=None))
+    assert called == [DAY, day2]
