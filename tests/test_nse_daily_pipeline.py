@@ -429,3 +429,18 @@ def test_daily_worker_retries_failed_session_without_starving_later_sessions(mon
     with pytest.raises(RuntimeError, match="sessions need attention"):
         pipeline.run_daily(settings=Settings(_env_file=None))
     assert called == [DAY, day2]
+
+
+def test_health_does_not_claim_year_complete_when_calendar_is_missing(monkeypatch, storage):
+    from trade_data.api import app as api
+    from trade_data.storage.timescale import exchange_sessions_table
+
+    exchange_sessions_table.create(storage.engine)
+    memory_replica(monkeypatch)
+    pipeline._ingest(storage, Settings(_env_file=None), parse_bhavcopy(archive(), DAY))
+    monkeypatch.setattr(api, "_store", lambda: storage)
+    monkeypatch.setattr(api, "get_settings", lambda: Settings(_env_file=None))
+    report = api.pipeline_health()
+    assert report["complete"] is True
+    assert report["rolling_year"]["calendar_complete"] is False
+    assert report["rolling_year"]["complete"] is False
