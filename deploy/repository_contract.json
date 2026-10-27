@@ -1,11 +1,9 @@
 {
   "schema_version": 1,
-  "baseline_commit": "d7ba0b3c7f6b022f90bd87fc133ddfa660016fb8",
-  "verified_date": "2026-10-17",
+  "baseline_commit": "cfc039b95218e6bc9d0ec7e9ca0b673f564497ce",
+  "verified_date": "2026-10-27",
   "documents": {
-    "docs/current_state.md": "current",
-    "docs/architecture.md": "current",
-    "docs/v1_spec.md": "current"
+    "docs/operations.md": "current"
   },
   "local_compose_services": [
     "api",
@@ -55,9 +53,12 @@
   "forbidden_current_claims": {
     "README.md": [
       "Cloud/server deployment as the primary operating mode.",
-      "deployment packaging, proxy config, and backup/restore scripts have been removed"
+      "deployment packaging, proxy config, and backup/restore scripts have been removed",
+      "intentionally local-first and no longer carries deployment packaging"
     ],
-    "docs/architecture.md": [
+    "docs/operations.md": [
+      "Cloud/server deployment as the primary operating mode.",
+      "deployment packaging, proxy config, and backup/restore scripts have been removed",
       "intentionally local-first and no longer carries deployment packaging"
     ]
   }
