@@ -162,6 +162,39 @@ def instruments(query: str = "", limit: Annotated[int, Query(ge=1, le=500)] = 50
         raise HTTPException(503, "Instrument storage unavailable") from None
 
 
+@app.get("/api/data/market-stats")
+def market_stats(limit: Annotated[int, Query(ge=1, le=50)] = 20):
+    from datetime import timedelta
+
+    from trade_data.api.market_stats import compute_market_stats
+
+    try:
+        with _store().engine.connect() as c:
+            latest = c.execute(
+                text(
+                    "SELECT MAX(date) AS d FROM ohlcv_daily WHERE source=:source "
+                    "AND exchange='NSE' AND quality_status='ok'"
+                ),
+                {"source": SOURCE},
+            ).scalar()
+            if latest is None:
+                return compute_market_stats([], limit=limit)
+            rows = [
+                dict(r)
+                for r in c.execute(
+                    text(
+                        "SELECT symbol, instrument_key, date, close, high, low, volume "
+                        "FROM ohlcv_daily WHERE source=:source AND exchange='NSE' "
+                        "AND quality_status='ok' AND date >= :cutoff ORDER BY symbol, date"
+                    ),
+                    {"source": SOURCE, "cutoff": latest - timedelta(days=370)},
+                ).mappings()
+            ]
+    except SQLAlchemyError:
+        raise HTTPException(503, "Market stats unavailable") from None
+    return compute_market_stats(rows, limit=limit)
+
+
 @app.get("/api/data/pipeline-health", response_model=NsePipelineHealth)
 def pipeline_health(include_sessions: bool = True):
     settings = get_settings()
