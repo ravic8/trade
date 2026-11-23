@@ -37,20 +37,31 @@ class AccessRequests:
         email = email.strip().lower()
         now = datetime.now(UTC)
         with self.engine.begin() as conn:
-            existing = conn.execute(
-                select(access_requests).where(access_requests.c.email == email)
-            ).mappings().first()
+            existing = (
+                conn.execute(select(access_requests).where(access_requests.c.email == email))
+                .mappings()
+                .first()
+            )
             if existing:
                 return dict(existing)
             result = conn.execute(
                 access_requests.insert().values(
-                    name=name.strip(), email=email, use_case=use_case.strip(),
-                    status="pending", created_at=now,
+                    name=name.strip(),
+                    email=email,
+                    use_case=use_case.strip(),
+                    status="pending",
+                    created_at=now,
                 )
             )
-            row = conn.execute(
-                select(access_requests).where(access_requests.c.id == result.inserted_primary_key[0])
-            ).mappings().one()
+            row = (
+                conn.execute(
+                    select(access_requests).where(
+                        access_requests.c.id == result.inserted_primary_key[0]
+                    )
+                )
+                .mappings()
+                .one()
+            )
             return dict(row)
 
     def list_all(self) -> list[dict]:
@@ -71,7 +82,9 @@ class AccessRequests:
             )
             if result.rowcount == 0:
                 return None
-            row = conn.execute(
-                select(access_requests).where(access_requests.c.id == request_id)
-            ).mappings().one()
+            row = (
+                conn.execute(select(access_requests).where(access_requests.c.id == request_id))
+                .mappings()
+                .one()
+            )
             return dict(row)

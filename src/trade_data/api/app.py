@@ -13,7 +13,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from trade_data.api.access import AccessRequests
 from trade_data.api.daily_schemas import DailyCandle, DailyCandlesResponse
 from trade_data.api.operations_schemas import NseJobRun, NsePipelineHealth
-from trade_data.api.security import authenticated_email, cors_origins, require_admin_request, role_for_email
+from trade_data.api.security import (
+    authenticated_email,
+    cors_origins,
+    require_admin_request,
+    role_for_email,
+)
 from trade_data.config import get_settings
 from trade_data.dagster.status import read_nse_job_runs
 from trade_data.data.nse_bhavcopy import SOURCE, rolling_year_start
@@ -60,7 +65,10 @@ def submit_access_request(body: AccessRequestIn):
         row = _access_repo().submit(body.name, body.email, body.use_case)
     except SQLAlchemyError:
         raise HTTPException(503, "Access request storage unavailable") from None
-    print(f"ACCESS_REQUEST pending id={row['id']} email={row['email']} notify=ravi@chain8.org", flush=True)
+    print(
+        f"ACCESS_REQUEST pending id={row['id']} email={row['email']} notify=ravi@chain8.org",
+        flush=True,
+    )
     return {"id": row["id"], "email": row["email"], "status": row["status"]}
 
 

@@ -42,7 +42,10 @@ def test_access_request_flow(client):
 
     # Non-admin cannot list or decide.
     assert client.get("/api/admin/access-requests", headers=USER).status_code == 403
-    assert client.post(f"/api/admin/access-requests/{request_id}/approve", headers=USER).status_code == 403
+    assert (
+        client.post(f"/api/admin/access-requests/{request_id}/approve", headers=USER).status_code
+        == 403
+    )
     assert client.get("/api/admin/access-requests").status_code == 403
 
     # Admin lists, approves, and the decision is recorded.
@@ -57,9 +60,14 @@ def test_access_request_flow(client):
 def test_reject_and_missing(client):
     r = client.post("/api/access-requests", json={"name": "X", "email": "x@example.com"})
     rid = r.json()["id"]
-    assert client.post(f"/api/admin/access-requests/{rid}/reject", headers=ADMIN).json()["status"] == "rejected"
+    assert (
+        client.post(f"/api/admin/access-requests/{rid}/reject", headers=ADMIN).json()["status"]
+        == "rejected"
+    )
     assert client.post("/api/admin/access-requests/9999/approve", headers=ADMIN).status_code == 404
 
 
 def test_invalid_email_rejected(client):
-    assert client.post("/api/access-requests", json={"name": "X", "email": "nope"}).status_code == 422
+    assert (
+        client.post("/api/access-requests", json={"name": "X", "email": "nope"}).status_code == 422
+    )
