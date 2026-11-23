@@ -11,6 +11,38 @@ from typing import Any
 
 CURRENT_ORIGIN_MARKER = "schedule_current_origin.json"
 RUNNING_STATUSES = {"RUNNING", "AUTOMATICALLY_RUNNING"}
+NSE_JOB_NAMES = (
+    "nse_daily_bhavcopy_job",
+    "nse_exchange_sessions_job",
+    "nse_one_year_repair_job",
+)
+
+
+def read_nse_job_runs(dagster_home: Path | str | None, limit: int) -> list[dict[str, Any]]:
+    if dagster_home is None:
+        raise OSError("Dagster run storage is not configured")
+    with closing(_readonly_sqlite(Path(dagster_home) / "history/runs.db")) as connection:
+        rows = connection.execute(
+            """
+            SELECT run_id, pipeline_name, status, start_time, end_time, create_timestamp
+            FROM runs
+            WHERE pipeline_name IN (?, ?, ?)
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (*NSE_JOB_NAMES, limit),
+        )
+        return [
+            {
+                "id": row["run_id"],
+                "name": row["pipeline_name"],
+                "status": str(row["status"]).lower(),
+                "created_at": _timestamp_to_datetime(row["create_timestamp"]),
+                "started_at": _timestamp_to_datetime(row["start_time"]),
+                "finished_at": _timestamp_to_datetime(row["end_time"]),
+            }
+            for row in rows
+        ]
 
 
 @dataclass(frozen=True)

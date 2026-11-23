@@ -70,6 +70,10 @@ No alternate-provider, TSX or US collectors are loaded or credentialed by the ap
 reads NSE source-labelled data only. Unsupported providers are rejected. Use
 `/api/data/instruments/search` to find stable keys, `/api/data/pipeline-health`
 for per-session source coverage and `/api/market/status` for stored source dates.
+`GET /api/data/pipeline-health?include_sessions=false` returns the coverage summary
+with the latest verified session and skips the recent proof records.
+`GET /api/jobs/latest?limit=20` reads recent NSE runs from the mounted Dagster
+SQLite snapshot. It can lag writes until SQLite checkpoints its journal.
 `/api/health` is liveness only. An unavailable coverage database returns 503;
 missing coverage is never reported as healthy. Dagster failures and coverage
 proofs identify publication lag, identity problems or replica mismatches.

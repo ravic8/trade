@@ -442,5 +442,9 @@ def test_health_does_not_claim_year_complete_when_calendar_is_missing(monkeypatc
     monkeypatch.setattr(api, "get_settings", lambda: Settings(_env_file=None))
     report = api.pipeline_health()
     assert report["complete"] is True
+    assert report["latest_verified_session"] == DAY
+    assert report["sessions"][0]["session_date"] == DAY
     assert report["rolling_year"]["calendar_complete"] is False
     assert report["rolling_year"]["complete"] is False
+    summary = api.pipeline_health(include_sessions=False)
+    assert summary == {**report, "sessions": []}

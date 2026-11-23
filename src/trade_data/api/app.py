@@ -1,5 +1,6 @@
 """Small NSE daily backend: official-source reads and operational coverage."""
 
+import sqlite3
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
@@ -9,10 +10,12 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from trade_data.api.daily_schemas import DailyCandle, DailyCandlesResponse
+from trade_data.api.operations_schemas import NseJobRun, NsePipelineHealth
 from trade_data.api.security import cors_origins
 from trade_data.config import get_settings
+from trade_data.dagster.status import read_nse_job_runs
 from trade_data.data.nse_bhavcopy import SOURCE, rolling_year_start
-from trade_data.storage.nse import latest_nse_session, nse_sessions
+from trade_data.storage.nse import nse_session_freshness, nse_sessions
 from trade_data.storage.timescale import TimescaleStore
 
 app = FastAPI(title="Trade — NSE daily data")
@@ -87,21 +90,24 @@ def instruments(query: str = "", limit: Annotated[int, Query(ge=1, le=500)] = 50
         raise HTTPException(503, "Instrument storage unavailable") from None
 
 
-@app.get("/api/data/pipeline-health")
-def pipeline_health():
+@app.get("/api/data/pipeline-health", response_model=NsePipelineHealth)
+def pipeline_health(include_sessions: bool = True):
     settings = get_settings()
     store = _store()
     try:
-        expected = latest_nse_session(
+        expected, latest_verified = nse_session_freshness(
             store, provider=SOURCE, grace_minutes=settings.nse_publication_grace_minutes
         )
-        with store.engine.connect() as c:
-            rows = [
-                dict(r)
-                for r in c.execute(
-                    select(nse_sessions).order_by(nse_sessions.c.session_date.desc()).limit(10)
-                ).mappings()
-            ]
+        expected_date = expected["session_date"] if expected else None
+        rows = []
+        if include_sessions:
+            with store.engine.connect() as c:
+                rows = [
+                    dict(r)
+                    for r in c.execute(
+                        select(nse_sessions).order_by(nse_sessions.c.session_date.desc()).limit(10)
+                    ).mappings()
+                ]
         year = None
         if expected:
             end = expected["session_date"]
@@ -134,24 +140,25 @@ def pipeline_health():
                     and year["expected_sessions"] == year["complete_sessions"]
                 ),
             )
-        latest = rows[0] if rows else None
-        complete = bool(
-            expected
-            and latest
-            and latest["session_date"] == expected["session_date"]
-            and latest["status"] == "complete"
-            and latest["details"].get("source_provider") == SOURCE
-        )
         return {
             "provider": SOURCE,
-            "expected_session": expected["session_date"] if expected else None,
-            "complete": complete,
+            "expected_session": expected_date,
+            "latest_verified_session": latest_verified,
+            "complete": expected_date is not None and latest_verified == expected_date,
             "sessions": rows,
             "rolling_year": year,
             "coverage_basis": "eligible ordinary equity records in official final bhavcopy",
         }
     except SQLAlchemyError:
         raise HTTPException(503, "Coverage status unknown: database unavailable") from None
+
+
+@app.get("/api/jobs/latest", response_model=list[NseJobRun])
+def latest_jobs(limit: Annotated[int, Query(ge=1, le=50)] = 20):
+    try:
+        return read_nse_job_runs(get_settings().dagster_readonly_home, limit)
+    except (OSError, sqlite3.Error):
+        raise HTTPException(503, "Dagster run history unavailable") from None
 
 
 @app.get("/api/market/status")
