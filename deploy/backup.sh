@@ -64,7 +64,7 @@ db_user="${PROD_POSTGRES_USER:-trade}"
 dagster_daemon_was_running=false
 dagster_webserver_was_running=false
 cloudbeaver_was_running=false
-minio_was_running=false
+minio_container_id=""
 clickhouse_was_running=false
 
 restart_quiesced_services() {
@@ -78,10 +78,11 @@ restart_quiesced_services() {
       status=$?
     fi
   fi
-  if [[ "$minio_was_running" == true ]]; then
+  if [[ -n "$minio_container_id" ]]; then
     log "restarting MinIO after backup"
-    if "${compose[@]}" up -d --no-deps minio; then
-      minio_was_running=false
+    # Resume the same container so the deployment's KMS configuration is retained.
+    if docker start "$minio_container_id"; then
+      minio_container_id=""
     else
       status=$?
     fi
@@ -131,10 +132,10 @@ if [[ -n "$("${compose[@]}" ps --status running -q cloudbeaver)" ]]; then
   "${compose[@]}" stop cloudbeaver
   cloudbeaver_was_running=true
 fi
-if [[ -n "$("${compose[@]}" ps --status running -q minio)" ]]; then
+minio_container_id="$("${compose[@]}" ps --status running -q minio)"
+if [[ -n "$minio_container_id" ]]; then
   log "stopping MinIO before backup"
-  "${compose[@]}" stop minio
-  minio_was_running=true
+  docker stop "$minio_container_id"
 fi
 if [[ -n "$("${compose[@]}" --profile research ps --status running -q clickhouse)" ]]; then
   log "stopping ClickHouse before backup"
