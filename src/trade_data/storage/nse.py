@@ -21,6 +21,11 @@ nse_sessions = Table(
 
 
 def latest_nse_session(store, *, provider: str, grace_minutes: int):
+    expected, _ = nse_session_freshness(store, provider=provider, grace_minutes=grace_minutes)
+    return expected
+
+
+def nse_session_freshness(store, *, provider: str, grace_minutes: int):
     """A dated official final file also proves a completed special session."""
     from sqlalchemy import func, select
 
@@ -34,5 +39,5 @@ def latest_nse_session(store, *, provider: str, grace_minutes: int):
             .where(nse_sessions.c.details["source_provider"].as_string() == provider)
         ).scalar()
     if published and (not calendar or published > calendar["session_date"]):
-        return {"session_date": published, "basis": "official_final_bhavcopy"}
-    return calendar
+        return {"session_date": published, "basis": "official_final_bhavcopy"}, published
+    return calendar, published
