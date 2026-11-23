@@ -4,14 +4,16 @@ import sqlite3
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from trade_data.api.access import AccessRequests
 from trade_data.api.daily_schemas import DailyCandle, DailyCandlesResponse
 from trade_data.api.operations_schemas import NseJobRun, NsePipelineHealth
-from trade_data.api.security import cors_origins
+from trade_data.api.security import authenticated_email, cors_origins, require_admin_request, role_for_email
 from trade_data.config import get_settings
 from trade_data.dagster.status import read_nse_job_runs
 from trade_data.data.nse_bhavcopy import SOURCE, rolling_year_start
@@ -22,13 +24,75 @@ app = FastAPI(title="Trade — NSE daily data")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins(get_settings().api_cors_origins),
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 
 def _store():
     return TimescaleStore(get_settings().database_url)
+
+
+def _access_repo() -> AccessRequests:
+    return AccessRequests(_store().engine)
+
+
+class AccessRequestIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: str = Field(min_length=3, max_length=320)
+    use_case: str = Field(default="", max_length=1000)
+
+
+@app.get("/api/me")
+def me(request: Request):
+    settings = get_settings()
+    email = authenticated_email(request, settings.admin_email_headers)
+    if email is None:
+        raise HTTPException(401, "Not authenticated")
+    return {"email": email.lower(), "role": role_for_email(email, settings)}
+
+
+@app.post("/api/access-requests", status_code=201)
+def submit_access_request(body: AccessRequestIn):
+    if "@" not in body.email or "." not in body.email.split("@")[-1]:
+        raise HTTPException(422, "Enter a valid email")
+    try:
+        row = _access_repo().submit(body.name, body.email, body.use_case)
+    except SQLAlchemyError:
+        raise HTTPException(503, "Access request storage unavailable") from None
+    print(f"ACCESS_REQUEST pending id={row['id']} email={row['email']} notify=ravi@chain8.org", flush=True)
+    return {"id": row["id"], "email": row["email"], "status": row["status"]}
+
+
+@app.get("/api/admin/access-requests")
+def list_access_requests(request: Request):
+    require_admin_request(request, get_settings())
+    try:
+        return _access_repo().list_all()
+    except SQLAlchemyError:
+        raise HTTPException(503, "Access request storage unavailable") from None
+
+
+@app.post("/api/admin/access-requests/{request_id}/approve")
+def approve_access_request(request_id: int, request: Request):
+    admin = require_admin_request(request, get_settings())
+    return _decide(request_id, "approved", admin)
+
+
+@app.post("/api/admin/access-requests/{request_id}/reject")
+def reject_access_request(request_id: int, request: Request):
+    admin = require_admin_request(request, get_settings())
+    return _decide(request_id, "rejected", admin)
+
+
+def _decide(request_id: int, status: str, admin: str):
+    try:
+        row = _access_repo().decide(request_id, status, admin)
+    except SQLAlchemyError:
+        raise HTTPException(503, "Access request storage unavailable") from None
+    if row is None:
+        raise HTTPException(404, "Access request not found")
+    return row
 
 
 @app.get("/api/health")

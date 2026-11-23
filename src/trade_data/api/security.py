@@ -31,6 +31,12 @@ def require_admin_request(request: Request, settings: AdminSettings) -> str:
     return email.lower()
 
 
+def role_for_email(email: str | None, settings: AdminSettings) -> str | None:
+    if email is None:
+        return None
+    return "admin" if email.lower() in _normalized_items(settings.admin_emails) else "user"
+
+
 def authenticated_email(request: Request, header_names: str) -> str | None:
     for name in _normalized_items(header_names):
         value = request.headers.get(name)
